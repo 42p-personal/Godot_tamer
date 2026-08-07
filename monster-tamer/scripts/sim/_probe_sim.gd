@@ -147,6 +147,8 @@ func _go() -> void:
 	_check("dot: burn landed on the walker (non-vacuous)", _applied(brn, "burn", "b0").size() > 0)
 	_check("dot: the burn target loses HP on ticks where NO strike/cast hits it",
 		_hp_drop_without_hit(brn, "b0"))
+	_check("bb: an enemy's live ailment is PUBLISHED on the blackboard record (wishlist closed)",
+		await _burn_reaches_bb())
 	var stn: Dictionary = await _run_stun_freeze()
 	var stn_apps: Array = _applied(stn, "stun", "b0")
 	_check("stun: landed mid-approach (non-vacuous)", stn_apps.size() > 0)
@@ -174,8 +176,53 @@ func _go() -> void:
 	var moves_all := _load_moves()
 	_check("kit: a real status-carrying control move builds (Hush)",
 		Kit.build(["Hush"], moves_all).size() == 1)
-	_check("kit: a status-less debuff still skips loudly (Sunder — mods not built)",
-		Kit.build(["Sunder"], moves_all).size() == 0)
+	_check("kit: a status-less enemy debuff now builds (Sunder — mods are live)",
+		Kit.build(["Sunder"], moves_all).size() == 1)
+	_check("kit: a pure heal builds (Mend — the friendly-cast path)",
+		Kit.build(["Mend"], moves_all).size() == 1)
+	_check("kit: tauntForce still skips loudly (Taunt — a taunt that never taunts is a lie)",
+		Kit.build(["Taunt"], moves_all).size() == 0)
+	_check("kit: thorns-only self move still skips loudly (Zone of Control)",
+		Kit.build(["Zone of Control"], moves_all).size() == 0)
+	_check("kit: allEnemies debuff still skips loudly (Demoralize — no AoE geometry)",
+		Kit.build(["Demoralize"], moves_all).size() == 0)
+
+	# THE SUPPORT LAYER: heals reach the wounded ally, wards soak before health, a timed atk
+	# buff raises damage then expires, a cleanse scrubs a DoT early — and none of it pauses the
+	# stagnation ratchet ('heal'/'buff'/'cleanse' are absent from the pause list BY CHOICE:
+	# sustain is not fight progress, so a heal-heavy fight still comes under the growing leash;
+	# the resolution checks below are the ratchet's regression guard).
+	var hl: Dictionary = await _run_heal()
+	var heals_to_tank := _heal_events(hl, "a1", "a0")
+	_check("heal: the healer heals the wounded ally (heal a1->a0, amount > 0)",
+		heals_to_tank > 0)
+	_check("heal: no self-heal hijack (an unhurt healer never heals itself over the tank)",
+		_no_self_heal_hijack(hl, "a1", "a0"))
+	_check("heal: the ally's HP visibly RISES on the stream", _hp_rises(hl, "a0"))
+	_check("heal: a sustained-heal fight still RESOLVES inside the cap (stagnation choice)",
+		str(hl.winner) in ["A", "B"])
+	var hl2: Dictionary = await _run_heal()
+	_check("determinism holds with heals in play", _hash_frames(hl) == _hash_frames(hl2))
+
+	var wd: Dictionary = await _run_ward()
+	_check("ward: the absorb pool soaks damage (ward_soak events, non-vacuous)",
+		_count(wd, "ward_soak") > 0)
+	_check("ward: a fully-soaked hit leaves the defender's HP untouched",
+		_ward_full_soak_ok(wd, "a0"))
+	_check("ward: the pool DEPLETES/expires (a later strike lands with no soak)",
+		_ward_eventually_leaks(wd, "a0"))
+	var wd2: Dictionary = await _run_ward()
+	_check("determinism holds with wards in play", _hash_frames(wd) == _hash_frames(wd2))
+
+	var ab: Dictionary = await _run_atkbuff()
+	var ab_win := _buff_window(ab, "a0")
+	_check("buff: the self atk buff applies (buff event, non-vacuous)", ab_win.t >= 0)
+	_check("buff: buffed strikes hit HARDER than every post-expiry strike, then it EXPIRES",
+		_buff_raises_then_expires(ab, "a0", ab_win))
+
+	var cl: Dictionary = await _run_cleanse()
+	_check("cleanse: a DoT is scrubbed EARLY (battle.ts:423 — ailments go, beneficial stays)",
+		_cleanse_scrubbed_burn(cl, "a2", "a0"))
 
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
@@ -533,6 +580,47 @@ func _run_burn() -> Dictionary:
 	return sim.run()
 
 
+## WISHLIST close-out (enemies[i].statuses): white-box — step the burn duel until the burn is
+## LIVE on b0, then fill the caster's blackboard and read b0's record. Passes only if the
+## published statuses list is non-empty AND minimal ({kind} only — no timers for the tree to
+## lean on). Beneficial filtering is the sim's job (see _fill_bb); this pins the ailment path.
+func _burn_reaches_bb() -> bool:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-14, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 45, "INT": 70, "WIS": 60},
+			"kit": [{"name": "Ember", "kind": "cast", "power": 12, "accuracy": 100, "cast_time": 1.0,
+				"cooldown": 4.0, "mana": 3, "channel": "magic",
+				"status": {"kind": "burn", "chance": 100, "duration": 3}}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(14, 0), "speed": 5.0,
+			"stats": {"STR": 40, "CON": 120, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(61, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-14, 0), Vector2(14, 0))
+	if not ok:
+		return false
+	while sim.winner == "" and sim.tick_now < 600:
+		sim._step()
+		var b0 = sim._unit("b0")
+		if b0 == null or not b0.alive or (b0.statuses as Array).is_empty():
+			continue
+		var a0 = sim._unit("a0")
+		sim._fill_bb(a0)
+		for e in a0.bb.get_value("enemies", []):
+			if str(e.id) != "b0":
+				continue
+			var sts: Array = e.get("statuses", [])
+			if sts.is_empty():
+				return false
+			for s in sts:
+				if not (s is Dictionary) or (s as Dictionary).keys() != ["kind"]:
+					return false   # record leaked payload — the contract is minimal {kind}
+			return true
+	return false   # burn never became live-visible — vacuous, so fail loudly
+
+
 ## Stun freeze: the holder stuns the approaching melee at range — the victim must not move,
 ## strike or cast for the (DR-resolved) duration the status_applied event reports.
 func _run_stun_freeze() -> Dictionary:
@@ -695,3 +783,259 @@ func _strikes_from_in_windows(res: Dictionary, attacker: String, apps: Array) ->
 				if str(e.kind) == "strike" and str(e.get("from", "")) == attacker:
 					c += 1
 	return c
+
+
+# ═══ SUPPORT-LAYER SCENARIOS ═════════════════════════════════════════════════════════════════
+
+
+## Tank a0 brawls b0 up front; healer a1 stands off on hold with an ally-targeted heal. b0's
+## nearest enemy stays the tank, so the healer is never wounded — every heal must go forward.
+func _run_heal() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-8, 0), "speed": 9.0,
+			"stats": {"STR": 45, "CON": 80, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "a1", "team": "A", "pos": Vector2(-20, 0), "speed": 7.0,
+			"stats": {"STR": 10, "CON": 40, "INT": 40, "WIS": 60},
+			"kit": [{"name": "Mend0", "kind": "cast", "power": 40, "cast_time": 0.8,
+				"cooldown": 5.0, "mana": 3, "channel": "support", "target": "ally", "range": 40.0}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(8, 0), "speed": 8.0,
+			"stats": {"STR": 60, "CON": 70, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(71, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-8, 0), Vector2(8, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+func _heal_events(res: Dictionary, from_id: String, to_id: String) -> int:
+	var n := 0
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == "heal" and str(e.get("from", "")) == from_id \
+					and str(e.get("to", "")) == to_id and int(e.get("amount", 0)) > 0:
+				n += 1
+	return n
+
+
+## A heal to SELF is a hijack only if the tank stood alive and MORE wounded that frame.
+func _no_self_heal_hijack(res: Dictionary, healer: String, tank: String) -> bool:
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) != "heal" or str(e.get("to", "")) != healer:
+				continue
+			var hf := 1.0
+			var tf := 1.0
+			var tank_alive := false
+			for u in res.frames[i].units:
+				if str(u.id) == healer:
+					hf = float(u.hp) / float(u.max_hp)
+				elif str(u.id) == tank and u.alive:
+					tank_alive = true
+					tf = float(u.hp) / float(u.max_hp)
+			if tank_alive and tf < hf:
+				return false
+	return true
+
+
+func _hp_rises(res: Dictionary, uid: String) -> bool:
+	var prev := -1
+	for f in res.frames:
+		for u in f.units:
+			if str(u.id) == uid and u.alive:
+				if prev >= 0 and int(u.hp) > prev:
+					return true
+				prev = int(u.hp)
+	return false
+
+
+## Self-warder a0 walks in against a harder hitter; the ward must soak before health.
+func _run_ward() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-12, 0), "speed": 8.5,
+			"stats": {"STR": 40, "CON": 100, "INT": 10, "WIS": 25},
+			"kit": [{"name": "Aegis0", "kind": "cast", "power": 0, "cast_time": 0.5,
+				"cooldown": 60.0, "mana": 2, "channel": "support", "target": "self",
+				"effects": {"ward": 80, "duration": 6}}],
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "b0", "team": "B", "pos": Vector2(12, 0), "speed": 8.0,
+			"stats": {"STR": 55, "CON": 60, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(72, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-12, 0), Vector2(12, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Every frame where a strike on `uid` was FULLY soaked (ward_soak amount == strike dmg), the
+## victim's streamed HP must not have dropped from the previous frame. Non-vacuous: at least
+## one such frame must exist.
+func _ward_full_soak_ok(res: Dictionary, uid: String) -> bool:
+	var found := false
+	for i in range(1, res.frames.size()):
+		var strike_dmg := -1
+		var soak := -1
+		for e in res.frames[i].events:
+			if str(e.kind) == "strike" and str(e.get("to", "")) == uid:
+				strike_dmg = int(e.get("dmg", 0))
+			elif str(e.kind) == "ward_soak" and str(e.get("to", "")) == uid:
+				soak = int(e.get("amount", 0))
+		if strike_dmg <= 0 or soak != strike_dmg:
+			continue
+		found = true
+		var prev_hp := -1
+		var cur_hp := -1
+		for u in res.frames[i - 1].units:
+			if str(u.id) == uid:
+				prev_hp = int(u.hp)
+		for u in res.frames[i].units:
+			if str(u.id) == uid:
+				cur_hp = int(u.hp)
+		if cur_hp < prev_hp:
+			print("    WARD LEAK: full soak at frame %d but hp %d -> %d" % [i, prev_hp, cur_hp])
+			return false
+	return found
+
+
+## Depletion/expiry: some LATER strike on `uid` lands with no soak at all in its frame.
+func _ward_eventually_leaks(res: Dictionary, uid: String) -> bool:
+	var soaked_once := false
+	for f in res.frames:
+		var hit := false
+		var soak := false
+		for e in f.events:
+			if str(e.kind) == "strike" and str(e.get("to", "")) == uid and int(e.get("dmg", 0)) > 0:
+				hit = true
+			elif str(e.kind) == "ward_soak" and str(e.get("to", "")) == uid:
+				soak = true
+		if soak:
+			soaked_once = true
+		elif hit and soaked_once:
+			return true
+	return false
+
+
+## Melee a0 with a big timed self atk buff (x2.5, 2 rounds) against a wall that barely hits
+## back — buffed strikes must out-damage every post-expiry strike, floor above ceiling.
+func _run_atkbuff() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-10, 0), "speed": 9.0,
+			"stats": {"STR": 60, "CON": 60, "INT": 10, "WIS": 15},
+			"kit": [{"name": "Rage0", "kind": "cast", "power": 0, "cast_time": 0.5,
+				"cooldown": 150.0, "mana": 2, "channel": "support", "target": "self",
+				"effects": {"atkBuff": 2.0, "duration": 2}}],
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "b0", "team": "B", "pos": Vector2(10, 0), "speed": 7.0,
+			"stats": {"STR": 20, "CON": 200, "INT": 10, "WIS": 30},
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+	]
+	var sim = Sim.new()
+	sim.setup(73, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-10, 0), Vector2(10, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## First 'buff' event on `uid`: {t: frame, n: window ticks from the event's own seconds}.
+func _buff_window(res: Dictionary, uid: String) -> Dictionary:
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) == "buff" and str(e.get("to", "")) == uid:
+				return {"t": i, "n": int(float(e.get("seconds", 0.0)) / 0.1)}
+	return {"t": -1, "n": 0}
+
+
+## min(strike dmg inside the window) > max(strike dmg after it) — with atkBuff 2.0 the buffed
+## floor (x3.0 * 0.85 variance) clears the unbuffed CRIT ceiling (x1.5 * 1.15), so rng cannot
+## blur the comparison. Two guards keep the margin honest: boundary frames (+-3 ticks around
+## expiry) are skipped, and after-window strikes stop at frame 290 — the opening-mitigation
+## bonus fades from t=30s, which would inflate late unbuffed hits past the buffed floor.
+## Both sides must be non-empty (expiry actually observed).
+func _buff_raises_then_expires(res: Dictionary, uid: String, win: Dictionary) -> bool:
+	if int(win.t) < 0:
+		return false
+	var lo_in := 999999
+	var hi_after := -1
+	for i in range(int(win.t), mini(res.frames.size(), 291)):
+		for e in res.frames[i].events:
+			if str(e.kind) != "strike" or str(e.get("from", "")) != uid:
+				continue
+			if i <= int(win.t) + int(win.n) - 3:
+				lo_in = mini(lo_in, int(e.get("dmg", 0)))
+			elif i >= int(win.t) + int(win.n) + 3:
+				hi_after = maxi(hi_after, int(e.get("dmg", 0)))
+	if lo_in == 999999 or hi_after < 0:
+		print("    BUFF WINDOW VACUOUS: strikes in-window? %s after? %s" % [lo_in != 999999, hi_after >= 0])
+		return false
+	if lo_in <= hi_after:
+		print("    BUFF FLAT: min buffed %d <= max unbuffed %d" % [lo_in, hi_after])
+		return false
+	return true
+
+
+## Burner b0 sets the tank alight; cleanser a2 scrubs it early. The DoT must vanish from the
+## victim's streamed status chips well before its natural expiry.
+func _run_cleanse() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-8, 0), "speed": 8.5,
+			"stats": {"STR": 50, "CON": 90, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "a2", "team": "A", "pos": Vector2(-20, 0), "speed": 7.0,
+			"stats": {"STR": 10, "CON": 40, "INT": 40, "WIS": 60},
+			"kit": [{"name": "Purify0", "kind": "cast", "power": 0, "cast_time": 0.6,
+				"cooldown": 6.0, "mana": 3, "channel": "support", "target": "ally", "range": 40.0,
+				"effects": {"cleanse": true}}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(10, 0), "speed": 8.0,
+			"stats": {"STR": 30, "CON": 70, "INT": 60, "WIS": 40},
+			"kit": [{"name": "Ember", "kind": "cast", "power": 8, "accuracy": 100, "cast_time": 1.0,
+				"cooldown": 6.0, "mana": 3, "channel": "magic",
+				"status": {"kind": "burn", "chance": 100, "duration": 4}}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+	]
+	var sim = Sim.new()
+	sim.setup(74, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-8, 0), Vector2(10, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## A 'cleanse' event from the cleanser broke "burn" on the victim, AND the victim's very next
+## frame carries no burn chip while the burn still had >1s left to run — scrubbed, not expired.
+func _cleanse_scrubbed_burn(res: Dictionary, cleanser: String, victim: String) -> bool:
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) != "cleanse" or str(e.get("from", "")) != cleanser \
+					or str(e.get("to", "")) != victim:
+				continue
+			if not ("burn" in (e.get("broke", []) as Array)):
+				continue
+			# The burn must have had real time left the frame BEFORE the scrub.
+			var left := 0.0
+			for u in res.frames[maxi(0, i - 1)].units:
+				if str(u.id) == victim:
+					for s in u.statuses:
+						if str(s.kind) == "burn":
+							left = maxf(left, float(s.left))
+			if left <= 1.0:
+				continue
+			if i + 1 >= res.frames.size():
+				continue
+			var gone := true
+			for u in res.frames[i + 1].units:
+				if str(u.id) == victim:
+					for s in u.statuses:
+						if str(s.kind) == "burn":
+							gone = false
+			if gone:
+				return true
+	return false

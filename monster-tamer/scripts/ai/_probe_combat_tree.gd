@@ -56,6 +56,11 @@ func _init() -> void:
 	_test_opportunistic_kick()
 	_test_aggression_shapes_engagement()
 	_test_smart_regroup()
+	_test_bull_through()
+	_test_order_seeding()
+	_test_big_moment_defined()
+	_test_combo_setup_derived()
+	_test_wing_variety()
 	_test_determinism()
 	print("COMBAT TREE PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	quit(1 if _fails > 0 else 0)
@@ -268,7 +273,9 @@ func _test_opportunistic_kick() -> void:
 	# spend it off-target, then return to the incumbent next tick.
 	var tree := CombatTree.build({"target_priority": "tanks"})
 	var bb := _bb_base()
-	bb.get_value("enemies")[1].pos = Vector2(-16, 0)   # e2: 4.0 from me, inside kick_range 6
+	# e2 stands BEHIND me: 4.0 away (inside kick_range 6) but not en route to e3 — so the
+	# bull-through interceptor rule leaves the target alone and the kick is genuinely off-target.
+	bb.get_value("enemies")[1].pos = Vector2(-24, 0)
 	bb.get_value("enemies")[1].casting = true
 	bb.set_value("interrupt_ready", true)
 	_tick(tree, bb, 0)
@@ -352,6 +359,117 @@ func _test_smart_regroup() -> void:
 	_tick(tree2, bb2, 0)
 	_check("regroup: all allies down falls back to the anchor",
 		bb2.get_value("req_move_to") == bb2.get_value("home_pos"))
+
+
+func _test_bull_through() -> void:
+	# Decision #30: the blocking rule is a TACTIC. e3 stands in reach (5 away, toward the mark);
+	# the mark e1 is ~30 away. bull_through=true holds course on the mark; false engages e3.
+	var t_bull := CombatTree.build({"target_priority": "marked", "ordered_id": "e1", "bull_through": true})
+	var bb := _bb_base()
+	bb.get_value("enemies")[2].pos = Vector2(-15, 0)   # e3: 5.0 from me, en route to e1
+	_tick(t_bull, bb, 0)
+	_check("#30: bull_through holds the ordered target", str(bb.get_value("target_id")) == "e1")
+	_check("#30: bull_through keeps the march on the mark",
+		bb.get_value("req_move_to") == bb.get_value("target_pos") and bb.get_value("target_pos") == Vector2(10, -5))
+	_check("#30: bulling through is said once", bb.reason() == "bulling through e3 to e1")
+	# The DEFAULT (no key) is bull_through=true — engage-on-intercept as the ambient rule
+	# un-dived every diver and blobbed the quality probe's dive comp; caution is the opt-in.
+	var t_def := CombatTree.build({"target_priority": "marked", "ordered_id": "e1"})
+	var bbd := _bb_base()
+	bbd.get_value("enemies")[2].pos = Vector2(-15, 0)
+	_tick(t_def, bbd, 0)
+	_check("#30: the DEFAULT bulls through (measured: engage-by-default blobs divers)",
+		str(bbd.get_value("target_id")) == "e1")
+	var t_block := CombatTree.build({"target_priority": "marked", "ordered_id": "e1", "bull_through": false})
+	var bb2 := _bb_base()
+	bb2.get_value("enemies")[2].pos = Vector2(-15, 0)
+	_tick(t_block, bb2, 0)
+	_check("#30: bull_through=false engages the interceptor", str(bb2.get_value("target_id")) == "e3")
+	_check("#30: the interception is legible", bb2.reason() == "intercepted — engaging e3")
+	# A body BEHIND me is not an interceptor — no swap, even for the cautious tactic.
+	var t_back := CombatTree.build({"target_priority": "marked", "ordered_id": "e1", "bull_through": false})
+	var bb3 := _bb_base()
+	bb3.get_value("enemies")[2].pos = Vector2(-25, 0)   # e3: 5.0 away but behind me
+	_tick(t_back, bb3, 0)
+	_check("#30: a body behind me is not in the way", str(bb3.get_value("target_id")) == "e1")
+
+
+func _test_order_seeding() -> void:
+	# tactics.ordered_id alone drives `marked` — the sim never fills the bb key.
+	var tree := CombatTree.build({"target_priority": "marked", "ordered_id": "e2"})
+	var bb := _bb_base()
+	_tick(tree, bb, 0)
+	_check("orders: tactics.ordered_id seeds the mark end-to-end", str(bb.get_value("target_id")) == "e2")
+	# The mark dies: Order-void releases it, and the seed must NOT resurrect the corpse-order.
+	bb.get_value("enemies")[1].hp = 0
+	_tick(tree, bb, 1)
+	_check("orders: dead seeded mark is released", str(bb.get_value("ordered_id")) == "")
+	_tick(tree, bb, 2)
+	_check("orders: the release sticks — no re-seed next descent",
+		str(bb.get_value("ordered_id")) == "" and str(bb.get_value("target_id")) != "e2")
+
+
+func _test_big_moment_defined() -> void:
+	# The moment, derived in-tree: target below 40% opens the capstone window...
+	var bb := _bb_base()
+	bb.set_value("capstone_ready", true)
+	bb.get_value("enemies")[2].hp = 35   # nearest (e3) at 35% — below the 0.40 fraction
+	_tick(CombatTree.build({"ability_policy": "hold_big", "target_priority": "nearest"}), bb, 0)
+	_check("hold_big: a target below 40%% IS the moment (derived)", bb.get_value("req_cast_allowed") == true)
+	# ...and so does a 3-body pack around a healthy target (the AoE payoff)...
+	var bb2 := _bb_base()
+	bb2.set_value("capstone_ready", true)
+	bb2.set_value("enemies", [
+		{"id": "e1", "pos": Vector2(5, 2), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e2", "pos": Vector2(6, 0), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e3", "pos": Vector2(5, 1), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+	])
+	_tick(CombatTree.build({"ability_policy": "hold_big", "target_priority": "nearest"}), bb2, 0)
+	_check("hold_big: 3 bodies packed on the target IS the moment (derived)",
+		bb2.get_value("req_cast_allowed") == true)
+	# ...but a healthy, lone-standing target still banks it (the base bb: 95% hp, 2-body pack).
+	var bb3 := _bb_base()
+	bb3.set_value("capstone_ready", true)
+	_tick(CombatTree.build({"ability_policy": "hold_big", "target_priority": "nearest"}), bb3, 0)
+	_check("hold_big: healthy and unpacked is NOT the moment", bb3.get_value("req_cast_allowed") == false)
+
+
+func _test_combo_setup_derived() -> void:
+	# With the setup gate closed (can_apply_setup false), combo casts ONLY on live setup —
+	# derived from the target's published statuses when the record carries them.
+	var bb := _bb_base()
+	bb.set_value("can_apply_setup", false)
+	_tick(CombatTree.build({"ability_policy": "combo", "target_priority": "nearest"}), bb, 0)
+	_check("combo: no statuses on the target, no cash-in", bb.get_value("req_cast_allowed") == false)
+	var bb2 := _bb_base()
+	bb2.set_value("can_apply_setup", false)
+	bb2.get_value("enemies")[2].statuses = [{"kind": "burn"}]   # nearest (e3) carries the setup
+	_tick(CombatTree.build({"ability_policy": "combo", "target_priority": "nearest"}), bb2, 0)
+	_check("combo: a status on the target reads as live setup (derived)",
+		bb2.get_value("req_cast_allowed") == true)
+
+
+func _test_wing_variety() -> void:
+	# Aggression widens the wing: 100 swings wider than the authored default.
+	var bb_def := _bb_base()
+	_tick(CombatTree.build({"positional": "wings", "wing_side": 1, "target_priority": "nearest"}), bb_def, 0)
+	var bb_hi := _bb_base()
+	bb_hi.set_value("aggression", 100)
+	_tick(CombatTree.build({"positional": "wings", "wing_side": 1, "target_priority": "nearest"}), bb_hi, 0)
+	var tp_y: float = bb_def.get_value("target_pos").y
+	_check("wings: aggression 100 swings wider",
+		absf(bb_hi.get_value("req_move_to").y - tp_y) > absf(bb_def.get_value("req_move_to").y - tp_y))
+	# Crowded wing flips: two enemies squat on the +y wing point of the target (e3 at (5,1),
+	# wing point (5,19)) — the wing swings to the -y side instead, and says so.
+	var bb_c := _bb_base()
+	bb_c.set_value("enemies", [
+		{"id": "e1", "pos": Vector2(6, 18), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e2", "pos": Vector2(4, 20), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e3", "pos": Vector2(5, 1), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+	])
+	_tick(CombatTree.build({"positional": "wings", "wing_side": 1, "target_priority": "nearest"}), bb_c, 0)
+	_check("wings: a crowded wing flips sides", bb_c.get_value("req_move_to").y < bb_c.get_value("target_pos").y)
+	_check("wings: the flip is legible", bb_c.reason() == "wing crowded — swinging to the other side")
 
 
 func _run_scenario() -> String:

@@ -38,8 +38,10 @@ func _ready() -> void:
 
 
 ## ---- rosters ------------------------------------------------------------------------------
-## Five 5v5 compositions spanning the tactic vocabulary: a plain brawl, a winged flank, a
-## caster/peel/kick fight on REAL authored kits, an all-in dive, and a kiting back line.
+## The 5v5 compositions spanning the tactic vocabulary: a plain brawl, a winged flank, a
+## caster/peel/kick fight on REAL authored kits, an all-in dive, a kiting back line, an
+## off-target-kick wall, the aggression-divergence pair, and a sustain fight with a real
+## authored healer per side (resolution's hard case — the stagnation ratchet's guard).
 
 func _load_moves() -> Array:
 	var txt := FileAccess.get_file_as_string("res://data/data.json")
@@ -150,6 +152,46 @@ func _comp_units(comp: String, moves: Array) -> Array:
 				{"target_priority": "nearest", "positional": "push"}, kits[1]))
 			out.append(_unit("b3", "B", Vector2(44, 5), caster, 7.0,
 				{"target_priority": "nearest", "positional": "push"}, kits[2]))
+		"sustain":
+			# RESOLUTION x HEALING comp: a REAL authored healer (Mend) on BOTH sides — the
+			# named risk of the support layer is a heal-stalemate at 5v5 scale. Heals are
+			# deliberately ABSENT from the stagnation pause list (sim.gd: sustain is not
+			# fight progress), so the ratchet must still close this fight inside the cap;
+			# this comp is that choice's regression guard at scale. The healers GUARD their
+			# tanks: Mend's reach is ~18 world units and a held back-line healer would drift
+			# out of range of its own front (the 3b check below would catch that vacuity).
+			# ⚠️ COMP SHAPE IS MEASURED, NOT ASSUMED (first two drafts were vacuous): guard
+			# stations the healer ON its charge — first contact, lowest DPS — so with any
+			# `weakest`/`nearest` hunters opposite, BOTH healers were the first kill of every
+			# fight, dying with full mana before a single ally was wounded ("kill the healer
+			# first" is correct emergence, but it tests nothing here). And a healer weaker
+			# than the bruisers re-magnetises every `weakest` hunter the moment it is nicked.
+			# So: CON 60 (never the weakest body) and the pushers hunt TANKS — the tank soaks,
+			# is wounded early and adjacent, and the healer demonstrably works (measured
+			# 11 heal events, both sides, resolution at ~364 ticks).
+			var healer := {"STR": 10, "CON": 60, "INT": 20, "WIS": 80}
+			var mend_a := Kit.build(["Mend"], moves)
+			var mend_b := Kit.build(["Mend"], moves)
+			out.append(_unit("a0", "A", Vector2(-40, 0), tank, 8.5,
+				{"target_priority": "tanks", "positional": "push"}))
+			out.append(_unit("a1", "A", Vector2(-40, -6), bruiser, 9.0,
+				{"target_priority": "tanks", "positional": "push"}))
+			out.append(_unit("a2", "A", Vector2(-40, 6), bruiser, 9.0,
+				{"target_priority": "tanks", "positional": "push"}))
+			out.append(_unit("a3", "A", Vector2(-40, -12), caster, 7.0,
+				{"target_priority": "weakest", "positional": "hold"}, kits[0]))
+			out.append(_unit("a4", "A", Vector2(-36, 12), healer, 8.0,
+				{"target_priority": "nearest", "positional": "guard", "guard_ally": "a0"}, mend_a))
+			out.append(_unit("b0", "B", Vector2(40, 0), tank, 8.5,
+				{"target_priority": "tanks", "positional": "push"}))
+			out.append(_unit("b1", "B", Vector2(40, -6), bruiser, 9.0,
+				{"target_priority": "tanks", "positional": "push"}))
+			out.append(_unit("b2", "B", Vector2(40, 6), bruiser, 9.0,
+				{"target_priority": "tanks", "positional": "push"}))
+			out.append(_unit("b3", "B", Vector2(40, 12), caster, 7.0,
+				{"target_priority": "weakest", "positional": "hold"}, kits[1]))
+			out.append(_unit("b4", "B", Vector2(36, -12), healer, 8.0,
+				{"target_priority": "nearest", "positional": "guard", "guard_ally": "b0"}, mend_b))
 		"temper_lo", "temper_hi":
 			# AGGRESSION DIVERGENCE comp: rosters byte-identical except team A's aggression
 			# (10 vs 90). A falls back when hurt; B is fight_on and chases, so the fight still
@@ -294,6 +336,7 @@ func _go() -> void:
 		{"seed": 44444, "comp": "dive"},
 		{"seed": 55555, "comp": "kite"},
 		{"seed": 777, "comp": "caster_peel"},   # second seed on the richest comp
+		{"seed": 8888, "comp": "sustain"},      # healing at 5v5 scale — resolution's hard case
 	]
 	var results: Array = []
 	for p in plan:
@@ -332,6 +375,27 @@ func _go() -> void:
 			ghost = true
 			print("    ghost fight: %s only %d action events" % [r.label, n])
 	_check("no ghost fights: >= %d strike+cast_done events per fight" % MIN_ACTION_EVENTS, not ghost)
+
+	# 3b. SUSTAIN NON-VACUOUS — the healing comp only guards resolution if BOTH healers
+	# actually healed. A silently-idle healer (out of range, gated, broken kit) would make
+	# check 1 a lie for this comp, so vacuity fails loudly here.
+	var heals := {"a4": 0, "b4": 0}
+	for r in results:
+		if not str(r.label).begins_with("sustain/"):
+			continue
+		for f in r.frames:
+			for e in f.events:
+				if str(e.kind) == "heal" and heals.has(str(e.get("from", ""))):
+					heals[str(e.get("from", ""))] += 1
+	if not (int(heals["a4"]) > 0 and int(heals["b4"]) > 0):
+		print("    sustain heals by caster: ", heals)
+		for r in results:
+			if str(r.label).begins_with("sustain/"):
+				print("    sustain winner=%s ticks=%d" % [str(r.winner), int(r.ticks)])
+				for hid in ["a4", "b4"]:
+					print("    %s decisions: " % hid, r.decision_logs.get(hid, []))
+	_check("sustain: both healers actually healed in the 5v5 (comp non-vacuous)",
+		int(heals["a4"]) > 0 and int(heals["b4"]) > 0)
 
 	# 4. LEGIBILITY — live intent on every frame past tick 10; logs present and compact.
 	var intent_bad := false

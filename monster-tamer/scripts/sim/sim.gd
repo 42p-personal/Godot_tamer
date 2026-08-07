@@ -20,16 +20,23 @@
 ## floor, refresh/stacking), per-tick behaviour through the contracted Tick (DoT attrition,
 ## doom detonate, CC-meter decay), hard control (stun/sleep freeze everything, silence blocks
 ## casts, fear blocks swings), and the table-driven passives (speedMult, accPenalty,
-## damageTakenMult, breaksOnDamage, bonusVsStatus detonation). Still layering on next:
-## projectiles (#34), innate auras, mods (atk/def buffs), ally-targeted buffs, charm's
-## turncoat, confusion's veer steering, knockback displacement (its speedMult ticks; the
-## SHOVE needs the flight machinery), spreadStatus contagion.
+## damageTakenMult, breaksOnDamage, bonusVsStatus detonation) — and THE SUPPORT LAYER:
+## friendly casts (heal/ward/guard/timed atk-def-acc-dodge mods/cleanse, targets self/ally/team),
+## timed MODS living on the unit and expiring through the contracted Tick, wards as absorb pools
+## consumed by resolve_strike's defWard input, and enemy stat debuffs (defDebuff/atkDebuff/
+## accDebuff) applied as timed mods on a landed hit. Still layering on next: projectiles (#34),
+## innate auras, thorns, tauntForce, charm's turncoat, confusion's veer steering, knockback
+## displacement (its speedMult ticks; the SHOVE needs the flight machinery), spreadStatus
+## contagion, AoE geometry (allEnemies moves).
 ##
 ## ⚠️ STATUS RNG DRAW ORDER (part of the determinism contract): a cast completion draws
 ## acc/crit/variance as before, then — ONLY when the move carries a `status` block AND the
 ## accuracy roll hit — ONE further draw for the status chance. Same accuracy gate for damage
 ## and status (no double jeopardy); a miss draws nothing extra. Reordering or
 ## unconditionalising that draw changes every fight that follows it.
+## ⚠️ FRIENDLY CASTS DRAW ZERO RNG. A heal/buff/cleanse on your own side cannot miss and cannot
+## crit (matching the legacy team-effect path, which rolled nothing), so completing one consumes
+## no draws — every fight without support in play is byte-identical to before the layer existed.
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -46,6 +53,10 @@ const BODY_RADIUS := 2.2        # agreed with the renderer (spatial.gd)
 const MAX_TICKS := 1800         # 3 min hard stop (fight length is emergent, #11)
 const BASE_REACH := 6.6         # melee basic reach: 3.0 * GEOMETRY_SCALE, per CLASS_BASIC melee
 const BASIC_COOLDOWN := 12      # ticks between basic attacks (1.2s)
+
+## Healing multiplier when the target is healblocked — `src/battle.ts:430` (via battle_sim.gd).
+## The heal itself is the field heal rule from the same line: round(power * 1.2 * mult).
+const HEALBLOCK_MULT := 0.4
 
 ## MOVEMENT FEEL — the constants that make the fight read as bodies, not sliding chips.
 const SLOT_COUNT := 6           # surround slots per target, 60° apart: chord at SLOT_RADIUS is
@@ -125,6 +136,7 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"max_mp": Derive.max_mana(float(stats.get("WIS", 10)), float(stats.get("INT", 10))),
 			"kit": u.get("kit", []), "cds": {}, "casting": {},
 			"statuses": [], "cc_resist": 0.0, "last_cc_at": -999.0,
+			"mods": [],       # timed atk/def/acc/dodge/ward/guard/regen mods — tick.gd expires them
 			"dmg_from": {},   # attacker id -> decaying recent damage (the THREAT ledger)
 			"kite_ticks": int(u.get("kite_budget", 80)),  # #39: kiting ENDS - 8s default budget
 			"facing": Vector2(1, 0) if str(u["team"]) == "A" else Vector2(-1, 0),
@@ -179,7 +191,7 @@ func _step() -> void:
 		# detonate-on-expiry, status expiry, CC-meter decay. Cooldowns stay tick-integers on
 		# this side: pass none, keep ours.
 		var tout: Dictionary = TickLib.tick_unit({
-			"dt": DT, "now": tick_now * DT, "statuses": u.statuses, "mods": [],
+			"dt": DT, "now": tick_now * DT, "statuses": u.statuses, "mods": u.mods,
 			"cooldowns": {}, "wis": float(u.stats.get("WIS", 10)), "isSupport": false,
 			"mp": u.mp, "maxMp": float(u.max_mp), "hp": float(u.hp), "maxHp": float(u.max_hp),
 			"ccResist": u.cc_resist, "lastCcAt": u.last_cc_at,
@@ -187,6 +199,9 @@ func _step() -> void:
 		u.hp = tout["hp"]
 		u.mp = tout["mp"]
 		u.statuses = tout["statuses"]
+		# The contracted Tick expires mods (`now < until`) and pays their regen/hpRegen at the
+		# authored per-ROUND rate divided by SECONDS_PER_ROUND — never re-derived here.
+		u.mods = tout["mods"]
 		u.cc_resist = tout["ccResist"]
 		# ⚠️ STAGNATION CHOICE, DOCUMENTED: DoT ticks are DELIBERATELY absent from the
 		# ratchet's pause list (it scans strike/cast_done only). The strike or cast that
@@ -207,6 +222,11 @@ func _step() -> void:
 	# Stagnation clock: a landed hit PAUSES the ratchet (miss/fizzle does not — silence is
 	# silence); growth happens below only after ARM ticks of real silence. Deaths reset it
 	# further down, once they are detected.
+	# ⚠️ STAGNATION x HEALING, THE CHOICE DOCUMENTED: 'heal'/'buff'/'cleanse'/'ward_soak' are
+	# DELIBERATELY absent from this pause list. A team sustaining itself while landing nothing
+	# is not fight progress — if support casts paused the ratchet, a healer alone could hold a
+	# turtled remnant unresolvable forever. Damage still pauses it and only a death resets it,
+	# so a sustain-heavy fight comes under the same growing leash as any other stalemate.
 	for e in events:
 		if str(e.kind) in ["strike", "cast_done"]:
 			last_damage_tick = tick_now
@@ -253,7 +273,13 @@ func _fill_bb(u: Dictionary) -> void:
 			#   threat   — recent damage THIS enemy dealt ME (my own ledger row);
 			#   casting  — committed to a cast (feeds the opportunistic kick);
 			#   team_dmg — recent damage MY TEAM dealt this enemy, summed in unit-id
-			#              order (float addition order is part of determinism).
+			#              order (float addition order is part of determinism);
+			#   statuses — this enemy's live AILMENTS as minimal {kind} records, in apply
+			#              order. Filtered SIM-SIDE by the beneficial table (the tree has
+			#              no status rulebook): a buff on an enemy is not combo setup.
+			#              Feeds the combo policy's setup_status_live derivation. Minimal
+			#              records on purpose — no timers/payloads for the tree to lean on.
+			#              No rng, no new iteration order: pure read, deterministic.
 			rec["threat"] = float(u.dmg_from.get(o.id, 0.0))
 			rec["casting"] = o.alive and not o.casting.is_empty()
 			var team_dmg := 0.0
@@ -261,6 +287,12 @@ func _fill_bb(u: Dictionary) -> void:
 				if t.team == u.team:
 					team_dmg += float(o.dmg_from.get(t.id, 0.0))
 			rec["team_dmg"] = team_dmg
+			var ail: Array = []
+			if o.alive:
+				for s in o.statuses:
+					if not (str(s["kind"]) in _beneficial_statuses()):
+						ail.append({"kind": str(s["kind"])})
+			rec["statuses"] = ail
 			enemies.append(rec)
 			if o.alive:
 				enemy_line_x += o.pos.x
@@ -487,7 +519,10 @@ func _resolve_pushes(u: Dictionary, prev_pos: Vector2) -> void:
 		u.pos = prev_pos + moved / moved.length() * MAX_TICK_MOVE
 
 
-## First kit move of `kind` that is off cooldown and affordable, or "".
+## First kit move of `kind` that is off cooldown, affordable and — for a FRIENDLY move — has
+## something useful to do, or "". The usefulness gate is sim-side on purpose: the tree's
+## `req_cast_allowed` flows unchanged, and a heal with nobody wounded simply reads not-ready,
+## so the kit falls through to its next move instead of dribbling overheals.
 func _ready_move(u: Dictionary, kind: String) -> String:
 	for m in u.kit:
 		if str(m.get("kind", "cast")) != kind:
@@ -495,6 +530,8 @@ func _ready_move(u: Dictionary, kind: String) -> String:
 		if int(u.cds.get(str(m.name), 0)) > 0:
 			continue
 		if float(u.mp) < float(m.get("mana", 0)):
+			continue
+		if _is_friendly_entry(m) and not _friendly_useful(u, m):
 			continue
 		return str(m.name)
 	return ""
@@ -505,6 +542,193 @@ func _kit_move(u: Dictionary, name: String) -> Dictionary:
 		if str(m.name) == name:
 			return m
 	return {}
+
+
+# ═══ FRIENDLY CASTS — heals, wards, timed mods, cleanse ══════════════════════════════════════
+# A buff-type kit move casts EXACTLY like any cast (same commitment, same stillness, same kick
+# vulnerability, mana paid at start) but resolves against the caster's own side. No rng draws
+# (see the header note). Effects become timed MODS: the shapes and the rounds->seconds
+# conversion are the legacy field engine's (`battle_sim.gd:_apply_team_effect`, itself the port
+# of `src/battle.ts:resolveUtilityOnTarget`), durations via the contracted
+# Derive.rounds_to_seconds. Every mod carries `src` (the move name) so re-casting cannot stack
+# an identical mod the target already wears.
+
+## Mod keys the sim expresses, in the legacy engine's own names. kit.gd's acceptance list must
+## stay in lock-step with this mapping.
+const MOD_OF_EFFECT := {
+	"atkBuff": "atkMultBonus", "defBuff": "defMitDebuff", "accBuff": "accMod",
+	"dodgeBuff": "dodgeMod", "ward": "ward", "guard": "guard",
+	"hpRegenBuff": "hpRegen", "regenBuff": "regen",
+}
+
+static var _beneficial_cache: Array = []
+
+
+## ⚠️ LOADED AS DATA, NEVER TRANSCRIBED (the status_math.gd lesson): battle.ts:423 cleanses
+## everything EXCEPT the beneficial set, and data.json carries that set.
+static func _beneficial_statuses() -> Array:
+	if _beneficial_cache.is_empty():
+		var f := FileAccess.open("res://data/data.json", FileAccess.READ)
+		if f == null:
+			push_error("cannot open res://data/data.json — run ./run_contract.sh")
+			return []
+		var parsed = JSON.parse_string(f.get_as_text())
+		f.close()
+		if parsed is Dictionary and parsed.has("beneficialStatuses"):
+			_beneficial_cache = parsed["beneficialStatuses"]
+	return _beneficial_cache
+
+
+## The DATA move a kit entry carries, or an inline shape built from the entry (test kits).
+func _move_of_entry(m: Dictionary) -> Dictionary:
+	if m.get("move") is Dictionary:
+		return m["move"]
+	return {"name": str(m.get("name", "")), "power": float(m.get("power", 0)),
+		"accuracy": float(m.get("accuracy", 100)), "type": str(m.get("type", "damage")),
+		"channel": str(m.get("channel", "magic")), "effects": m.get("effects", {}),
+		"status": m.get("status", null), "target": str(m.get("target", "enemy"))}
+
+
+func _entry_target(m: Dictionary) -> String:
+	return str(_move_of_entry(m).get("target", "enemy"))
+
+
+func _is_friendly_entry(m: Dictionary) -> bool:
+	return _entry_target(m) in ["self", "ally", "team"]
+
+
+func _sum_mods(u: Dictionary, key: String) -> float:
+	var t := 0.0
+	for mod in u.mods:
+		t += float(mod.get(key, 0.0))
+	return t
+
+
+func _has_mod_from(u: Dictionary, src: String) -> bool:
+	for mod in u.mods:
+		if str(mod.get("src", "")) == src:
+			return true
+	return false
+
+
+func _has_cleansable(u: Dictionary) -> bool:
+	for s in u.statuses:
+		if not (str(s["kind"]) in _beneficial_statuses()):
+			return true
+	return false
+
+
+## The living units a friendly entry would touch RIGHT NOW, in unit-id order (units is sorted).
+## "ally" means someone ELSE where possible — the legacy resolver's rule — falling back to self.
+func _friendly_recipients(u: Dictionary, m: Dictionary) -> Array:
+	var reach := float(m.get("range", CAST_RANGE))
+	match _entry_target(m):
+		"self":
+			return [u]
+		"team":
+			var team: Array = []
+			for o in units:
+				if o.alive and o.team == u.team and u.pos.distance_to(o.pos) <= reach:
+					team.append(o)
+			return team
+		_:
+			var best = null
+			var best_frac := INF
+			for o in units:
+				if not o.alive or o.team != u.team or o.id == u.id:
+					continue
+				if u.pos.distance_to(o.pos) > reach:
+					continue
+				# Lowest hp-FRACTION living ally in range; id-order tiebreak (strict <, and
+				# units is already id-sorted, so the first of a tie wins).
+				var frac: float = float(o.hp) / float(o.max_hp)
+				if frac < best_frac:
+					best_frac = frac
+					best = o
+			return [best] if best != null else [u]
+
+
+## Would this friendly cast DO anything? Any component counting: a heal with someone actually
+## wounded, a cleanse with something to scrub, or a timed mod the recipient is not already
+## wearing from this same move.
+func _friendly_useful(u: Dictionary, m: Dictionary) -> bool:
+	var mv := _move_of_entry(m)
+	var fx = mv.get("effects")
+	var fxd: Dictionary = fx if fx is Dictionary else {}
+	var spec = mv.get("status")
+	for r in _friendly_recipients(u, m):
+		if float(mv.get("power", 0)) > 0.0 and float(r.hp) < float(r.max_hp) - 0.5:
+			return true
+		if bool(fxd.get("cleanse", false)) and _has_cleansable(r):
+			return true
+		for key in MOD_OF_EFFECT:
+			if fxd.has(key) and not _has_mod_from(r, str(mv.get("name", ""))):
+				return true
+		if spec is Dictionary and not _has_status(r, str((spec as Dictionary).get("kind", ""))):
+			return true
+	return false
+
+
+## Resolve a completed friendly cast — heal, then mods, then cleanse, per recipient. The heal is
+## the field heal rule (battle.ts:430): round(power * 1.2), x HEALBLOCK_MULT under a blockHeal
+## status (table-driven, never a hardcoded name). Emits 'heal' (from/to/amount — the shape
+## _watch_sim.gd's scoreboard aggregates), 'buff', and 'cleanse' events.
+func _resolve_friendly(u: Dictionary, kentry: Dictionary, events: Array) -> void:
+	var mv := _move_of_entry(kentry)
+	var fx = mv.get("effects")
+	var fxd: Dictionary = fx if fx is Dictionary else {}
+	var power := float(mv.get("power", 0))
+	for r in _friendly_recipients(u, kentry):
+		if power > 0.0:
+			var mult: float = HEALBLOCK_MULT if _has_rule_flag(r, "blockHeal") else 1.0
+			var heal: float = round(power * 1.2 * mult)
+			var before: float = float(r.hp)
+			r.hp = minf(float(r.max_hp), float(r.hp) + heal)
+			events.append({"kind": "heal", "from": u.id, "to": r.id,
+				"move": str(kentry.name), "amount": int(float(r.hp) - before)})
+		var mod := {"until": tick_now * DT + Derive.rounds_to_seconds(float(fxd.get("duration", 1))),
+			"src": str(mv.get("name", kentry.name))}
+		var applied := false
+		for key in MOD_OF_EFFECT:
+			if fxd.has(key):
+				# defBuff is NEGATIVE defMitDebuff (more mitigation), the legacy sign convention.
+				var v := float(fxd[key])
+				mod[MOD_OF_EFFECT[key]] = -v if key == "defBuff" else v
+				applied = true
+		if applied and not _has_mod_from(r, str(mod["src"])):
+			r.mods.append(mod)
+			events.append({"kind": "buff", "from": u.id, "to": r.id,
+				"move": str(kentry.name), "seconds": float(mod["until"]) - tick_now * DT})
+		# An authored status on a FRIENDLY move (Battle Hymn's haste — the only one in the pool)
+		# lands through the contracted rulebook but WITHOUT a chance draw: friendly casts draw
+		# zero rng (header note), so the chance is treated as certain. ⚠️ If a future friendly
+		# move authors chance < 100 this must grow a documented draw, not silently keep 100.
+		var spec = _move_of_entry(kentry).get("status")
+		if spec is Dictionary and r.alive:
+			var sout: Dictionary = StatusMathLib.apply_status({
+				"kind": str((spec as Dictionary)["kind"]), "statuses": r.statuses,
+				"ccResist": r.cc_resist, "targetDead": not r.alive,
+				"rounds": float((spec as Dictionary).get("duration", 1)),
+				"now": tick_now * DT, "ccImmuneUntil": -999.0,
+				"targetCon": float(r.stats.get("CON", 0)), "from": u.id,
+			})
+			if bool(sout["applied"]):
+				r.statuses = sout["statuses"]
+				events.append({"kind": "status_applied", "to": r.id, "from": u.id,
+					"status": str((spec as Dictionary)["kind"]), "seconds": float(sout["seconds"])})
+		if bool(fxd.get("cleanse", false)):
+			# battle.ts:423 — a cleanse scrubs every AILMENT and keeps the beneficial set.
+			var broken: Array = []
+			var kept: Array = []
+			for s in r.statuses:
+				if str(s["kind"]) in _beneficial_statuses():
+					kept.append(s)
+				else:
+					broken.append(str(s["kind"]))
+			if not broken.is_empty():
+				r.statuses = kept
+				events.append({"kind": "cleanse", "from": u.id, "to": r.id,
+					"move": str(kentry.name), "broke": broken})
 
 
 const CAST_RANGE := 30.0        # spells reach far - the arena is big and casters stand off
@@ -526,6 +750,13 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			u.casting = {}
 		elif tick_now >= int(u.casting.ends):
 			var kentry: Dictionary = u.casting.move
+			# FRIENDLY CASTS resolve on their own path: no rolls, no rng, no strike — heal,
+			# mods and cleanse per recipient. Cooldown starts here like any completed cast.
+			if bool(u.casting.get("friendly", false)):
+				_resolve_friendly(u, kentry, events)
+				u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
+				u.casting = {}
+				return
 			# The DATA move goes into resolve_strike verbatim when this kit entry carries one
 			# (kit.gd path); hand-built test kits still describe themselves inline.
 			var mv: Dictionary = kentry.get("move", {"name": str(kentry.name),
@@ -538,30 +769,41 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))
 			# bonusVsStatus arms BEFORE the strike (the status it detonates is consumed after).
 			var bvs_armed: bool = _bonus_status_armed(mv, tgt)
+			# Timed mods feed the contracted inputs: atkMultBonus/accMod on the attacker,
+			# defMitDebuff/dodgeMod/guard/ward on the defender — resolve_strike does the math.
 			var out: Dictionary = Damage.resolve_strike({
 				"move": mv,
 				"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
 				"now": tick_now * DT,
 				"atk": float(u.stats.get(str(kentry.get("stat", "INT")), 10)),
-				"atkMult": 1.0, "attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
-				"accPenalty": _acc_penalty_of(u), "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
+				"atkMult": 1.0 + _sum_mods(u, "atkMultBonus"),
+				"attackerHpFrac": float(u.hp) / float(u.max_hp),
+				"attackerWard": _sum_mods(u, "ward"),
+				"accPenalty": _acc_penalty_of(u), "accMod": _sum_mods(u, "accMod"),
+				"dodgeMod": _sum_mods(tgt, "dodgeMod"), "flankBonus": 0.0, "behindMult": 1.0,
 				"falloff": 1.0,
 				"defMit": Damage.mitigation_for(def_stat),
-				"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": _dmg_taken_of(tgt),
-				"defGuard": 0, "defWard": 0, "defBlocking": false, "defHasAttacked": tgt.has_attacked,
+				"defMitDebuff": _sum_mods(tgt, "defMitDebuff"), "defDmgTakenMod": 1.0,
+				"defStatusDmgTaken": _dmg_taken_of(tgt),
+				"defGuard": _sum_mods(tgt, "guard"), "defWard": _sum_mods(tgt, "ward"),
+				"defBlocking": false, "defHasAttacked": tgt.has_attacked,
 				"defHasBonusStatus": bvs_armed, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
 				"defMaxHp": tgt.max_hp,
 			})
 			u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
 			if bool(out.get("hit", false)):
 				tgt.hp -= int(out.get("toHp", 0))
-				tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
+				_drain_ward(u, tgt, out, events)
+				# Threat credits the FULL blow — a soaked hit still marks the attacker as the
+				# problem (identical to before when no wards exist: toHp == dmg then).
+				tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("dmg", 0))
 				events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
 					"move": str(kentry.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
 				if int(out.get("toHp", 0)) > 0:
 					_break_on_damage(tgt, events)
 				if bvs_armed:
 					_consume_bonus_status(mv, tgt, events)
+				_apply_enemy_debuffs(u, tgt, mv, events)
 				# ⚠️ THE 4TH DRAW — see the draw-order note in the file header. Only on a hit,
 				# only when the move authors a status.
 				_maybe_apply_status(u, tgt, mv, events)
@@ -591,6 +833,18 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 		var tid2: String = str(bb.get_value("target_id", ""))
 		var tgt2 = _unit(tid2)
 		var mvx: Dictionary = _kit_move(u, cname) if cname != "" else {}
+		# FRIENDLY CAST START — same commitment and interruptibility as any cast, but the target
+		# is our own side: the picked recipient for "ally", the caster itself for "self"/"team"
+		# (a team cast anchors on the caster and fans out at RESOLUTION time). `_ready_move`
+		# already guaranteed usefulness and range this same call.
+		if cname != "" and _is_friendly_entry(mvx):
+			var rec: Array = _friendly_recipients(u, mvx)
+			var fid: String = u.id if _entry_target(mvx) in ["self", "team"] else str(rec[0].id)
+			u.mp -= float(mvx.get("mana", 0))
+			u.casting = {"move": mvx, "target": fid, "friendly": true,
+				"started": tick_now, "ends": tick_now + int(float(mvx.get("cast_time", 1.5)) / DT)}
+			events.append({"kind": "cast_start", "from": u.id, "to": fid, "move": cname})
+			return
 		var cast_range: float = float(mvx.get("range", CAST_RANGE)) if not mvx.is_empty() else CAST_RANGE
 		# Opportunism: the ordered target when in range; otherwise the nearest IN-RANGE enemy
 		# (id-order tiebreak). A caster staring at a distant kill target while an enemy stands
@@ -640,12 +894,16 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 		"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
 		"now": tick_now * DT,
 		"atk": float(u.stats.get("STR", 10)),
-		"atkMult": 1.0, "attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
-		"accPenalty": _acc_penalty_of(u), "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
+		"atkMult": 1.0 + _sum_mods(u, "atkMultBonus"),
+		"attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
+		"accPenalty": _acc_penalty_of(u), "accMod": _sum_mods(u, "accMod"),
+		"dodgeMod": _sum_mods(tgt, "dodgeMod"), "flankBonus": 0.0, "behindMult": 1.0,
 		"falloff": 1.0,
 		"defMit": Damage.mitigation_for(float(tgt.stats.get("CON", 10))),
-		"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": _dmg_taken_of(tgt),
-		"defGuard": 0, "defWard": 0, "defBlocking": false, "defHasAttacked": tgt.has_attacked,
+		"defMitDebuff": _sum_mods(tgt, "defMitDebuff"), "defDmgTakenMod": 1.0,
+		"defStatusDmgTaken": _dmg_taken_of(tgt),
+		"defGuard": _sum_mods(tgt, "guard"), "defWard": _sum_mods(tgt, "ward"),
+		"defBlocking": false, "defHasAttacked": tgt.has_attacked,
 		"defHasBonusStatus": false, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
 		"defMaxHp": tgt.max_hp,
 	})
@@ -654,7 +912,8 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 	u.facing = (tgt.pos - u.pos).normalized() if u.pos != tgt.pos else u.facing
 	if bool(out.get("hit", false)):
 		tgt.hp -= int(out.get("toHp", 0))
-		tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
+		_drain_ward(u, tgt, out, events)
+		tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("dmg", 0))
 		events.append({"kind": "strike", "from": u.id, "to": tid,
 			"dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
 		if int(out.get("toHp", 0)) > 0:
@@ -726,6 +985,56 @@ func _dmg_taken_of(u: Dictionary) -> float:
 	for s in u.statuses:
 		m *= float(StatusMathLib._rule(str(s["kind"])).get("damageTakenMult", 1.0))
 	return m
+
+
+## WARDS DEPLETE. resolve_strike reported what the target's absorb pool soaked; spend it off
+## the target's ward mods in append order, and emit the event so the soak is visible ("viewer-
+## facing facts ride the frame stream"). A consumeWard attacker (spendsOwnWard) burns its own
+## pool for the bonus it just cashed — the payoff has a cost, matching the legacy engine.
+func _drain_ward(u: Dictionary, tgt: Dictionary, out: Dictionary, events: Array) -> void:
+	var soaked := int(out.get("wardSoaked", 0))
+	if soaked > 0:
+		var remaining := float(soaked)
+		for mod in tgt.mods:
+			if remaining <= 0.0:
+				break
+			if float(mod.get("ward", 0.0)) > 0.0:
+				var take: float = minf(float(mod["ward"]), remaining)
+				mod["ward"] = float(mod["ward"]) - take
+				remaining -= take
+		events.append({"kind": "ward_soak", "from": u.id, "to": tgt.id, "amount": soaked})
+	if bool(out.get("spendsOwnWard", false)):
+		for mod in u.mods:
+			if mod.has("ward"):
+				mod["ward"] = 0.0
+
+
+## Statless enemy debuffs (defDebuff/atkDebuff/accDebuff) become timed mods on a LANDED hit —
+## the legacy `_resolve_hit` debuff path, same names, same signs, durations through the
+## contracted rounds->seconds. `src` tags them like every mod, so a spammed debuff refreshes
+## nothing while its twin is live (the cooldown is the real throttle; this stops double-stack).
+func _apply_enemy_debuffs(u: Dictionary, tgt: Dictionary, mv: Dictionary, events: Array) -> void:
+	var fx = mv.get("effects")
+	if not (fx is Dictionary):
+		return
+	var fxd: Dictionary = fx
+	var mod := {}
+	if fxd.has("defDebuff"):
+		mod["defMitDebuff"] = float(fxd["defDebuff"])
+	if fxd.has("atkDebuff"):
+		mod["atkMultBonus"] = -float(fxd["atkDebuff"])
+	if fxd.has("accDebuff"):
+		mod["accMod"] = -float(fxd["accDebuff"])
+	if mod.is_empty():
+		return
+	var src := str(mv.get("name", ""))
+	if _has_mod_from(tgt, src):
+		return
+	mod["until"] = tick_now * DT + Derive.rounds_to_seconds(float(fxd.get("duration", 1)))
+	mod["src"] = src
+	tgt.mods.append(mod)
+	events.append({"kind": "debuff", "from": u.id, "to": tgt.id, "move": src,
+		"seconds": float(mod["until"]) - tick_now * DT})
 
 
 ## Is the move's bonusVsStatus detonator armed — does the target carry the fuel status?

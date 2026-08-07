@@ -11,12 +11,22 @@
 ##                 — ORDERED BY ID; order is part of determinism.
 ##   allies      : Array of {id, pos: Vector2, hp, max_hp}
 ##   taunted_by  : enemy id or "" (taunt is an ability effect, decision #7)
-##   ordered_id  : the player-marked target id or "" (axis A `marked`)
+##   ordered_id  : the player-marked target id or "" (axis A `marked`). ⚠️ The sim does NOT
+##                 fill this — the TREE seeds it once from tactics.ordered_id on the first
+##                 descent (see build()), so marked orders work from the tactics dict alone.
+##                 The urgent Order-void branch clears a dead mark; it is never re-seeded.
 ##   guard_id    : ally id for `guard` positional, or ""
 ##   safe_pos    : Vector2 the sim considers a genuine retreat point (allies/cover side)
 ##   home_pos    : Vector2 deployment anchor (axis B `hold`)
 ##   enemy_line_x: float — the enemy front's x, for push/dive geometry
-##   capstone_ready / setup_status_live : bools for the ability policy branch
+##   capstone_ready : bool for the ability policy branch (is the big cast off cooldown?)
+##   big_moment / setup_status_live : OPTIONAL force-open bools. The tree now DERIVES both
+##                 when they are absent/false: hold_big's moment = target below
+##                 `big_moment_frac` (0.40) OR 3+ live enemies inside `big_moment_radius`
+##                 (8.0) of the target; combo's live setup = any entry in the target
+##                 record's `statuses` array (sim-filled — see SIM-FILLED EXTRAS below). A
+##                 true from the sim or a test always wins — derivation only ever OPENS the
+##                 window.
 ##   focus_sticky: float >= 1.0, derived from Focus (commitment); 1.0 == `reassess`
 ##   nerve       : 0-100, sets how cleanly `fall back` disengages (dwell scaling)
 ##
@@ -27,8 +37,15 @@
 ##   when_hurt       : fight_on | fall_back | disengage
 ##   hurt_at         : hp fraction that arms the when-hurt branch (data, not hardcoded)
 ##   ability_policy  : free | hold_big | combo
-##   bull_through    : bool — decision #30: the blocking rule is a TACTIC. true = path to the
-##                     ordered target regardless; false = engage whatever intercepts.
+##   bull_through    : bool — decision #30: the blocking rule is a TACTIC. true (DEFAULT) =
+##                     path to the ordered/priority target regardless (the swing at bodies en
+##                     route is the sim's opportunism, not the tree's); false = the opt-in
+##                     cautious tactic: engage whatever intercepts. An interceptor = a live
+##                     enemy inside `interceptor_reach` (bb, default 6.6 = the sim's
+##                     BASE_REACH) while my pick is OUT of reach, in the half-plane toward
+##                     the pick. ⚠️ Default MEASURED, not assumed: engage-on-intercept as the
+##                     unset rule un-dived every diver and blobbed the dive comp (see the
+##                     note in _target_node).
 ##
 ## ⚠️ URGENT OVERRIDES ARE A SHORT CLOSED LIST (decision #27) and `fight_on` BEATS the
 ## self-preservation override (decision #28) — the player's order stays sovereign. Do not add
@@ -50,6 +67,14 @@
 ##                         default 6.0 for hand-built blackboards.
 ##   aggression          : 0-100 personality (§3/§9: personality weights branch selection);
 ##                         default 50 == every multiplier exactly 1.0.
+##   enemies[i].statuses : this enemy's live AILMENTS, minimal {kind} records in apply order.
+##                         Filtered SIM-SIDE by the beneficial table (the tree has no status
+##                         rulebook), so "any entry" here MEANS "an ailment is live" — a buff
+##                         on an enemy never reads as combo setup. Feeds the combo policy's
+##                         `setup_status_live` derivation; default [] (absent) falls back to
+##                         the `can_apply_setup` gate unchanged.
+##
+## ── SIM WISHLIST (EMPTY — every key above is sim-filled as of the support-layer round) ───────
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -65,6 +90,19 @@ static func build(tactics: Dictionary) -> BT.BehaviourTree:
 	var mode_slot := BT.SubtreeSlot.new()  # decision #38: modes INJECT subtrees here
 
 	var root := BT.Selector.new("", [
+		# MARKED ORDERS END-TO-END: tactics.ordered_id seeds the bb ONCE, on the first descent —
+		# the sim does not fill ordered_id, so the mark must work from the tactics dict alone.
+		# Seeded exactly once (never re-seeded): the urgent Order-void branch releases a DEAD
+		# mark by clearing the bb key, and a per-tick re-seed would resurrect the corpse-order.
+		# A hand-set bb ordered_id wins over the tactics seed. Always falls through (returns
+		# false) so the selector continues — this node never claims the tick.
+		BT.Condition.new("", func(bb):
+			if not bb.get_value("_order_seeded", false):
+				bb.set_value("_order_seeded", true)
+				var oid: String = str(tactics.get("ordered_id", ""))
+				if oid != "" and str(bb.get_value("ordered_id", "")) == "":
+					bb.set_value("ordered_id", oid)
+			return false),
 		_urgent_branch(tactics),
 		_when_hurt_branch(tactics),
 		mode_slot,
@@ -282,10 +320,61 @@ static func _target_node(tactics: Dictionary) -> BT.BTBase:
 					if (_hp_frac(e) <= exec_frac and not marked_pick) or sticky > 1.0:
 						pick = e  # hold the incumbent; scorer margins are the sim's re-open signal
 					break
+		# BULL-THROUGH (decision #30): the blocking rule is a TACTIC. An INTERCEPTOR is a live
+		# enemy that is not my pick, standing inside my reach while my pick is still OUT of
+		# reach, and in the half-plane TOWARD the pick (a body behind me is not "in the way").
+		# bull_through=true (THE DEFAULT) keeps the pick — the march continues and the sim's
+		# opportunism handles any swing en route; false is the opt-in cautious tactic that
+		# engages the blocker instead.
+		# ⚠️ WHY THE DEFAULT IS TRUE, MEASURED: with false as the default, the quality probe's
+		# dive/seed44444 comp collapsed — five divers engaged the enemy front's interceptors
+		# instead of going around, and team A huddled to 5.6u at tick 100 (the §2B anti-blob
+		# check). Engage-on-intercept as the unset behaviour un-dives every diver; it must be
+		# a choice, never the ambient rule.
+		# ⚠️ The false-path swap runs AFTER stickiness and the execute window on purpose:
+		# for a unit that CHOSE caution, blocked is blocked — commitment to a target you
+		# cannot path past is paralysis, not focus.
+		var reach_i: float = float(bb.get_value("interceptor_reach", 6.6))
+		var intercept_reason := ""
+		if Vector2(me.pos).distance_to(pick.pos) > reach_i:
+			var to_pick: Vector2 = (Vector2(pick.pos) - Vector2(me.pos)).normalized()
+			var interceptor: Dictionary = {}
+			var int_d: float = INF
+			for e in live:
+				if str(e.id) == str(pick.id):
+					continue
+				var d_e: float = Vector2(me.pos).distance_to(e.pos)
+				if d_e > reach_i:
+					continue
+				var dir_e: Vector2 = (Vector2(e.pos) - Vector2(me.pos)).normalized() if d_e > 0.001 else to_pick
+				if dir_e.dot(to_pick) <= 0.0:
+					continue
+				if d_e < int_d:  # strict < : ties keep the earlier, id-ordered enemy
+					int_d = d_e
+					interceptor = e
+			if not interceptor.is_empty():
+				if bool(tactics.get("bull_through", true)):
+					# Hold course; log the decision ONCE per blocker, not per tick.
+					if str(bb.get_value("_bull_id", "")) != str(interceptor.id):
+						bb.set_value("_bull_id", str(interceptor.id))
+						intercept_reason = "bulling through %s to %s" % [str(interceptor.id), str(pick.id)]
+				else:
+					if str(bb.get_value("_intercepted_id", "")) != str(interceptor.id):
+						bb.set_value("_intercepted_id", str(interceptor.id))
+						intercept_reason = "intercepted — engaging %s" % str(interceptor.id)
+					pick = interceptor
+			else:
+				bb.set_value("_bull_id", "")
+				bb.set_value("_intercepted_id", "")
+		else:
+			bb.set_value("_bull_id", "")
+			bb.set_value("_intercepted_id", "")
 		# The execute state is a decision worth logging ONCE per entry, not per tick.
 		var finishing: String = str(pick.id) if _hp_frac(pick) <= exec_frac else ""
 		if str(pick.id) != cur:
 			bb._reason = "target: %s (%s)" % [str(pick.id), mode]
+		if intercept_reason != "":
+			bb._reason = intercept_reason
 		if finishing != str(bb.get_value("_finishing_id", "")):
 			bb.set_value("_finishing_id", finishing)
 			if finishing != "":
@@ -293,6 +382,14 @@ static func _target_node(tactics: Dictionary) -> BT.BTBase:
 		bb.set_value("target_id", str(pick.id))
 		bb.set_value("target_pos", pick.pos)
 		return BT.SUCCESS)
+
+
+## The bb enemy record for an id, or {} — enemies is id-ordered, first hit is the only hit.
+static func _enemy_rec(bb, id: String) -> Dictionary:
+	for e in bb.get_value("enemies", []):
+		if str(e.id) == id:
+			return e
+	return {}
 
 
 ## HP fraction of an enemy record; the wounded-target currency both new layers trade in.
@@ -352,8 +449,26 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 			return BT.Action.new("Work the wing", func(bb):
 				bb.set_value("posture", "Work the wing")
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
-				var lateral: float = float(bb.get_value("wing_offset", 18.0)) * wing
-				bb.set_value("req_move_to", Vector2(tp.x, tp.y + lateral) if bb.get_value("wing_axis_y", true) else Vector2(tp.x + lateral, tp.y))
+				# WING VARIETY: Aggression scales the WIDTH (§9) — bolder swings wider; 50 =
+				# exactly the authored offset, the personality invariant everywhere in this file.
+				var lateral: float = float(bb.get_value("wing_offset", 18.0)) * wing * (0.7 + 0.6 * _aggr(bb))
+				var axis_y: bool = bool(bb.get_value("wing_axis_y", true))
+				var wp: Vector2 = Vector2(tp.x, tp.y + lateral) if axis_y else Vector2(tp.x + lateral, tp.y)
+				# CROWDED WING: 2+ live enemies nearer MY wing point than the target means the
+				# flank is already occupied — flip to the far side. Pure position reads, no rng;
+				# the flip is a decision worth logging ONCE, not per tick.
+				var crowd := 0
+				for e in bb.get_value("enemies", []):
+					if e.hp > 0 and Vector2(e.pos).distance_to(wp) < Vector2(e.pos).distance_to(tp):
+						crowd += 1
+				var flipped: bool = crowd >= 2
+				if flipped:
+					wp = Vector2(tp.x, tp.y - lateral) if axis_y else Vector2(tp.x - lateral, tp.y)
+				if flipped != bool(bb.get_value("_wing_flipped", false)):
+					bb.set_value("_wing_flipped", flipped)
+					if flipped:
+						bb._reason = "wing crowded — swinging to the other side"
+				bb.set_value("req_move_to", wp)
 				return BT.SUCCESS)
 		"dive":
 			return BT.Action.new("Dive the backline", func(bb):
@@ -468,9 +583,43 @@ static func _act_node(tactics: Dictionary) -> BT.BTBase:
 		var cast_ok := true
 		match policy:
 			"hold_big":
-				cast_ok = not bb.get_value("capstone_ready", false) or bb.get_value("big_moment", false)
+				# HOLD_BIG'S MOMENT, DEFINED IN THE TREE from facts the bb already carries — the
+				# sim needs no edit. The moment is: my target below big_moment_frac (a kill about
+				# to be sealed) OR 3+ live enemies packed within big_moment_radius of the target
+				# (the AoE payoff). Both authored, both bb-overridable. A sim/hand-set
+				# `big_moment` true still forces it — the derived check only ever OPENS the
+				# window, never closes a forced one.
+				var moment: bool = bool(bb.get_value("big_moment", false))
+				if not moment:
+					var trec: Dictionary = _enemy_rec(bb, tid)
+					if not trec.is_empty() and trec.hp > 0:
+						if _hp_frac(trec) <= float(bb.get_value("big_moment_frac", 0.40)):
+							moment = true
+						else:
+							var packed := 0
+							var r_m: float = float(bb.get_value("big_moment_radius", 8.0))
+							for e in bb.get_value("enemies", []):
+								if e.hp > 0 and Vector2(trec.pos).distance_to(e.pos) <= r_m:
+									packed += 1   # the target counts itself — 3+ bodies bunched
+							moment = packed >= 3
+				# The moment ARRIVING is a decision worth logging ONCE, not per tick.
+				if moment != bool(bb.get_value("_big_moment", false)):
+					bb.set_value("_big_moment", moment)
+					if moment and bb.get_value("capstone_ready", false):
+						bb._reason = "the moment — spending the capstone on %s" % tid
+				cast_ok = not bb.get_value("capstone_ready", false) or moment
 			"combo":
-				cast_ok = bb.get_value("setup_status_live", false) or bb.get_value("can_apply_setup", true)
+				# COMBO POLICY: `setup_status_live` — a sim/hand-set true wins; otherwise derive
+				# from the target's published `statuses` array. The sim fills it AILMENTS-ONLY
+				# (filtered by the beneficial table sim-side — see SIM-FILLED EXTRAS in the
+				# header), so any entry means live setup. Hand-built bbs without the key still
+				# fall back to the can_apply_setup gate unchanged.
+				var setup_live: bool = bool(bb.get_value("setup_status_live", false))
+				if not setup_live:
+					var trec2: Dictionary = _enemy_rec(bb, tid)
+					if not trec2.is_empty():
+						setup_live = not (trec2.get("statuses", []) as Array).is_empty()
+				cast_ok = setup_live or bb.get_value("can_apply_setup", true)
 		bb.set_value("req_attack", tid)
 		bb.set_value("req_cast_allowed", cast_ok)
 		return BT.RUNNING)

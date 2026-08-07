@@ -433,12 +433,25 @@ func _unit(id: String):
 func _emit_frame(events: Array) -> void:
 	var us: Array = []
 	for u in units:
+		# Renderer-grade state: the stream is the ONLY thing the renderer reads (#33).
+		var state := "idle"
+		if not u.alive:
+			state = "dead"
+		elif not u.casting.is_empty():
+			state = "cast"
+		elif u.pos.distance_to(u.get("prev_pos", u.pos)) > 0.02:
+			state = "advance"
 		us.append({
 			"id": u.id, "team": u.team, "pos": u.pos, "hp": maxi(0, u.hp), "alive": u.alive,
+			"max_hp": u.max_hp, "mp": u.mp, "max_mp": u.max_mp, "state": state,
+			"move_dir": (u.pos - u.get("prev_pos", u.pos)).normalized() if u.pos != u.get("prev_pos", u.pos) else Vector2.ZERO,
 			"facing": u.facing,
+			"posture": str(u.bb.get_value("posture", "")) if u.alive else "",
 			"intent": u.bb.intent_string() if u.alive else "",
 			"reason": u.bb.reason() if u.alive else "",
 			"castMove": str(u.casting.move.name) if not u.casting.is_empty() else "",
 			"castFrac": clampf(float(tick_now - int(u.casting.started)) / maxf(1.0, float(int(u.casting.ends) - int(u.casting.started))), 0.0, 1.0) if not u.casting.is_empty() else 0.0,
 		})
 	frames.append({"tick": tick_now, "units": us, "events": events})
+	for u in units:
+		u["prev_pos"] = u.pos

@@ -236,6 +236,7 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 	match mode:
 		"hold":
 			return BT.Action.new("Hold the line", func(bb):
+				bb.set_value("posture", "Hold the line")
 				var home: Vector2 = bb.get_value("home_pos", Vector2.ZERO)
 				var tp: Vector2 = bb.get_value("target_pos", home)
 				# Stand the line: meet the target only within the hold radius of home.
@@ -245,12 +246,14 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				return BT.SUCCESS)
 		"wings":
 			return BT.Action.new("Work the wing", func(bb):
+				bb.set_value("posture", "Work the wing")
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
 				var lateral: float = float(bb.get_value("wing_offset", 18.0)) * wing
 				bb.set_value("req_move_to", Vector2(tp.x, tp.y + lateral) if bb.get_value("wing_axis_y", true) else Vector2(tp.x + lateral, tp.y))
 				return BT.SUCCESS)
 		"dive":
 			return BT.Action.new("Dive the backline", func(bb):
+				bb.set_value("posture", "Dive the backline")
 				# Aim BEHIND the enemy line, not at the nearest body — the approach goes
 				# around, which is the whole identity of the tactic.
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
@@ -259,6 +262,7 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				return BT.SUCCESS)
 		"kite":
 			return BT.Action.new("Kite", func(bb):
+				bb.set_value("posture", "Kite")
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
 				var me: Dictionary = bb.get_value("self", {})
 				var gap: float = float(bb.get_value("kite_gap", 12.0))
@@ -283,6 +287,7 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				return BT.SUCCESS)
 		"guard":
 			return BT.Action.new("Guard the charge", func(bb):
+				bb.set_value("posture", "Guard the charge")
 				var gid: String = str(bb.get_value("guard_id", ""))
 				var charge_pos = null
 				for a in bb.get_value("allies", []):
@@ -307,11 +312,9 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				return BT.SUCCESS)
 		_:
 			return BT.Action.new("Push", func(bb):
+				bb.set_value("posture", "Push")
 				bb.set_value("req_move_to", bb.get_value("target_pos", Vector2.ZERO))
 				return BT.SUCCESS)
-	return BT.Action.new("Push", func(bb):
-		bb.set_value("req_move_to", bb.get_value("target_pos", Vector2.ZERO))
-		return BT.SUCCESS)
 
 
 ## Axis D ability policy: free spends on cooldown; hold_big banks the capstone for the moment;

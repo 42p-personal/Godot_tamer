@@ -1,5 +1,18 @@
 # Monster Tamer — Development Guide
 
+## ⚠️ THIS IS THE NEW REPO (2026-08-07): monster-tamer-3d
+
+Split from the original `Monster-Tamer` repository at `c804528` with FRESH history, on the
+user's direction: *"move this to a new git repo so it doesnt get confused with the old
+tamergame."* The old repo remains the archive and the deployed legacy React game; THIS repo is
+where the game is built. Two consequences:
+
+- **The Deploying section below describes the OLD repo's Cloudflare wiring.** Pushing `main`
+  HERE deploys nothing — the auto-deploy hook lives on the old repository. Do not ship the
+  legacy app from here.
+- Work lands on `main` in this repo (the old repo's `3doverhal` branch convention does not
+  carry over).
+
 ## THE VISION (clarified by the user, 2026-08-03)
 
 **You run a STABLE. The stable produces the PARTY. The party fights without you.**

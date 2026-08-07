@@ -105,6 +105,17 @@ func _go() -> void:
 	var peel2: Dictionary = await _run_peel()
 	_check("determinism holds with peels in play", _hash_frames(peel) == _hash_frames(peel2))
 
+	# #39: the kite has a cost and an END - no infinite-kite stalemate.
+	var kite: Dictionary = await _run_kite()
+	_check("kite: the kiter kites (reason logged)", _log_has(kite, "b0", "kiting"))
+	_check("kite: the budget ENDS it (standing logged)", _log_has(kite, "b0", "kite budget spent"))
+	_check("kite: the fight RESOLVES inside the cap - no infinite kite", str(kite.winner) in ["A", "B"])
+	var minr: Dictionary = await _run_minrange()
+	_check("min range: casts happened at range (non-vacuous)", _count(minr, "cast_start") > 0)
+	_check("min range: no cast starts with the chaser inside it", _min_range_respected(minr, "b0", 8.0))
+	var kite2: Dictionary = await _run_kite()
+	_check("determinism holds with kiting in play", _hash_frames(kite) == _hash_frames(kite2))
+
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
 
@@ -209,6 +220,65 @@ func _run_peel() -> Dictionary:
 	]
 	var sim = Sim.new()
 	sim.setup(4242, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-20, 0), Vector2(20, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Fast kiting caster with a min-range spell vs a slower melee chaser.
+func _run_kite() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-20, 0), "speed": 8.5,
+			"stats": {"STR": 70, "CON": 95, "INT": 10, "WIS": 45},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		# A PURE runner: no kit, so nothing interrupts the retreat - the budget is the only
+		# thing that can end this chase, which is exactly what the check needs to see.
+		{"id": "b0", "team": "B", "pos": Vector2(20, 0), "speed": 10.0, "kite_budget": 25,
+			"stats": {"STR": 15, "CON": 45, "INT": 60, "WIS": 55},
+			"tactics": {"target_priority": "nearest", "positional": "kite"}},
+	]
+	var sim = Sim.new()
+	sim.setup(51, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-20, 0), Vector2(20, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## No cast_start by `caster` on a frame where its nearest enemy sat inside `min_range`.
+func _min_range_respected(res: Dictionary, caster: String, min_range: float) -> bool:
+	for f in res.frames:
+		var cpos = null
+		var epos = null
+		for u in f.units:
+			if str(u.id) == caster:
+				cpos = u.pos
+			elif u.alive:
+				epos = u.pos
+		if cpos == null or epos == null:
+			continue
+		for e in f.events:
+			if str(e.kind) == "cast_start" and str(e.from) == caster \
+					and Vector2(cpos).distance_to(epos) < min_range - 0.01:
+				return false
+	return true
+
+
+## A standing caster with a min-range spell as melee closes: casts fire at range, never inside.
+func _run_minrange() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-20, 0), "speed": 8.5,
+			"stats": {"STR": 70, "CON": 80, "INT": 10, "WIS": 30},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "b0", "team": "B", "pos": Vector2(20, 0), "speed": 7.0,
+			"stats": {"STR": 15, "CON": 50, "INT": 70, "WIS": 55},
+			"kit": [{"name": "Frostbolt", "kind": "cast", "power": 20, "cast_time": 1.2,
+				"cooldown": 1.5, "mana": 4, "channel": "magic", "min_range": 8.0}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+	]
+	var sim = Sim.new()
+	sim.setup(52, us, Vector2(96, 52), [])
 	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-20, 0), Vector2(20, 0))
 	if not ok:
 		return {}

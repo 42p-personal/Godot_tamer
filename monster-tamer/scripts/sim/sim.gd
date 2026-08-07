@@ -72,6 +72,7 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"regen": Derive.regen_per_sec(float(stats.get("WIS", 10)), false),
 			"kit": u.get("kit", []), "cds": {}, "casting": {},
 			"dmg_from": {},   # attacker id -> decaying recent damage (the THREAT ledger)
+			"kite_ticks": int(u.get("kite_budget", 80)),  # #39: kiting ENDS - 8s default budget
 			"facing": Vector2(1, 0) if str(u["team"]) == "A" else Vector2(-1, 0),
 		})
 	units.sort_custom(func(a, b): return a.id < b.id)  # id order IS the tick order
@@ -171,6 +172,12 @@ func _fill_bb(u: Dictionary) -> void:
 	# and is my kick off cooldown? The tree decides to spend it; the sim executes.
 	var tgt = _unit(str(bb.get_value("target_id", "")))
 	bb.set_value("target_casting", tgt != null and tgt.alive and not tgt.casting.is_empty())
+	bb.set_value("kite_ticks_left", u.kite_ticks)
+	var near_d := INF
+	for o2 in units:
+		if o2.alive and o2.team != u.team:
+			near_d = minf(near_d, u.pos.distance_to(o2.pos))
+	bb.set_value("nearest_enemy_dist", near_d)
 	bb.set_value("interrupt_ready", _ready_move(u, "interrupt") != "")
 	bb.set_value("cast_ready", _ready_move(u, "cast") != "")
 	# Guard/peel context: who is hurting my CHARGE right now? The charge's own threat ledger
@@ -205,6 +212,7 @@ func _ledger_keys_sorted(u: Dictionary) -> Array:
 
 func _execute_move(u: Dictionary) -> void:
 	var bb: BT.Blackboard = u.bb
+	var prev_pos: Vector2 = u.pos
 	var dest = bb.get_value("req_move_to", null)
 	if dest == null:
 		return
@@ -235,6 +243,20 @@ func _execute_move(u: Dictionary) -> void:
 			u.pos += dir * step_left
 			u.facing = dir
 			step_left = 0.0
+	# #39: the kite budget SPENDS while genuinely kiting - moving away from the nearest
+	# enemy while it is close enough to matter. Structural: no speed tuning involved.
+	var nearest = null
+	var nd := INF
+	for o2 in units:
+		if o2.alive and o2.team != u.team:
+			var dd: float = u.pos.distance_to(o2.pos)
+			if dd < nd:
+				nd = dd
+				nearest = o2
+	if nearest != null and nd < 14.0:
+		var before: float = float(prev_pos.distance_to(nearest.pos))
+		if u.pos.distance_to(nearest.pos) > before + 0.05:
+			u.kite_ticks = maxi(0, u.kite_ticks - 1)
 	# Solid ENEMY bodies (#10/#22): push out of overlap; allies are passable.
 	for o in units:
 		if o.alive and o.team != u.team:
@@ -328,7 +350,10 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 		var cname := _ready_move(u, "cast")
 		var tid2: String = str(bb.get_value("target_id", ""))
 		var tgt2 = _unit(tid2)
-		if cname != "" and tgt2 != null and tgt2.alive and u.pos.distance_to(tgt2.pos) <= CAST_RANGE:
+		var mvx: Dictionary = _kit_move(u, cname) if cname != "" else {}
+		if cname != "" and tgt2 != null and tgt2.alive \
+				and u.pos.distance_to(tgt2.pos) <= CAST_RANGE \
+				and u.pos.distance_to(tgt2.pos) >= float(mvx.get("min_range", 0.0)):
 			var mv2: Dictionary = _kit_move(u, cname)
 			u.mp -= float(mv2.get("mana", 0))
 			u.casting = {"move": mv2, "target": tid2,

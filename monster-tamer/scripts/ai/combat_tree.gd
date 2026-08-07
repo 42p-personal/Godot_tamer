@@ -257,6 +257,30 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				var behind_x: float = float(bb.get_value("enemy_line_x", tp.x)) + float(bb.get_value("dive_depth", 12.0)) * signf(tp.x - float(bb.get_value("self", {}).get("pos", Vector2.ZERO).x) + 0.001)
 				bb.set_value("req_move_to", Vector2(behind_x, tp.y))
 				return BT.SUCCESS)
+		"kite":
+			return BT.Action.new("Kite", func(bb):
+				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
+				var me: Dictionary = bb.get_value("self", {})
+				var gap: float = float(bb.get_value("kite_gap", 12.0))
+				var near: float = float(bb.get_value("nearest_enemy_dist", INF))
+				var budget: int = int(bb.get_value("kite_ticks_left", 0))
+				# #39: kiting has an END. Budget spent -> stand and fight, and say so.
+				if budget <= 0:
+					if str(bb.get_value("_kite_state", "")) != "spent":
+						bb._reason = "kite budget spent — standing to fight"
+						bb.set_value("_kite_state", "spent")
+					bb.set_value("req_move_to", Vector2(me.pos))
+					return BT.SUCCESS
+				if near < gap:
+					var away: Vector2 = (Vector2(me.pos) - tp).normalized() if Vector2(me.pos) != tp else Vector2(1, 0)
+					if str(bb.get_value("_kite_state", "")) != "kiting":
+						bb._reason = "kiting — keeping the gap"
+						bb.set_value("_kite_state", "kiting")
+					bb.set_value("req_move_to", Vector2(me.pos) + away * 8.0)
+					return BT.SUCCESS
+				bb.set_value("_kite_state", "")
+				bb.set_value("req_move_to", Vector2(me.pos))
+				return BT.SUCCESS)
 		"guard":
 			return BT.Action.new("Guard the charge", func(bb):
 				var gid: String = str(bb.get_value("guard_id", ""))

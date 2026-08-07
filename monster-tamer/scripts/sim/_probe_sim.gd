@@ -125,6 +125,21 @@ func _go() -> void:
 	var rk2: Dictionary = await _run_real_kits()
 	_check("determinism holds on real kits", _hash_frames(rk) == _hash_frames(rk2))
 
+	# MOVEMENT FEEL: surround slots fan melee into an arc, strafing keeps eyes on the target,
+	# soft-avoid separates bodies, and nothing ever teleports.
+	var srd: Dictionary = await _run_surround()
+	_check("surround: 3 melee on one target occupy >= 2 distinct approach angles",
+		_surround_angles(srd, ["a0", "a1", "a2"], "b0") >= 2)
+	_check("strafe: attackers in reach keep FACING the target while repositioning",
+		_strafe_faces_target(srd, ["a0", "a1", "a2"], "b0"))
+	var srd2: Dictionary = await _run_surround()
+	_check("determinism holds with slots and steering in play",
+		_hash_frames(srd) == _hash_frames(srd2))
+	_check("separation: no two living units within 1.6x body radius at fight end",
+		_final_separation_ok(r1) and _final_separation_ok(srd))
+	_check("anti-teleport: no unit moves more than 2.0 units in one tick (all runs)",
+		_no_teleport(r1) and _no_teleport(peel) and _no_teleport(kite) and _no_teleport(srd))
+
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
 
@@ -243,8 +258,10 @@ func _run_kite() -> Dictionary:
 			"tactics": {"target_priority": "nearest", "positional": "push"}},
 		# A PURE runner: no kit, so nothing interrupts the retreat - the budget is the only
 		# thing that can end this chase, which is exactly what the check needs to see.
+		# CON 90 (was 45): velocity smoothing makes each kite episode start from rest, so the
+		# runner takes more hits before the budget spends - it must SURVIVE to the budget end.
 		{"id": "b0", "team": "B", "pos": Vector2(20, 0), "speed": 10.0, "kite_budget": 25,
-			"stats": {"STR": 15, "CON": 45, "INT": 60, "WIS": 55},
+			"stats": {"STR": 15, "CON": 90, "INT": 60, "WIS": 55},
 			"tactics": {"target_priority": "nearest", "positional": "kite"}},
 	]
 	var sim = Sim.new()
@@ -292,6 +309,113 @@ func _run_minrange() -> Dictionary:
 	if not ok:
 		return {}
 	return sim.run()
+
+
+## Three melee ordered onto ONE tank: the surround must fan them into an arc, not a stack.
+func _run_surround() -> Dictionary:
+	var melee := {"target_priority": "nearest", "positional": "push"}
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-24, -6), "speed": 9.0,
+			"stats": {"STR": 45, "CON": 60, "INT": 10, "WIS": 15}, "tactics": melee},
+		{"id": "a1", "team": "A", "pos": Vector2(-24, 0), "speed": 8.5,
+			"stats": {"STR": 45, "CON": 60, "INT": 10, "WIS": 15}, "tactics": melee},
+		{"id": "a2", "team": "A", "pos": Vector2(-24, 6), "speed": 8.0,
+			"stats": {"STR": 45, "CON": 60, "INT": 10, "WIS": 15}, "tactics": melee},
+		{"id": "b0", "team": "B", "pos": Vector2(20, 0), "speed": 7.0,
+			"stats": {"STR": 20, "CON": 160, "INT": 10, "WIS": 30},
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+	]
+	var sim = Sim.new()
+	sim.setup(303, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-20, 0), Vector2(20, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Best count over the fight of DISTINCT 45-degree bearing buckets occupied by the attackers,
+## sampled only on frames where the target lives and all attackers stand within reach of it.
+func _surround_angles(res: Dictionary, attackers: Array, target: String) -> int:
+	var best := 0
+	for f in res.frames:
+		var tpos = null
+		var pos := {}
+		for u in f.units:
+			if str(u.id) == target and u.alive:
+				tpos = u.pos
+			elif str(u.id) in attackers and u.alive:
+				pos[str(u.id)] = u.pos
+		if tpos == null or pos.size() < attackers.size():
+			continue
+		var buckets := {}
+		var all_in_reach := true
+		for a in attackers:
+			var d: float = Vector2(pos[a]).distance_to(tpos)
+			if d > 6.6:  # BASE_REACH
+				all_in_reach = false
+				break
+			buckets[int(roundf(Vector2(pos[a] - tpos).angle() / (TAU / 8.0)))] = true
+		if all_in_reach:
+			best = maxi(best, buckets.size())
+	return best
+
+
+## Every frame where an attacker is IN REACH of the living target and MOVING, its facing must
+## point at the target (dot > 0.5) - facing and move_dir decouple during the strafe.
+func _strafe_faces_target(res: Dictionary, attackers: Array, target: String) -> bool:
+	var samples := 0
+	for f in res.frames:
+		var tpos = null
+		for u in f.units:
+			if str(u.id) == target and u.alive:
+				tpos = u.pos
+		if tpos == null:
+			continue
+		for u in f.units:
+			if not (str(u.id) in attackers) or not u.alive:
+				continue
+			# d <= 5.0 post-move guarantees the unit was ALREADY in reach before it moved
+			# (max tick move ~1.1 < 6.27-5.0), i.e. the strafe branch ran — boundary frames
+			# where a unit crosses into reach mid-turn are the approach branch, not strafe.
+			var d: float = Vector2(u.pos).distance_to(tpos)
+			if d > 5.0 or d < 0.5 or Vector2(u.move_dir) == Vector2.ZERO:
+				continue
+			samples += 1
+			if Vector2(u.facing).dot((Vector2(tpos) - u.pos).normalized()) < 0.5:
+				return false
+	return samples >= 3  # non-vacuous: the strafe actually happened
+
+
+## Final frame: every pair of living units at least 1.6x body radius apart - the blob is dead.
+func _final_separation_ok(res: Dictionary) -> bool:
+	var f: Dictionary = res.frames[res.frames.size() - 1]
+	var live: Array = []
+	for u in f.units:
+		if u.alive:
+			live.append(u)
+	for i in live.size():
+		for j in range(i + 1, live.size()):
+			if Vector2(live[i].pos).distance_to(live[j].pos) < Sim.BODY_RADIUS * 1.6 - 0.01:
+				print("    SEPARATION VIOLATION: %s-%s at %.2f" % [live[i].id, live[j].id,
+					Vector2(live[i].pos).distance_to(live[j].pos)])
+				return false
+	return true
+
+
+## The anti-teleport tripwire from the old repo: nothing displaces > 2.0 units in one tick.
+func _no_teleport(res: Dictionary) -> bool:
+	for i in range(1, res.frames.size()):
+		var prev := {}
+		for u in res.frames[i - 1].units:
+			if u.alive:
+				prev[str(u.id)] = u.pos
+		for u in res.frames[i].units:
+			if u.alive and prev.has(str(u.id)) \
+					and Vector2(u.pos).distance_to(prev[str(u.id)]) > 2.0:
+				print("    TELEPORT: %s moved %.2f at tick %d" % [str(u.id),
+					Vector2(u.pos).distance_to(prev[str(u.id)]), i])
+				return false
+	return true
 
 
 func _load_moves() -> Array:

@@ -51,6 +51,11 @@ func _init() -> void:
 	_test_ability_policy()
 	_test_mode_and_order_slots()
 	_test_no_idle_without_reason()
+	_test_focus_fire_assist()
+	_test_execute_window()
+	_test_opportunistic_kick()
+	_test_aggression_shapes_engagement()
+	_test_smart_regroup()
 	_test_determinism()
 	print("COMBAT TREE PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	quit(1 if _fails > 0 else 0)
@@ -203,6 +208,150 @@ func _test_no_idle_without_reason() -> void:
 	_tick(tree, bb, 0)
 	_check("§10: no enemies still resolves to a NAMED branch", bb.intent_string() == "Regroup")
 	_check("§10: and the reason says why", bb.reason().begins_with("no target"))
+
+
+func _test_focus_fire_assist() -> void:
+	# Two near-equal candidates by score: the WOUNDED one wins (finish what the team started).
+	var tree := CombatTree.build({"target_priority": "nearest"})
+	var bb := _bb_base()
+	bb.set_value("enemies", [
+		{"id": "e1", "pos": Vector2(0, 0), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e2", "pos": Vector2(1, 0), "hp": 40, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+	])
+	_tick(tree, bb, 0)
+	_check("focus-fire: near-equal score, the wounded target wins", str(bb.get_value("target_id")) == "e2")
+	# But NOT when the wounded one is far outside the score band — assist, not override.
+	var tree2 := CombatTree.build({"target_priority": "nearest"})
+	var bb2 := _bb_base()
+	bb2.set_value("enemies", [
+		{"id": "e1", "pos": Vector2(0, 0), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e2", "pos": Vector2(15, 0), "hp": 40, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+	])
+	_tick(tree2, bb2, 0)
+	_check("focus-fire: a distant wounded target does NOT hijack the pick", str(bb2.get_value("target_id")) == "e1")
+	# The wishlist `team_dmg` key counts as the damaged signal when present.
+	var tree3 := CombatTree.build({"target_priority": "nearest"})
+	var bb3 := _bb_base()
+	bb3.set_value("enemies", [
+		{"id": "e1", "pos": Vector2(0, 0), "hp": 100, "max_hp": 100, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+		{"id": "e2", "pos": Vector2(1, 0), "hp": 90, "max_hp": 90, "team_dmg": 25.0, "int_stat": 0, "wis": 0, "con": 0, "threat": 0.0},
+	])
+	_tick(tree3, bb3, 0)
+	_check("focus-fire: team_dmg marks a target as team-damaged", str(bb3.get_value("target_id")) == "e2")
+
+
+func _test_execute_window() -> void:
+	# Under `reassess` (sticky 1.0) a scorer flip normally switches — but a target below the
+	# execute fraction is COMMITTED to, and the reason says "finishing X".
+	var tree := CombatTree.build({"target_priority": "weakest"})
+	var bb := _bb_base()
+	bb.set_value("focus_sticky", 1.0)
+	bb.get_value("enemies")[0].hp = 30   # e1 weakest, still ABOVE the execute window
+	bb.get_value("enemies")[1].hp = 60
+	bb.get_value("enemies")[2].hp = 95
+	_tick(tree, bb, 0)
+	_check("execute: setup targets the weakest", str(bb.get_value("target_id")) == "e1")
+	# e1 drops into the execute window; e2 becomes the scorer's pick — the tree holds e1.
+	bb.get_value("enemies")[0].hp = 20
+	bb.get_value("enemies")[1].hp = 12
+	_tick(tree, bb, 1)
+	_check("execute: below 25%% the tree commits even under reassess", str(bb.get_value("target_id")) == "e1")
+	_check("execute: the reason says finishing", bb.reason() == "finishing e1")
+	# Healed out of the window: reassess resumes and the scorer's pick wins again.
+	bb.get_value("enemies")[0].hp = 60
+	_tick(tree, bb, 2)
+	_check("execute: healed out of the window releases the commit", str(bb.get_value("target_id")) == "e2")
+
+
+func _test_opportunistic_kick() -> void:
+	# My target (tanks -> e3) is not casting, but e2 is casting IN REACH and my kick is up:
+	# spend it off-target, then return to the incumbent next tick.
+	var tree := CombatTree.build({"target_priority": "tanks"})
+	var bb := _bb_base()
+	bb.get_value("enemies")[1].pos = Vector2(-16, 0)   # e2: 4.0 from me, inside kick_range 6
+	bb.get_value("enemies")[1].casting = true
+	bb.set_value("interrupt_ready", true)
+	_tick(tree, bb, 0)
+	_check("kick: off-target caster in reach gets the interrupt", bb.get_value("req_interrupt") == true)
+	_check("kick: the interrupt is aimed at the caster", str(bb.get_value("req_attack")) == "e2")
+	_check("kick: the reason names the off-target cast", bb.reason() == "kick the cast on e2 (off-target)")
+	# Cast over: the pre-kick incumbent resumes without a re-acquire wobble.
+	bb.get_value("enemies")[1].casting = false
+	bb.set_value("interrupt_ready", false)
+	_tick(tree, bb, 1)
+	_check("kick: the pre-kick target resumes next tick", str(bb.get_value("target_id")) == "e3")
+	# No interrupt ready -> no kick, no borrowed target.
+	var tree2 := CombatTree.build({"target_priority": "tanks"})
+	var bb2 := _bb_base()
+	bb2.get_value("enemies")[1].pos = Vector2(-16, 0)
+	bb2.get_value("enemies")[1].casting = true
+	_tick(tree2, bb2, 0)
+	_check("kick: no interrupt ready, no kick", bb2.get_value("req_interrupt", false) == false)
+	# Caster out of reach -> the kick is not wasted on a sprint.
+	var tree3 := CombatTree.build({"target_priority": "tanks"})
+	var bb3 := _bb_base()
+	bb3.get_value("enemies")[1].casting = true   # e2 at (14,3): ~34 away
+	bb3.set_value("interrupt_ready", true)
+	_tick(tree3, bb3, 0)
+	_check("kick: a caster out of reach is not kicked", bb3.get_value("req_interrupt", false) == false)
+
+
+func _test_aggression_shapes_engagement() -> void:
+	# Arming threshold: at 30% HP a hurt_at of 0.35 arms at Aggression 50 but NOT at 100.
+	var t_hi := CombatTree.build({"when_hurt": "fall_back", "hurt_at": 0.35, "target_priority": "nearest"})
+	var bb_hi := _bb_base()
+	bb_hi.set_value("aggression", 100)
+	bb_hi.get_value("self").hp = 30
+	_tick(t_hi, bb_hi, 0)
+	_check("aggression 100: fights on at 30%% (threshold lowered)", bb_hi.intent_string().begins_with("Combat"))
+	var t_mid := CombatTree.build({"when_hurt": "fall_back", "hurt_at": 0.35, "target_priority": "nearest"})
+	var bb_mid := _bb_base()
+	bb_mid.get_value("self").hp = 30
+	_tick(t_mid, bb_mid, 0)
+	_check("aggression default: 30%% arms fall back (authored threshold intact)",
+		bb_mid.intent_string().begins_with("Fall back"))
+	var t_lo := CombatTree.build({"when_hurt": "fall_back", "hurt_at": 0.35, "target_priority": "nearest"})
+	var bb_lo := _bb_base()
+	bb_lo.set_value("aggression", 0)
+	bb_lo.get_value("self").hp = 40
+	_tick(t_lo, bb_lo, 0)
+	_check("aggression 0: arms EARLY at 40%% (threshold raised)", bb_lo.intent_string().begins_with("Fall back"))
+	# Dive depth: aggression 100 lands deeper behind the enemy line than the default.
+	var bbd := _bb_base()
+	_tick(CombatTree.build({"positional": "dive", "target_priority": "nearest"}), bbd, 0)
+	var bbd_hi := _bb_base()
+	bbd_hi.set_value("aggression", 100)
+	_tick(CombatTree.build({"positional": "dive", "target_priority": "nearest"}), bbd_hi, 0)
+	_check("aggression 100: dives deeper", bbd_hi.get_value("req_move_to").x > bbd.get_value("req_move_to").x)
+	# Hold: aggression 0 keeps a tighter leash than the authored radius.
+	var bbh := _bb_base()
+	bbh.set_value("aggression", 0)
+	_tick(CombatTree.build({"positional": "hold", "target_priority": "nearest"}), bbh, 0)
+	_check("aggression 0: hold discipline tightens the leash",
+		bbh.get_value("req_move_to").distance_to(bbh.get_value("home_pos")) <= 6.01)
+
+
+func _test_smart_regroup() -> void:
+	# No enemies, allies alive: regroup on the NEAREST living ally, and say so.
+	var tree := CombatTree.build({"target_priority": "nearest"})
+	var bb := _bb_base()
+	bb.set_value("enemies", [])
+	bb.set_value("allies", [
+		{"id": "a1", "pos": Vector2(30, 0), "hp": 90, "max_hp": 100},
+		{"id": "a2", "pos": Vector2(-15, 2), "hp": 50, "max_hp": 100},
+		{"id": "a3", "pos": Vector2(-16, 0), "hp": 0, "max_hp": 100},   # dead: never a rally point
+	])
+	_tick(tree, bb, 0)
+	_check("regroup: rallies on the nearest LIVING ally", bb.get_value("req_move_to") == Vector2(-15, 2))
+	_check("regroup: the reason names the ally", bb.reason() == "no target, no order — regrouping on a2")
+	# All allies down: the anchor is the fallback, as before.
+	var tree2 := CombatTree.build({"target_priority": "nearest"})
+	var bb2 := _bb_base()
+	bb2.set_value("enemies", [])
+	bb2.set_value("allies", [{"id": "a1", "pos": Vector2(30, 0), "hp": 0, "max_hp": 100}])
+	_tick(tree2, bb2, 0)
+	_check("regroup: all allies down falls back to the anchor",
+		bb2.get_value("req_move_to") == bb2.get_value("home_pos"))
 
 
 func _run_scenario() -> String:

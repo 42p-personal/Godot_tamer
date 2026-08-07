@@ -36,6 +36,20 @@
 ##
 ## ⚠️ `fall_back` carries a MINIMUM DWELL and a real safety condition (§10) — the TFM
 ## flee-then-return death spiral is the named failure this guards against.
+##
+## ── SIM-FILLED EXTRAS (formerly the WISHLIST — sim.gd::_fill_bb fills ALL of these now; the
+##    safe defaults below remain the fallback for hand-built test blackboards) ──────────────────
+##   enemies[i].team_dmg : float — TOTAL recent damage MY TEAM has dealt this enemy (my team's
+##                         rows of that enemy's `dmg_from` ledger, summed in unit-id order).
+##                         Feeds the focus-fire assist; default 0.0 falls back to `hp < max_hp`.
+##   enemies[i].casting  : bool — this enemy is committed to a cast. Fills the OPPORTUNISTIC
+##                         kick (kick a caster in reach that is not my target). Default false.
+##   enemies[i].threat   : float — recent damage this enemy dealt ME (`u.dmg_from[enemy]`), so
+##                         the `threat` target priority means what the contract above says.
+##   kick_range          : float — my interrupt's ENFORCED reach (sim INTERRUPT_REACH);
+##                         default 6.0 for hand-built blackboards.
+##   aggression          : 0-100 personality (§3/§9: personality weights branch selection);
+##                         default 50 == every multiplier exactly 1.0.
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -56,11 +70,26 @@ static func build(tactics: Dictionary) -> BT.BehaviourTree:
 		mode_slot,
 		order_slot,
 		_combat_branch(tactics),
-		# §10: no idle state without a reason. If nothing above ran, the unit regroups on its
-		# anchor and SAYS SO — "wandering in circles" is the reference failure.
+		# §10: no idle state without a reason. If nothing above ran, the unit regroups — on the
+		# NEAREST LIVING ALLY when one exists (rejoin the team, not an empty patch of ground),
+		# else on the deploy anchor — and SAYS SO; "wandering in circles" is the reference failure.
 		BT.Action.new("Regroup", func(bb):
-			bb.set_value("req_move_to", bb.get_value("home_pos", Vector2.ZERO))
-			bb._reason = "no target, no order — regrouping on anchor"
+			var me: Dictionary = bb.get_value("self", {})
+			var my_pos: Vector2 = Vector2(me.get("pos", Vector2.ZERO))
+			var best_ally: Dictionary = {}
+			var best_d: float = INF
+			for a in bb.get_value("allies", []):
+				if a.hp > 0:
+					var d: float = my_pos.distance_to(a.pos)
+					if d < best_d:  # strict < : ties keep the earlier, id-ordered ally
+						best_d = d
+						best_ally = a
+			if best_ally.is_empty():
+				bb.set_value("req_move_to", bb.get_value("home_pos", Vector2.ZERO))
+				bb._reason = "no target, no order — regrouping on anchor"
+			else:
+				bb.set_value("req_move_to", Vector2(best_ally.pos))
+				bb._reason = "no target, no order — regrouping on %s" % str(best_ally.id)
 			return BT.RUNNING),
 	])
 	var tree := BT.BehaviourTree.new(root)
@@ -135,7 +164,10 @@ static func _when_hurt_branch(tactics: Dictionary) -> BT.BTBase:
 		BT.Condition.new("", func(bb):
 			var me: Dictionary = bb.get_value("self", {})
 			var frac: float = float(me.get("hp", 1)) / maxf(1.0, float(me.get("max_hp", 1)))
-			var armed: bool = frac <= float(tactics.get("hurt_at", 0.35))
+			# Aggression shapes the arming point (§9: personality weights branch selection):
+			# an aggressive monster fights deeper into its HP bar before the branch arms, a
+			# timid one arms early. 50 == exactly the authored hurt_at; small multiplier only.
+			var armed: bool = frac <= float(tactics.get("hurt_at", 0.35)) * (1.25 - 0.5 * _aggr(bb))
 			var t: int = int(bb.get_value("_tick_now", 0))
 			var until: int = int(bb.get_value("fallback_until", -1))
 			# ⚠️ The dwell: once falling back, KEEP falling back until the dwell expires AND
@@ -174,6 +206,15 @@ static func _combat_branch(tactics: Dictionary) -> BT.BTBase:
 
 ## Axis A: one scorer per priority, chosen by tactics; commitment via UtilitySelector
 ## stickiness keyed on focus_sticky (`reassess` == the sim sets it to 1.0).
+##
+## Two layers on top of the raw scorer, both data-shaped and both defaulting inert:
+##   FOCUS-FIRE ASSIST — among candidates CLOSE in score, prefer the one the team has already
+##   damaged (lowest hp fraction). Five monsters agreeing by coincidence was the measured
+##   focus-fire failure (TACTICS_BRAINSTORM: priority lives on the individual); the shared
+##   "finish what someone started" signal is the cheap coordination that fixes it.
+##   EXECUTE WINDOW — a target below execute_frac is a kill about to happen: the tree commits
+##   even under `reassess`, and the reason says "finishing X". Never overrides a live player
+##   mark — the order stays sovereign.
 static func _target_node(tactics: Dictionary) -> BT.BTBase:
 	var mode: String = str(tactics.get("target_priority", "nearest"))
 	return BT.Action.new("Mark " + mode, func(bb):
@@ -183,38 +224,93 @@ static func _target_node(tactics: Dictionary) -> BT.BTBase:
 			return BT.FAILURE
 		var me: Dictionary = bb.get_value("self", {})
 		var pick: Dictionary = {}
+		var scorer := Callable()
 		match mode:
 			"marked":
 				var oid: String = str(bb.get_value("ordered_id", ""))
 				for e in live:
 					if str(e.id) == oid:
-						pick = e
+						pick = e  # the player's mark: no assist, no scorer — the order is the pick
 						break
 				if pick.is_empty():
-					pick = _best(live, func(e): return -Vector2(me.pos).distance_to(e.pos))
+					scorer = func(e): return -Vector2(me.pos).distance_to(e.pos)
 			"weakest":
-				pick = _best(live, func(e): return -float(e.hp))
+				scorer = func(e): return -float(e.hp)
 			"casters":
-				pick = _best(live, func(e): return float(e.get("int_stat", 0)) + float(e.get("wis", 0)))
+				scorer = func(e): return float(e.get("int_stat", 0)) + float(e.get("wis", 0))
 			"tanks":
-				pick = _best(live, func(e): return float(e.get("con", 0)))
+				scorer = func(e): return float(e.get("con", 0))
 			"threat":
-				pick = _best(live, func(e): return float(e.get("threat", 0.0)))
+				scorer = func(e): return float(e.get("threat", 0.0))
 			_:
-				pick = _best(live, func(e): return -Vector2(me.pos).distance_to(e.pos))
+				scorer = func(e): return -Vector2(me.pos).distance_to(e.pos)
+		if pick.is_empty():
+			pick = _best(live, scorer)
+			# FOCUS-FIRE ASSIST: within the score band of the best, take the most-wounded
+			# already-damaged candidate. Band is relative (|best|+1 keeps it sane for the
+			# negative distance scores); strict < ties keep the earlier, id-ordered enemy.
+			var best_s: float = float(scorer.call(pick))
+			var band: float = float(bb.get_value("focus_assist_band", 0.15)) * (absf(best_s) + 1.0)
+			var assist: Dictionary = pick
+			# An untouched pick concedes to ANY team-damaged candidate in band (INF sentinel);
+			# a damaged pick only concedes to a strictly MORE wounded one.
+			var assist_frac: float = _hp_frac(pick) if _team_damaged(pick) else INF
+			for e in live:
+				if float(scorer.call(e)) >= best_s - band and _team_damaged(e):
+					var f: float = _hp_frac(e)
+					if f < assist_frac:
+						assist = e
+						assist_frac = f
+			if _team_damaged(assist) and str(assist.id) != str(pick.id):
+				pick = assist
 		# Commitment: the incumbent survives unless the new pick beats it by the Focus margin.
 		var sticky: float = maxf(1.0, float(bb.get_value("focus_sticky", 1.0)))
 		var cur: String = str(bb.get_value("target_id", ""))
-		if cur != "" and cur != str(pick.id) and sticky > 1.0:
+		# An opportunistic kick borrowed target_id for a tick; the pre-kick incumbent resumes.
+		var kick_return: String = str(bb.get_value("_kick_return_id", ""))
+		if kick_return != "":
+			cur = kick_return
+			bb.set_value("_kick_return_id", "")
+		var exec_frac: float = float(bb.get_value("execute_frac", 0.25))
+		if cur != "" and cur != str(pick.id):
 			for e in live:
 				if str(e.id) == cur:
-					pick = e  # hold the incumbent; scorer margins are the sim's re-open signal
+					# EXECUTE WINDOW beats even `reassess`; plain stickiness needs sticky > 1.
+					# A live player mark is never held against (decision #28's spirit: the
+					# order is sovereign) — only scored picks yield to the execute commit.
+					var marked_pick: bool = str(pick.id) == str(bb.get_value("ordered_id", ""))
+					if (_hp_frac(e) <= exec_frac and not marked_pick) or sticky > 1.0:
+						pick = e  # hold the incumbent; scorer margins are the sim's re-open signal
 					break
+		# The execute state is a decision worth logging ONCE per entry, not per tick.
+		var finishing: String = str(pick.id) if _hp_frac(pick) <= exec_frac else ""
 		if str(pick.id) != cur:
 			bb._reason = "target: %s (%s)" % [str(pick.id), mode]
+		if finishing != str(bb.get_value("_finishing_id", "")):
+			bb.set_value("_finishing_id", finishing)
+			if finishing != "":
+				bb._reason = "finishing %s" % finishing
 		bb.set_value("target_id", str(pick.id))
 		bb.set_value("target_pos", pick.pos)
 		return BT.SUCCESS)
+
+
+## HP fraction of an enemy record; the wounded-target currency both new layers trade in.
+static func _hp_frac(e: Dictionary) -> float:
+	return float(e.hp) / maxf(1.0, float(e.get("max_hp", 1)))
+
+
+## "My team already started on this one." Prefers `team_dmg` (recent damage from MY team —
+## sim-filled, see the contract above); missing HP is the stand-in for hand-built blackboards.
+static func _team_damaged(e: Dictionary) -> bool:
+	if float(e.get("team_dmg", 0.0)) > 0.0:
+		return true
+	return float(e.hp) < float(e.get("max_hp", e.hp))
+
+
+## Aggression as a 0-1 multiplier input; 50 (the default) must always mean "exactly authored".
+static func _aggr(bb) -> float:
+	return clampf(float(bb.get_value("aggression", 50)) / 100.0, 0.0, 1.0)
 
 
 static func _best(arr: Array, score: Callable) -> Dictionary:
@@ -240,7 +336,15 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				var home: Vector2 = bb.get_value("home_pos", Vector2.ZERO)
 				var tp: Vector2 = bb.get_value("target_pos", home)
 				# Stand the line: meet the target only within the hold radius of home.
-				var hold_r: float = float(bb.get_value("hold_radius", 8.0))
+				# Low Aggression = tighter discipline (shorter leash); 50 = exactly authored.
+				# The sim GROWS hold_radius under stagnation pressure (nothing landing for 15s)
+				# so two turtled remnants cannot stand off forever — log the shift ONCE.
+				var hold_r: float = float(bb.get_value("hold_radius", 8.0)) * (0.75 + 0.5 * _aggr(bb))
+				var pressed: bool = bool(bb.get_value("stagnation_pressure", false))
+				if pressed != bool(bb.get_value("_hold_pressed", false)):
+					bb.set_value("_hold_pressed", pressed)
+					if pressed:
+						bb._reason = "nothing to hold against — pressing forward"
 				var want: Vector2 = home + (tp - home).limit_length(hold_r)
 				bb.set_value("req_move_to", want)
 				return BT.SUCCESS)
@@ -257,7 +361,9 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				# Aim BEHIND the enemy line, not at the nearest body — the approach goes
 				# around, which is the whole identity of the tactic.
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
-				var behind_x: float = float(bb.get_value("enemy_line_x", tp.x)) + float(bb.get_value("dive_depth", 12.0)) * signf(tp.x - float(bb.get_value("self", {}).get("pos", Vector2.ZERO).x) + 0.001)
+				# High Aggression dives DEEPER behind the line; 50 = exactly the authored depth.
+				var depth: float = float(bb.get_value("dive_depth", 12.0)) * (0.8 + 0.4 * _aggr(bb))
+				var behind_x: float = float(bb.get_value("enemy_line_x", tp.x)) + depth * signf(tp.x - float(bb.get_value("self", {}).get("pos", Vector2.ZERO).x) + 0.001)
 				bb.set_value("req_move_to", Vector2(behind_x, tp.y))
 				return BT.SUCCESS)
 		"kite":
@@ -289,12 +395,20 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 			return BT.Action.new("Guard the charge", func(bb):
 				bb.set_value("posture", "Guard the charge")
 				var gid: String = str(bb.get_value("guard_id", ""))
+				# ⚠️ LIVING charge only — the allies list carries dead allies at hp 0, and an
+				# unchecked lookup had a guard standing over its charge's corpse to the cap.
 				var charge_pos = null
 				for a in bb.get_value("allies", []):
-					if str(a.id) == gid:
+					if str(a.id) == gid and a.hp > 0:
 						charge_pos = a.pos
 				if charge_pos == null:
-					return BT.FAILURE
+					# Nothing left to guard: join the fight as push, and say so ONCE.
+					if str(bb.get_value("_guard_state", "")) != "charge_gone":
+						bb.set_value("_guard_state", "charge_gone")
+						bb._reason = "charge %s is gone — joining the fight" % gid
+					bb.set_value("posture", "Push")
+					bb.set_value("req_move_to", bb.get_value("target_pos", Vector2.ZERO))
+					return BT.SUCCESS
 				# THE PEEL (WoW-arena): someone is on my charge - swap to them and stand in
 				# the line between attacker and charge, so the body-block is literal.
 				var att: String = str(bb.get_value("charge_attacker_id", ""))
@@ -333,6 +447,24 @@ static func _act_node(tactics: Dictionary) -> BT.BTBase:
 			bb.set_value("req_attack", tid)
 			bb._reason = "kick the cast on %s" % tid
 			return BT.RUNNING
+		# THE OPPORTUNISTIC KICK: my target is not casting, but SOMEONE in reach is, and my
+		# interrupt is up — a kick wasted on nobody is worse than one lent off-target. The sim
+		# executes interrupts against target_id, so borrow it for this tick; _target_node
+		# restores the pre-kick incumbent via _kick_return_id next descent. Runs off the
+		# sim-filled per-enemy `casting` key (default false keeps hand-built blackboards
+		# inert). Id order = the deterministic tie-break, as everywhere.
+		if bb.get_value("interrupt_ready", false):
+			var me: Dictionary = bb.get_value("self", {})
+			var kick_r: float = float(bb.get_value("kick_range", 6.0))
+			for e in bb.get_value("enemies", []):
+				if e.hp > 0 and bool(e.get("casting", false)) and str(e.id) != tid \
+						and Vector2(me.get("pos", Vector2.ZERO)).distance_to(e.pos) <= kick_r:
+					bb.set_value("_kick_return_id", tid)
+					bb.set_value("target_id", str(e.id))
+					bb.set_value("req_interrupt", true)
+					bb.set_value("req_attack", str(e.id))
+					bb._reason = "kick the cast on %s (off-target)" % str(e.id)
+					return BT.RUNNING
 		var cast_ok := true
 		match policy:
 			"hold_big":

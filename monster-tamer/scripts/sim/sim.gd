@@ -303,32 +303,38 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			events.append({"kind": "fizzle", "from": u.id, "move": str(u.casting.move.name)})
 			u.casting = {}
 		elif tick_now >= int(u.casting.ends):
-			var mv: Dictionary = u.casting.move
+			var kentry: Dictionary = u.casting.move
+			# The DATA move goes into resolve_strike verbatim when this kit entry carries one
+			# (kit.gd path); hand-built test kits still describe themselves inline.
+			var mv: Dictionary = kentry.get("move", {"name": str(kentry.name),
+				"power": float(kentry.get("power", 30)), "accuracy": float(kentry.get("accuracy", 100)),
+				"type": "damage", "channel": str(kentry.get("channel", "magic")), "effects": {}})
+			# Mitigation follows the CHANNEL rule: physical (melee/ranged) vs CON, everything
+			# else vs WIS — the documented split, not a per-move choice.
+			var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
+			var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))
 			var out: Dictionary = Damage.resolve_strike({
-				"move": {"name": str(mv.name), "power": float(mv.get("power", 30)),
-					"accuracy": float(mv.get("accuracy", 100)), "type": "attack",
-					"channel": str(mv.get("channel", "magic")), "fx": mv.get("fx", {}),
-					"statScale": mv.get("statScale", 0.004)},
+				"move": mv,
 				"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
 				"now": tick_now * DT,
-				"atk": float(u.stats.get("INT", 10)),
+				"atk": float(u.stats.get(str(kentry.get("stat", "INT")), 10)),
 				"atkMult": 1.0, "attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
 				"accPenalty": 0.0, "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
 				"falloff": 1.0,
-				"defMit": Damage.mitigation_for(float(tgt.stats.get("WIS", 10))),
+				"defMit": Damage.mitigation_for(def_stat),
 				"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": 1.0,
 				"defGuard": 0, "defWard": 0, "defBlocking": false, "defHasAttacked": tgt.has_attacked,
 				"defHasBonusStatus": false, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
 				"defMaxHp": tgt.max_hp,
 			})
-			u.cds[str(mv.name)] = int(float(mv.get("cooldown", 4.0)) / DT)
+			u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
 			if bool(out.get("hit", false)):
 				tgt.hp -= int(out.get("toHp", 0))
 				tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
 				events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
-					"move": str(mv.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
+					"move": str(kentry.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
 			else:
-				events.append({"kind": "cast_miss", "from": u.id, "to": tgt.id, "move": str(mv.name)})
+				events.append({"kind": "cast_miss", "from": u.id, "to": tgt.id, "move": str(kentry.name)})
 			u.casting = {}
 		return
 	if bool(bb.get_value("req_interrupt", false)):
@@ -351,8 +357,23 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 		var tid2: String = str(bb.get_value("target_id", ""))
 		var tgt2 = _unit(tid2)
 		var mvx: Dictionary = _kit_move(u, cname) if cname != "" else {}
+		var cast_range: float = float(mvx.get("range", CAST_RANGE)) if not mvx.is_empty() else CAST_RANGE
+		# Opportunism: the ordered target when in range; otherwise the nearest IN-RANGE enemy
+		# (id-order tiebreak). A caster staring at a distant kill target while an enemy stands
+		# on its feet is not focus, it is paralysis — you cast at what you can hit.
+		if cname != "" and (tgt2 == null or not tgt2.alive
+				or u.pos.distance_to(tgt2.pos) > cast_range
+				or u.pos.distance_to(tgt2.pos) < float(mvx.get("min_range", 0.0))):
+			var best_d: float = INF
+			for o3 in units:
+				if o3.alive and o3.team != u.team:
+					var d3: float = u.pos.distance_to(o3.pos)
+					if d3 <= cast_range and d3 >= float(mvx.get("min_range", 0.0)) and d3 < best_d:
+						best_d = d3
+						tgt2 = o3
+						tid2 = str(o3.id)
 		if cname != "" and tgt2 != null and tgt2.alive \
-				and u.pos.distance_to(tgt2.pos) <= CAST_RANGE \
+				and u.pos.distance_to(tgt2.pos) <= cast_range \
 				and u.pos.distance_to(tgt2.pos) >= float(mvx.get("min_range", 0.0)):
 			var mv2: Dictionary = _kit_move(u, cname)
 			u.mp -= float(mv2.get("mana", 0))

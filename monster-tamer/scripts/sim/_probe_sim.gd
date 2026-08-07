@@ -4,6 +4,7 @@
 extends Node3D
 
 const Sim = preload("res://scripts/sim/sim.gd")
+const Kit = preload("res://scripts/sim/kit.gd")
 
 var _fails := 0
 
@@ -115,6 +116,14 @@ func _go() -> void:
 	_check("min range: no cast starts with the chaser inside it", _min_range_respected(minr, "b0", 8.0))
 	var kite2: Dictionary = await _run_kite()
 	_check("determinism holds with kiting in play", _hash_frames(kite) == _hash_frames(kite2))
+
+	# REAL KITS: authored moves from data.json drive the casts - names, damage and mana all real.
+	var rk: Dictionary = await _run_real_kits()
+	_check("real kits: authored moves cast by NAME from data.json", _cast_moves(rk).size() >= 2)
+	_check("real kits: authored damage lands (dmg > 0 on cast_done)", _min_cast_dmg(rk) > 0)
+	_check("real kits: the fight resolves on authored numbers", str(rk.winner) in ["A", "B"])
+	var rk2: Dictionary = await _run_real_kits()
+	_check("determinism holds on real kits", _hash_frames(rk) == _hash_frames(rk2))
 
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
@@ -280,6 +289,59 @@ func _run_minrange() -> Dictionary:
 	var sim = Sim.new()
 	sim.setup(52, us, Vector2(96, 52), [])
 	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-20, 0), Vector2(20, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+func _load_moves() -> Array:
+	var txt := FileAccess.get_file_as_string("res://data/data.json")
+	return JSON.parse_string(txt)["moves"]
+
+
+func _cast_moves(res: Dictionary) -> Dictionary:
+	var seen := {}
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == "cast_done":
+				seen[str(e.move)] = true
+	return seen
+
+
+func _min_cast_dmg(res: Dictionary) -> int:
+	var lo := 999999
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == "cast_done":
+				lo = mini(lo, int(e.dmg))
+	return 0 if lo == 999999 else lo
+
+
+## Deterministic pick from the data: the two first magic damage moves by name, kitted onto
+## casters against a melee pair. Everything the casts do comes from authoring.
+func _run_real_kits() -> Dictionary:
+	var moves := _load_moves()
+	var magic: Array = moves.filter(func(m): return str(m.get("channel")) == "magic" and str(m.get("type")) == "damage")
+	magic.sort_custom(func(a, b): return str(a.name) < str(b.name))
+	var kit1 := Kit.build([str(magic[0].name)], moves)
+	var kit2 := Kit.build([str(magic[1].name)], moves)
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-22, -4), "speed": 8.5,
+			"stats": {"STR": 70, "CON": 75, "INT": 10, "WIS": 30},
+			"kit": [Kit.kick()], "tactics": {"target_priority": "casters", "positional": "push"}},
+		{"id": "a1", "team": "A", "pos": Vector2(-22, 4), "speed": 7.5,
+			"stats": {"STR": 20, "CON": 45, "INT": 75, "WIS": 60},
+			"kit": kit1, "tactics": {"target_priority": "weakest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(22, -4), "speed": 8.0,
+			"stats": {"STR": 65, "CON": 70, "INT": 10, "WIS": 25},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "b1", "team": "B", "pos": Vector2(22, 4), "speed": 7.0,
+			"stats": {"STR": 20, "CON": 50, "INT": 80, "WIS": 55},
+			"kit": kit2, "tactics": {"target_priority": "weakest", "positional": "hold"}},
+	]
+	var sim = Sim.new()
+	sim.setup(9001, us, Vector2(100, 56), [{"rect": Rect2(-3, -3, 6, 6)}])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-22, 0), Vector2(22, 0))
 	if not ok:
 		return {}
 	return sim.run()

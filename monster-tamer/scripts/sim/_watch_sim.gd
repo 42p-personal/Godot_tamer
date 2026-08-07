@@ -14,11 +14,18 @@
 ## camera glides high→side-on as the deploy becomes the fight, status chips render IF the frame
 ## stream ever carries 'statuses' (guarded, degrades to nothing), and the winner banner waits
 ## for the corpses to sink.
+##
+## WATCH UX PASS (2026-08-07): opening card (both rosters, tactics + kits — the READ before the
+## answer), playback controls (SPACE pause · 1/2/4 speed · R replays the SAME frames, never a
+## re-sim), a fading kill feed, an end scoreboard aggregated from the stream (damage dealt/taken,
+## healing only if the stream carries heal events, decisions from the per-unit decision log),
+## and big-hit feedback (sine-based camera micro-shake — NO randf — plus a larger crit pop).
 extends Node3D
 
 const Sim = preload("res://scripts/sim/sim.gd")
 const Kit = preload("res://scripts/sim/kit.gd")
 const Rig = preload("res://scripts/ui/creature_rig.gd")
+const UiTheme = preload("res://scripts/ui/theme.gd")
 
 const GROUND := Vector2(110, 62)
 const OBSTACLES := [{"rect": Rect2(-14, -9, 7, 7)}, {"rect": Rect2(7, 3, 7, 7)}]
@@ -60,6 +67,28 @@ var _move_by_name := {}   # data.json move name -> the full move dict (VFX recip
 var _t := 0.0
 var _fi := 0
 var _done := false
+
+## ── watch-UX state ──
+const INTRO_TIME := 2.5   # the opening card holds this long before the replay rolls
+const FEED_HOLD := 3.2    # kill-feed line holds, then fades over FEED_FADE
+const FEED_FADE := 0.8
+var _us_meta: Array = []  # per-unit roster facts for the card + scoreboard (threaded from _run_fight)
+var _spawn := {}          # uid -> deploy Vector2 (restart resets bodies here)
+var _rig_y := {}          # uid -> the rig's build-time y (corpse sink moves it; restart restores)
+var _paused := false
+var _speed := 1.0
+var _intro_left := 0.0
+var _gen := 0             # replay generation — corpse/banner timers from a stale replay no-op
+var _intro_layer: CanvasLayer = null
+var _hud_layer: CanvasLayer = null
+var _speed_lbl: Label = null
+var _feed_box: VBoxContainer = null
+var _end_layer: CanvasLayer = null
+var _last_hit := {}       # uid -> {"from","move"} — the kill feed's attribution memory
+var _shake := 0.0         # camera micro-shake magnitude; decays exponentially
+var _sink_tweens := {}    # uid -> active corpse-sink tween (killed on restart)
+var _has_heal := false    # the stream carried >=1 heal event → scoreboard shows the column
+var _totals := {}         # uid -> {dealt, taken, healed} aggregated ONCE from the frame stream
 
 var _cam: Camera3D
 var _cam_look := Vector3.ZERO
@@ -307,6 +336,20 @@ func _run_fight() -> void:
 	_frames = _result.frames
 	print("WATCH: winner=%s ticks=%d frames=%d" % [str(_result.winner), int(_result.ticks), _frames.size()])
 
+	# Roster facts for the opening card + scoreboard: species name, posture, kit move names.
+	for u in us:
+		var sp_name := str((by_id[str(u.species)] as Dictionary).get("name", str(u.species)))
+		var tac: Dictionary = u.tactics
+		var posture := str(tac.get("positional", "push")).capitalize()
+		var prio := str(tac.get("target_priority", "nearest"))
+		var move_names: Array = []
+		for kentry in u.kit:
+			move_names.append(str(kentry.get("name", "?")))
+		_us_meta.append({"id": str(u.id), "team": str(u.team), "species": sp_name,
+			"posture": posture, "priority": prio, "moves": move_names})
+		_spawn[str(u.id)] = Vector2(u.pos)
+	_aggregate_totals()
+
 	# Bodies + labels + team rings.
 	var next_idx := 0
 	for u in us:
@@ -318,6 +361,10 @@ func _run_fight() -> void:
 			rig.add_child(box)
 		_rigs[u.id] = rig
 		_base_scale[u.id] = rig.scale
+		_rig_y[u.id] = rig.position.y
+		# Bodies stand ON THE DEPLOY SPOTS during the opening card — the card names the
+		# formation, the board shows it.
+		rig.position = Vector3(u.pos.x, rig.position.y, u.pos.y)
 		_unit_index[u.id] = next_idx
 		next_idx += 1
 		var disc := MeshInstance3D.new()
@@ -349,6 +396,8 @@ func _run_fight() -> void:
 		# Stable per-unit label height: id-order slot within the side, so five labels in a
 		# scrum stack into distinct shelves instead of overlapping into noise.
 		_label_h[u.id] = 6.6 + 0.75 * float(int(_unit_index[u.id]) % 5)
+		lbl.text = str(u.id)   # names over the deploy spots while the opening card holds
+		lbl.position = Vector3(u.pos.x, float(_label_h[u.id]), u.pos.y)
 		# Status chip pool: MAX_CHIPS unshaded dots under the label, hidden until the frame
 		# stream carries a 'statuses' array (guarded with .get — absence degrades to nothing).
 		var pool: Array = []
@@ -366,11 +415,102 @@ func _run_fight() -> void:
 			pool.append(chip)
 		_chips[u.id] = pool
 
+	_build_hud()
+	_show_opening_card()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# PLAYBACK — SPACE pause · 1/2/4 speed · R replays the SAME frames (never re-sim)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	match (event as InputEventKey).keycode:
+		KEY_SPACE:
+			_paused = not _paused
+			_update_speed_label()
+		KEY_1:
+			_speed = 1.0
+			_update_speed_label()
+		KEY_2:
+			_speed = 2.0
+			_update_speed_label()
+		KEY_4:
+			_speed = 4.0
+			_update_speed_label()
+		KEY_R:
+			_restart_replay()
+
+
+## Rewind the SAME frame stream to tick 0 and play it again. Nothing is re-simulated — the
+## fight already happened; this only resets what presentation mutated.
+func _restart_replay() -> void:
+	_gen += 1                      # every pending corpse/banner timer from this run goes stale
+	_t = 0.0
+	_fi = 0
+	_done = false
+	_paused = false
+	_last_hit.clear()
+	_shake = 0.0
+	if _end_layer != null and is_instance_valid(_end_layer):
+		_end_layer.queue_free()
+	_end_layer = null
+	if _feed_box != null:
+		for c in _feed_box.get_children():
+			c.queue_free()
+	for uid in _pop_tweens:
+		var tw: Tween = _pop_tweens[uid]
+		if tw != null and tw.is_valid():
+			tw.kill()
+	_pop_tweens.clear()
+	for uid in _sink_tweens:
+		var stw: Tween = _sink_tweens[uid]
+		if stw != null and stw.is_valid():
+			stw.kill()
+	_sink_tweens.clear()
+	for uid in _rigs:
+		var rig = _rigs[uid]
+		if rig == null or not is_instance_valid(rig):
+			continue
+		var sp: Vector2 = _spawn.get(uid, Vector2.ZERO)
+		rig.visible = true
+		rig.position = Vector3(sp.x, float(_rig_y.get(uid, 0.0)), sp.y)
+		rig.scale = _base_scale.get(uid, rig.scale)
+		if rig.has_method("set_state"):
+			rig.set_state("idle", Vector2(1, 0))
+		var disc: MeshInstance3D = _discs.get(uid)
+		if disc != null:
+			disc.visible = true
+			disc.position = Vector3(sp.x, 0.06, sp.y)
+		var lbl: Label3D = _labels.get(uid)
+		if lbl != null:
+			lbl.modulate = HP_GOOD
+			lbl.text = str(uid)
+			lbl.position = Vector3(sp.x, float(_label_h.get(uid, 7.2)), sp.y)
+		for chip in _chips.get(uid, []):
+			chip.visible = false
+	if _cam != null:
+		_cam.position = Vector3(0, 52, 58)
+		_cam_look = Vector3(0, 0, -2)
+		_cam.look_at(_cam_look)
+	_update_speed_label()
+	_show_opening_card()
+
 
 func _process(delta: float) -> void:
 	if _frames.is_empty() or _done:
 		return
-	_t += delta
+	# The opening card holds in real time (never speed-scaled): it is the READ.
+	if _intro_left > 0.0:
+		_intro_left -= delta
+		if _intro_left <= 0.0:
+			_dismiss_opening_card()
+		_drift_camera(delta)
+		_scale_labels()
+		return
+	if not _paused:
+		_t += delta * _speed
 	var target_fi := mini(int(_t / Sim.DT), _frames.size() - 1)
 	while _fi < target_fi:
 		_fi += 1
@@ -415,8 +555,8 @@ func _process(delta: float) -> void:
 	_scale_labels()
 	if _fi >= _frames.size() - 1 and not _done:
 		_done = true
-		# Hold the banner until the last corpses have sunk — the final frame must be clean.
-		get_tree().create_timer(BANNER_DELAY).timeout.connect(_show_winner_banner)
+		# Hold the scoreboard until the last corpses have sunk — the final frame must be clean.
+		get_tree().create_timer(BANNER_DELAY).timeout.connect(_show_scoreboard.bind(_gen))
 		print("WATCH: replay complete — winner %s" % str(_result.winner))
 
 
@@ -467,25 +607,33 @@ func _present_event(e: Dictionary) -> void:
 	var cpos: Vector3 = caster.position if caster != null else vpos
 	match kind:
 		"strike":
+			if int(e.get("dmg", 0)) > 0:
+				_last_hit[str(e.get("to", ""))] = {"from": str(e.get("from", "")), "move": ""}
 			if victim != null:
 				if victim.has_method("flinch"):
 					victim.flinch()
-				_scale_pop(str(e.to))
+				_scale_pop(str(e.to), 1.26 if bool(e.get("crit", false)) else 1.14)
 				_float_dmg(str(e.to), int(e.get("dmg", 0)), false)
 			if _vfx != null and _vfx.has_method("burst"):
 				_vfx.burst(vpos + Vector3(0, 2.0, 0), "slash", Color(0.95, 0.68, 0.25), 1.0, 8)
 				if bool(e.get("crit", false)):
 					_vfx.burst(vpos + Vector3(0, 2.2, 0), "spark", Color(1.0, 0.9, 0.5), 1.3, 10)
 					_crowd_react(0.25)
+			if bool(e.get("crit", false)):
+				_shake = maxf(_shake, 0.22)
 		"cast_start":
 			if _vfx != null and _vfx.has_method("flip") and caster != null:
 				_vfx.flip(cpos + Vector3(0, 2.5, 0), "charge", 3.5, Color(0.85, 0.75, 1.0), 0.5)
 		"cast_done":
+			if int(e.get("dmg", 0)) > 0:
+				_last_hit[str(e.get("to", ""))] = {"from": str(e.get("from", "")), "move": str(e.get("move", ""))}
 			if victim != null:
 				if victim.has_method("flinch"):
 					victim.flinch()
-				_scale_pop(str(e.to))
+				_scale_pop(str(e.to), 1.30 if bool(e.get("crit", false)) else 1.16)
 				_float_dmg(str(e.to), int(e.get("dmg", 0)), true)
+			if bool(e.get("crit", false)):
+				_shake = maxf(_shake, 0.26)
 			var mv: Dictionary = _move_by_name.get(str(e.get("move", "")), {})
 			if _vfx != null and _vfx.has_method("play_ability") and not mv.is_empty():
 				_vfx.play_ability(mv, cpos + Vector3(0, 2.0, 0), vpos, bool(e.get("crit", false)))
@@ -502,6 +650,8 @@ func _present_event(e: Dictionary) -> void:
 		"death":
 			var uid := str(e.get("id", ""))
 			_begin_corpse_fade(uid)
+			_feed_kill(uid)
+			_shake = maxf(_shake, 0.34)
 			var rig = _rigs.get(uid)
 			if _vfx != null and _vfx.has_method("burst") and rig != null:
 				_vfx.burst(rig.position + Vector3(0, 1.0, 0), "smoke", Color(0.5, 0.48, 0.46), 1.4, 12)
@@ -511,7 +661,8 @@ func _present_event(e: Dictionary) -> void:
 
 
 ## A brief scale-pop on the victim: game feel, returns exactly to the rig's build scale.
-func _scale_pop(uid: String) -> void:
+## Crits pop LARGER (mult ~1.26+) — the big hit must read even before the number lands.
+func _scale_pop(uid: String, mult: float = 1.14) -> void:
 	var rig = _rigs.get(uid)
 	if rig == null or not _base_scale.has(uid):
 		return
@@ -519,7 +670,7 @@ func _scale_pop(uid: String) -> void:
 	var old: Tween = _pop_tweens.get(uid)
 	if old != null and old.is_valid():
 		old.kill()
-	rig.scale = base * 1.14
+	rig.scale = base * mult
 	var tw := create_tween()
 	tw.tween_property(rig, "scale", base, 0.16).set_ease(Tween.EASE_OUT)
 	_pop_tweens[uid] = tw
@@ -527,19 +678,23 @@ func _scale_pop(uid: String) -> void:
 
 ## The death state plays from the frame stream; after a linger the corpse sinks and hides,
 ## so a long fight's floor does not fill with bodies the camera must keep dodging.
+## Gen-gated: a restart (R) invalidates every timer the previous playthrough scheduled.
 func _begin_corpse_fade(uid: String) -> void:
 	if _rigs.get(uid) == null:
 		return
-	get_tree().create_timer(CORPSE_LINGER).timeout.connect(_sink_corpse.bind(uid))
+	get_tree().create_timer(CORPSE_LINGER).timeout.connect(_sink_corpse.bind(uid, _gen))
 
 
-func _sink_corpse(uid: String) -> void:
+func _sink_corpse(uid: String, gen: int) -> void:
+	if gen != _gen:
+		return   # stale timer from a replayed run — the body is standing again
 	var rig = _rigs.get(uid)
 	if rig == null or not is_instance_valid(rig):
 		return
 	var tw := create_tween()
 	tw.tween_property(rig, "position:y", rig.position.y - 4.0, 1.2).set_ease(Tween.EASE_IN)
 	tw.tween_callback(_hide_corpse.bind(uid))
+	_sink_tweens[uid] = tw
 
 
 func _hide_corpse(uid: String) -> void:
@@ -585,30 +740,274 @@ func _drift_camera(delta: float) -> void:
 	var look_target := Vector3(centroid.x, 2.0, centroid.y)
 	_cam_look = _cam_look.lerp(look_target, k)
 	_cam.look_at(_cam_look)
+	# Big-hit micro-shake: TINY (max ~0.34 world units), decays fast, sine-driven off replay
+	# time — deterministic (no randf; the sim's determinism contract stays clean) and it never
+	# accumulates, so it cannot become nausea.
+	if _shake > 0.005:
+		_cam.position += Vector3(sin(_t * 53.0), sin(_t * 67.0) * 0.5, cos(_t * 47.0)) * _shake
+		_shake *= exp(-6.5 * delta)
+	else:
+		_shake = 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
-# WINNER BANNER
+# STREAM AGGREGATION — the scoreboard's numbers, summed ONCE from the frames (renderer derives
+# nothing about the fight; these are sums OF the stream, not re-derivations of the sim)
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-func _show_winner_banner() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
+func _aggregate_totals() -> void:
+	_totals.clear()
+	_has_heal = false
+	for meta in _us_meta:
+		_totals[str(meta.id)] = {"dealt": 0, "taken": 0, "healed": 0}
+	for f in _frames:
+		for e in f.events:
+			var kind := str(e.kind)
+			var dmg := int(e.get("dmg", 0))
+			var from_id := str(e.get("from", ""))
+			var to_id := str(e.get("to", ""))
+			match kind:
+				"strike", "cast_done":
+					if _totals.has(from_id):
+						_totals[from_id]["dealt"] += dmg
+					if _totals.has(to_id):
+						_totals[to_id]["taken"] += dmg
+				"status_tick":
+					if _totals.has(to_id):
+						_totals[to_id]["taken"] += dmg   # attrition has no dealer to credit
+				"heal":
+					# Guarded: heal events may not exist in the stream yet. Credit healing DONE
+					# to the caster (or the target if the stream carries no 'from').
+					var amt := int(e.get("amount", e.get("dmg", 0)))
+					if amt > 0:
+						_has_heal = true
+						var who := from_id if _totals.has(from_id) else to_id
+						if _totals.has(who):
+							_totals[who]["healed"] += amt
+				_:
+					pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# OPENING CARD — the player's READ (rosters, postures, kits) before the fight answers it
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _show_opening_card() -> void:
+	_intro_left = INTRO_TIME
+	if _intro_layer != null and is_instance_valid(_intro_layer):
+		_intro_layer.queue_free()
+	_intro_layer = CanvasLayer.new()
+	_intro_layer.layer = 20
+	add_child(_intro_layer)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_intro_layer.add_child(center)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 10)
+	center.add_child(col)
+	var title := Label.new()
+	title.text = "EXHIBITION — 5v5"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_color_override("font_color", UiTheme.GOLD)
+	col.add_child(title)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 26)
+	col.add_child(row)
+	for team in ["A", "B"]:
+		row.add_child(_team_card(team))
+
+
+## One team panel: team-coloured border, then per unit — id · species / posture · priority /
+## kit move names (or the bare kick, or nothing).
+func _team_card(team: String) -> Control:
+	var panel := PanelContainer.new()
+	var sb: StyleBoxFlat = UiTheme.panel_style("default", Color(TEAM_COL[team]).darkened(0.15))
+	sb.bg_color = Color(UiTheme.PANEL, 0.93)
+	panel.add_theme_stylebox_override("panel", sb)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 7)
+	v.custom_minimum_size = Vector2(330, 0)
+	panel.add_child(v)
+	var head := Label.new()
+	head.text = "TEAM %s" % team
+	head.add_theme_font_size_override("font_size", 22)
+	head.add_theme_color_override("font_color", TEAM_COL[team].lightened(0.25))
+	v.add_child(head)
+	for meta in _us_meta:
+		if str(meta.team) != team:
+			continue
+		var name_l := Label.new()
+		name_l.text = "%s · %s" % [str(meta.id), str(meta.species)]
+		name_l.add_theme_font_size_override("font_size", 17)
+		name_l.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
+		v.add_child(name_l)
+		var tac_l := Label.new()
+		var moves: Array = meta.moves
+		var kit_txt := ", ".join(PackedStringArray(moves)) if not moves.is_empty() else "—"
+		tac_l.text = "   %s · targets %s\n   %s" % [str(meta.posture), str(meta.priority), kit_txt]
+		tac_l.add_theme_font_size_override("font_size", 14)
+		tac_l.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
+		v.add_child(tac_l)
+	return panel
+
+
+func _dismiss_opening_card() -> void:
+	if _intro_layer == null or not is_instance_valid(_intro_layer):
+		return
+	var layer := _intro_layer
+	_intro_layer = null
+	var tw := create_tween()
+	for c in layer.get_children():
+		tw.parallel().tween_property(c, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(layer.queue_free)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# HUD — speed/pause readout (bottom-left, muted) + kill feed (top-right, fading)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _build_hud() -> void:
+	if _hud_layer != null:
+		return
+	_hud_layer = CanvasLayer.new()
+	_hud_layer.layer = 10
+	add_child(_hud_layer)
+	_speed_lbl = Label.new()
+	_speed_lbl.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_speed_lbl.position = Vector2(14, -54)
+	_speed_lbl.add_theme_font_size_override("font_size", 15)
+	_speed_lbl.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+	_hud_layer.add_child(_speed_lbl)
+	var hint := Label.new()
+	hint.text = "SPACE pause · 1/2/4 speed · R replay"
+	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	hint.position = Vector2(14, -30)
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", Color(UiTheme.TEXT_MUTED, 0.55))
+	_hud_layer.add_child(hint)
+	_feed_box = VBoxContainer.new()
+	_feed_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_feed_box.position = Vector2(-360, 14)
+	_feed_box.custom_minimum_size = Vector2(346, 0)
+	_feed_box.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_feed_box.add_theme_constant_override("separation", 4)
+	_hud_layer.add_child(_feed_box)
+	_update_speed_label()
+
+
+func _update_speed_label() -> void:
+	if _speed_lbl == null:
+		return
+	_speed_lbl.text = "⏸ paused" if _paused else "▶ %dx" % int(_speed)
+
+
+## 'a0 slew b3 — Arcane Bomb' from the death event + the victim's last recorded damage source.
+func _feed_kill(victim_id: String) -> void:
+	var lh: Dictionary = _last_hit.get(victim_id, {})
+	var killer := str(lh.get("from", ""))
+	var mv := str(lh.get("move", ""))
+	var txt := ("%s slew %s" % [killer, victim_id]) if killer != "" else ("%s fell" % victim_id)
+	if mv != "":
+		txt += " — " + mv
+	var team := "A" if killer.begins_with("a") else ("B" if killer.begins_with("b") else "")
+	_feed_line(txt, TEAM_COL.get(team, Color(0.85, 0.85, 0.85)))
+
+
+func _feed_line(txt: String, col: Color) -> void:
+	if _feed_box == null:
+		return
 	var lbl := Label.new()
+	lbl.text = txt
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.add_theme_font_size_override("font_size", 16)
+	lbl.add_theme_color_override("font_color", col.lightened(0.35))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	lbl.add_theme_constant_override("outline_size", 6)
+	_feed_box.add_child(lbl)
+	var tw := lbl.create_tween()
+	tw.tween_interval(FEED_HOLD)
+	tw.tween_property(lbl, "modulate:a", 0.0, FEED_FADE)
+	tw.tween_callback(lbl.queue_free)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# END SCOREBOARD — winner + duration, then the per-unit ledger the stream paid for
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _show_scoreboard(gen: int) -> void:
+	if gen != _gen:
+		return   # a restart outran the banner delay — this board belongs to a dead run
+	if _end_layer != null and is_instance_valid(_end_layer):
+		_end_layer.queue_free()
+	_end_layer = CanvasLayer.new()
+	_end_layer.layer = 15
+	add_child(_end_layer)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_end_layer.add_child(center)
+	var panel := PanelContainer.new()
+	var sb: StyleBoxFlat = UiTheme.panel_style("default", UiTheme.GOLD.darkened(0.2))
+	sb.bg_color = Color(UiTheme.PANEL, 0.95)
+	panel.add_theme_stylebox_override("panel", sb)
+	center.add_child(panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	panel.add_child(v)
+
 	var w := str(_result.get("winner", ""))
 	var dur := float(int(_result.get("ticks", 0))) * Sim.DT
-	lbl.text = ("DRAW — %.1fs" % dur) if w == "draw" else ("TEAM %s WINS — %.1fs" % [w, dur])
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
-	lbl.add_theme_font_size_override("font_size", 72)
-	lbl.add_theme_color_override("font_color", TEAM_COL.get(w, Color(0.9, 0.9, 0.9)))
-	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-	lbl.add_theme_constant_override("outline_size", 18)
-	lbl.modulate.a = 0.0
-	layer.add_child(lbl)
+	var head := Label.new()
+	head.text = ("DRAW — %.1fs" % dur) if w == "draw" else ("TEAM %s WINS — %.1fs" % [w, dur])
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.add_theme_font_size_override("font_size", 34)
+	head.add_theme_color_override("font_color", TEAM_COL.get(w, Color(0.9, 0.9, 0.9)).lightened(0.2))
+	v.add_child(head)
+
+	var cols := 6 if _has_heal else 5
+	var grid := GridContainer.new()
+	grid.columns = cols
+	grid.add_theme_constant_override("h_separation", 22)
+	grid.add_theme_constant_override("v_separation", 4)
+	v.add_child(grid)
+	var headers := ["unit", "species", "dealt", "taken"]
+	if _has_heal:
+		headers.append("healed")
+	headers.append("decisions")
+	for h in headers:
+		grid.add_child(_score_cell(str(h), UiTheme.GOLD, true))
+	var logs: Dictionary = _result.get("decision_logs", {})
+	for meta in _us_meta:
+		var uid := str(meta.id)
+		var tot: Dictionary = _totals.get(uid, {"dealt": 0, "taken": 0, "healed": 0})
+		var decisions: int = (logs.get(uid, []) as Array).size()
+		grid.add_child(_score_cell(uid, TEAM_COL[str(meta.team)].lightened(0.3), true))
+		grid.add_child(_score_cell(str(meta.species), UiTheme.TEXT_PRIMARY, false))
+		grid.add_child(_score_cell(str(int(tot["dealt"])), UiTheme.TEXT_PRIMARY, false))
+		grid.add_child(_score_cell(str(int(tot["taken"])), UiTheme.TEXT_SECONDARY, false))
+		if _has_heal:
+			grid.add_child(_score_cell(str(int(tot["healed"])), UiTheme.SAFE, false))
+		grid.add_child(_score_cell(str(decisions), UiTheme.TEXT_SECONDARY, false))
+
+	var foot := Label.new()
+	foot.text = "R — watch it again"
+	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	foot.add_theme_font_size_override("font_size", 13)
+	foot.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+	v.add_child(foot)
+
+	panel.modulate.a = 0.0
 	var tw := create_tween()
-	tw.tween_property(lbl, "modulate:a", 1.0, 0.6)
+	tw.tween_property(panel, "modulate:a", 1.0, 0.6)
+
+
+func _score_cell(txt: String, col: Color, bold: bool) -> Label:
+	var lbl := Label.new()
+	lbl.text = txt
+	lbl.add_theme_font_size_override("font_size", 17 if bold else 15)
+	lbl.add_theme_color_override("font_color", col)
+	return lbl
 
 
 func _float_dmg(uid: String, dmg: int, is_cast: bool) -> void:

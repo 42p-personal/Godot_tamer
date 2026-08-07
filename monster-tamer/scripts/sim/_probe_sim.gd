@@ -140,6 +140,43 @@ func _go() -> void:
 	_check("anti-teleport: no unit moves more than 2.0 units in one tick (all runs)",
 		_no_teleport(r1) and _no_teleport(peel) and _no_teleport(kite) and _no_teleport(srd))
 
+	# FIELD STATUSES: DoTs tick with no attacker action, stun freezes body and hands, hard
+	# control severs a committed cast, silence splits casts from melee, a 0-power control move
+	# still lands its status, and determinism holds with statuses + DR in play.
+	var brn: Dictionary = await _run_burn()
+	_check("dot: burn landed on the walker (non-vacuous)", _applied(brn, "burn", "b0").size() > 0)
+	_check("dot: the burn target loses HP on ticks where NO strike/cast hits it",
+		_hp_drop_without_hit(brn, "b0"))
+	var stn: Dictionary = await _run_stun_freeze()
+	var stn_apps: Array = _applied(stn, "stun", "b0")
+	_check("stun: landed mid-approach (non-vacuous)", stn_apps.size() > 0)
+	_check("stun: the victim does not MOVE for the duration",
+		stn_apps.size() > 0 and _frozen_during(stn, "b0", stn_apps[0]))
+	_check("stun: the victim neither strikes nor casts for the duration",
+		stn_apps.size() > 0 and _silent_during(stn, "b0", stn_apps[0], true))
+	var cbk: Dictionary = await _run_castbreak()
+	_check("control: a committed cast is LOST to a landed stun (status_break, not interrupt)",
+		_count_break(cbk, "stun", "control") > 0)
+	var sil: Dictionary = await _run_silence()
+	var sil_apps: Array = _applied(sil, "silence", "b0")
+	_check("control: a 0-power move still lands its status (silence applied)", sil_apps.size() > 0)
+	var sil_ok := sil_apps.size() > 0
+	for app in sil_apps:
+		if not _silent_during(sil, "b0", app, false):
+			sil_ok = false
+	_check("silence: no cast_start inside ANY silence window", sil_ok)
+	_check("silence: melee is NOT blocked (the silenced hybrid still swings)",
+		_strikes_from_in_windows(sil, "b0", sil_apps) > 0)
+	var sil2: Dictionary = await _run_silence()
+	var brn2: Dictionary = await _run_burn()
+	_check("determinism holds with statuses, DoTs and DR in play",
+		_hash_frames(sil) == _hash_frames(sil2) and _hash_frames(brn) == _hash_frames(brn2))
+	var moves_all := _load_moves()
+	_check("kit: a real status-carrying control move builds (Hush)",
+		Kit.build(["Hush"], moves_all).size() == 1)
+	_check("kit: a status-less debuff still skips loudly (Sunder — mods not built)",
+		Kit.build(["Sunder"], moves_all).size() == 0)
+
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
 
@@ -469,3 +506,192 @@ func _run_real_kits() -> Dictionary:
 	if not ok:
 		return {}
 	return sim.run()
+
+
+# ═══ FIELD-STATUS SCENARIOS ══════════════════════════════════════════════════════════════════
+
+
+## DoT: a standing caster lights the slow walker on fire; the burn must tick HP away on frames
+## where nothing else touches the victim.
+func _run_burn() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-14, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 45, "INT": 70, "WIS": 60},
+			"kit": [{"name": "Ember", "kind": "cast", "power": 12, "accuracy": 100, "cast_time": 1.0,
+				"cooldown": 4.0, "mana": 3, "channel": "magic",
+				"status": {"kind": "burn", "chance": 100, "duration": 3}}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(14, 0), "speed": 5.0,
+			"stats": {"STR": 40, "CON": 120, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(61, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-14, 0), Vector2(14, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Stun freeze: the holder stuns the approaching melee at range — the victim must not move,
+## strike or cast for the (DR-resolved) duration the status_applied event reports.
+func _run_stun_freeze() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-22, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 40, "INT": 60, "WIS": 60},
+			"kit": [{"name": "Concuss", "kind": "cast", "power": 5, "accuracy": 100, "cast_time": 0.8,
+				"cooldown": 5.0, "mana": 3, "channel": "magic",
+				"status": {"kind": "stun", "chance": 100, "duration": 2}}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(22, 0), "speed": 7.0,
+			"stats": {"STR": 50, "CON": 30, "INT": 10, "WIS": 15},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(62, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-22, 0), Vector2(22, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Cast break: two standing casters — one on a fast stun, one on a long 2.5s commitment. The
+## stun must sever the long cast: status_break with cause "control", never an "interrupt".
+func _run_castbreak() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-12, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 40, "INT": 60, "WIS": 70},
+			"kit": [{"name": "Concuss", "kind": "cast", "power": 5, "accuracy": 100, "cast_time": 0.8,
+				"cooldown": 3.0, "mana": 3, "channel": "magic",
+				"status": {"kind": "stun", "chance": 100, "duration": 1}}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(12, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 20, "INT": 60, "WIS": 70},
+			"kit": [{"name": "Zap", "kind": "cast", "power": 10, "accuracy": 100, "cast_time": 2.5,
+				"cooldown": 0.5, "mana": 2, "channel": "magic"}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+	]
+	var sim = Sim.new()
+	sim.setup(63, us, Vector2(80, 44), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-12, 0), Vector2(12, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Silence: a 0-power hush vs a melee/caster hybrid. The hush must LAND its status (decision
+## #20 analogue: same accuracy roll, no damage needed), the silenced hybrid must start no cast
+## inside the window — and must still swing its fists.
+func _run_silence() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-16, 0), "speed": 9.0,
+			"stats": {"STR": 55, "CON": 60, "INT": 20, "WIS": 40},
+			"kit": [{"name": "Hush0", "kind": "cast", "power": 0, "accuracy": 100, "cast_time": 1.0,
+				"cooldown": 5.0, "mana": 3, "channel": "voice",
+				"status": {"kind": "silence", "chance": 100, "duration": 3}}],
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "b0", "team": "B", "pos": Vector2(16, 0), "speed": 8.0,
+			"stats": {"STR": 45, "CON": 60, "INT": 60, "WIS": 50},
+			"kit": [{"name": "Zap", "kind": "cast", "power": 15, "accuracy": 100, "cast_time": 1.2,
+				"cooldown": 1.0, "mana": 2, "channel": "magic"}],
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(64, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-16, 0), Vector2(16, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## All status_applied events of `status` onto `to_id`, as {t: frame index, n: window ticks
+## derived from the event's own DR-resolved seconds}.
+func _applied(res: Dictionary, status: String, to_id: String) -> Array:
+	var out: Array = []
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) == "status_applied" and str(e.get("status", "")) == status \
+					and str(e.get("to", "")) == to_id:
+				out.append({"t": i, "n": int(float(e.get("seconds", 0.0)) / 0.1)})
+	return out
+
+
+## True if some frame shows the victim's HP dropping with a status_tick and NO strike/cast
+## landing on it that tick — damage with no attacker action, the DoT signature.
+func _hp_drop_without_hit(res: Dictionary, victim: String) -> bool:
+	for i in range(1, res.frames.size()):
+		var prev_hp := -1
+		var cur_hp := -1
+		for u in res.frames[i - 1].units:
+			if str(u.id) == victim:
+				prev_hp = int(u.hp)
+		for u in res.frames[i].units:
+			if str(u.id) == victim:
+				cur_hp = int(u.hp)
+		if prev_hp <= cur_hp or cur_hp <= 0:
+			continue
+		var hit := false
+		var ticked := false
+		for e in res.frames[i].events:
+			if str(e.kind) in ["strike", "cast_done"] and str(e.get("to", "")) == victim:
+				hit = true
+			if str(e.kind) == "status_tick" and str(e.get("to", "")) == victim:
+				ticked = true
+		if ticked and not hit:
+			return true
+	return false
+
+
+## Position pinned for the whole control window (movement for the application tick itself has
+## already happened, so the anchor is t+1; pushes would move it, but the scenarios stun at range).
+func _frozen_during(res: Dictionary, victim: String, app: Dictionary) -> bool:
+	var t := int(app.t)
+	var n := int(app.n)
+	if t + 2 >= res.frames.size() or n < 3:
+		return false
+	var anchor = null
+	for u in res.frames[t + 1].units:
+		if str(u.id) == victim:
+			anchor = u.pos
+	if anchor == null:
+		return false
+	for j in range(t + 1, mini(t + n, res.frames.size())):
+		for u in res.frames[j].units:
+			if str(u.id) == victim and Vector2(u.pos).distance_to(anchor) > 0.001:
+				return false
+	return true
+
+
+## No cast_start (and, if `include_strikes`, no strike/miss) FROM the victim inside the window.
+func _silent_during(res: Dictionary, victim: String, app: Dictionary, include_strikes: bool) -> bool:
+	var t := int(app.t)
+	var n := int(app.n)
+	for j in range(t + 1, mini(t + n, res.frames.size())):
+		for e in res.frames[j].events:
+			if str(e.get("from", "")) != victim:
+				continue
+			if str(e.kind) == "cast_start":
+				return false
+			if include_strikes and str(e.kind) in ["strike", "miss"]:
+				return false
+	return true
+
+
+func _count_break(res: Dictionary, status: String, cause: String) -> int:
+	var c := 0
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == "status_break" and str(e.get("status", "")) == status \
+					and str(e.get("cause", "")) == cause:
+				c += 1
+	return c
+
+
+func _strikes_from_in_windows(res: Dictionary, attacker: String, apps: Array) -> int:
+	var c := 0
+	for app in apps:
+		for j in range(int(app.t), mini(int(app.t) + int(app.n), res.frames.size())):
+			for e in res.frames[j].events:
+				if str(e.kind) == "strike" and str(e.get("from", "")) == attacker:
+					c += 1
+	return c

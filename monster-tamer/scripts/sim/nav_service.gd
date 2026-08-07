@@ -93,6 +93,16 @@ func path(from: Vector2, to: Vector2) -> PackedVector2Array:
 	return out
 
 
+## TEARDOWN — release the server-side region and map. Each nav build allocates ~18 RIDs of
+## NavigationServer state that outlive the RefCounted wrapper; every discarded sim must call
+## this (probes after run(), the watch scene on restart via sim.nav.free_rids()). Idempotent
+## and safe on a never-built instance — the RID guards make double-teardown a no-op — and
+## deterministic-neutral: it only ever runs after the fight has fully resolved.
 func free_rids() -> void:
-	NavigationServer3D.free_rid(_region)
-	NavigationServer3D.free_rid(_map)
+	if _region.is_valid():
+		NavigationServer3D.free_rid(_region)
+		_region = RID()
+	if _map.is_valid():
+		NavigationServer3D.free_rid(_map)
+		_map = RID()
+	_ready = false

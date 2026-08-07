@@ -8,6 +8,12 @@
 ## ground, perimeter rail, stone cover, tiered stands with the seated crowd, a drifting camera
 ## that keeps the fight framed, hit flinches, pooled VFX and a winner banner. Every visual is
 ## an echo of an event the sim already emitted; the renderer still derives NOTHING.
+##
+## POLISH PASS 2 (2026-08-07): ground tinted to warm stone (creatures brightest on the board),
+## per-unit label shelf heights + distance shrink (scrum stays readable), hp% coloured by band,
+## camera glides high→side-on as the deploy becomes the fight, status chips render IF the frame
+## stream ever carries 'statuses' (guarded, degrades to nothing), and the winner banner waits
+## for the corpses to sink.
 extends Node3D
 
 const Sim = preload("res://scripts/sim/sim.gd")
@@ -20,6 +26,25 @@ const TEAM_COL := {"A": Color(0.35, 0.55, 0.95), "B": Color(0.85, 0.35, 0.3)}
 
 ## How long a corpse lies before it sinks away (design: deaths must be READ, then decluttered).
 const CORPSE_LINGER := 3.0
+## The winner banner waits for the last corpse to sink so the final frame is a clean board.
+const BANNER_DELAY := CORPSE_LINGER + 1.6
+
+## HP% reads by BAND, not by number: white = healthy, amber = pressured, red = dying.
+const HP_GOOD := Color(0.96, 0.96, 0.96)
+const HP_MID := Color(1.0, 0.72, 0.25)
+const HP_LOW := Color(1.0, 0.30, 0.25)
+
+## Status chip colours (dots under the label). Anything unmapped gets neutral grey.
+const STATUS_COL := {
+	"poison": Color(0.35, 0.85, 0.30), "burn": Color(1.0, 0.55, 0.15),
+	"bleed": Color(0.80, 0.15, 0.15), "stun": Color(1.0, 0.90, 0.30),
+	"blind": Color(0.55, 0.55, 0.60), "fear": Color(0.60, 0.30, 0.80),
+	"confusion": Color(0.95, 0.55, 0.85), "silence": Color(0.35, 0.55, 0.95),
+	"vulnerable": Color(0.95, 0.35, 0.70), "sleep": Color(0.65, 0.78, 0.95),
+	"doom": Color(0.25, 0.20, 0.30), "haste": Color(0.30, 0.90, 0.90),
+	"charm": Color(0.95, 0.60, 0.65), "healblock": Color(0.65, 0.65, 0.30),
+}
+const MAX_CHIPS := 4
 
 var _frames: Array = []
 var _result: Dictionary = {}
@@ -29,6 +54,8 @@ var _discs := {}          # uid -> team-colour ground ring (the at-a-glance side
 var _base_scale := {}     # uid -> the rig's build-time scale (pop tweens return here)
 var _pop_tweens := {}     # uid -> active scale-pop tween (killed before restarting)
 var _unit_index := {}     # uid -> stable int (cast-glow pool key)
+var _label_h := {}        # uid -> stable label height (id-order slot; breaks scrum overlap)
+var _chips := {}          # uid -> Array[MeshInstance3D], the pooled status dots
 var _move_by_name := {}   # data.json move name -> the full move dict (VFX recipes want it)
 var _t := 0.0
 var _fi := 0
@@ -104,6 +131,10 @@ func _build_arena() -> void:
 		fmat.albedo_texture = ground_tex
 		# The jpg is a seamless square tile; repeat it every ~14 world units.
 		fmat.uv1_scale = Vector3(GROUND.x / 14.0, GROUND.y / 14.0, 1.0)
+		# ⚠️ The league tiles are bright by themselves and wash out the creatures under the
+		# working lamp. Multiply-tint toward the house palette's warm stone: the CREATURES
+		# must be the brightest thing on the board, never the floor.
+		fmat.albedo_color = Color(0.60, 0.55, 0.48)
 	else:
 		fmat.albedo_color = Color(0.24, 0.22, 0.19)
 	floor_mi.material_override = fmat
@@ -272,6 +303,7 @@ func _run_fight() -> void:
 	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-38, 0), Vector2(38, 0))
 	assert(ok, "nav never became ready")
 	_result = sim.run()
+	sim.nav.free_rids()  # the teardown every discarded sim owes (nav_service.gd)
 	_frames = _result.frames
 	print("WATCH: winner=%s ticks=%d frames=%d" % [str(_result.winner), int(_result.ticks), _frames.size()])
 
@@ -308,9 +340,31 @@ func _run_fight() -> void:
 		lbl.font_size = 44
 		lbl.outline_size = 14
 		lbl.pixel_size = 0.030
-		lbl.modulate = TEAM_COL[u.team]
+		lbl.modulate = HP_GOOD
+		# Team identity moves to the OUTLINE (the disc carries it too) so the face colour is
+		# free to carry the hp band.
+		lbl.outline_modulate = Color(TEAM_COL[u.team]).darkened(0.55)
 		add_child(lbl)
 		_labels[u.id] = lbl
+		# Stable per-unit label height: id-order slot within the side, so five labels in a
+		# scrum stack into distinct shelves instead of overlapping into noise.
+		_label_h[u.id] = 6.6 + 0.75 * float(int(_unit_index[u.id]) % 5)
+		# Status chip pool: MAX_CHIPS unshaded dots under the label, hidden until the frame
+		# stream carries a 'statuses' array (guarded with .get — absence degrades to nothing).
+		var pool: Array = []
+		for _c in range(MAX_CHIPS):
+			var chip := MeshInstance3D.new()
+			var chm := SphereMesh.new()
+			chm.radius = 0.30
+			chm.height = 0.60
+			chip.mesh = chm
+			var cmat := StandardMaterial3D.new()
+			cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			chip.material_override = cmat
+			chip.visible = false
+			add_child(chip)
+			pool.append(chip)
+		_chips[u.id] = pool
 
 
 func _process(delta: float) -> void:
@@ -352,13 +406,53 @@ func _process(delta: float) -> void:
 				var frac: float = float(uf.castFrac)
 				var bars: int = int(frac * 8.0)
 				line2 = "%s %s" % [str(uf.castMove), "▰".repeat(bars) + "▱".repeat(8 - bars)]
-			lbl.text = "" if st == "dead" else "%s %d%%\n%s" % [str(uf.id), int(100.0 * float(uf.hp) / float(uf.max_hp)), line2]
-			lbl.position = Vector3(uf.pos.x, 7.2, uf.pos.y)
+			var hp_frac: float = float(uf.hp) / maxf(float(uf.max_hp), 1.0)
+			lbl.modulate = HP_GOOD if hp_frac > 0.60 else (HP_MID if hp_frac >= 0.25 else HP_LOW)
+			lbl.text = "" if st == "dead" else "%s %d%%\n%s" % [str(uf.id), int(100.0 * hp_frac), line2]
+			lbl.position = Vector3(uf.pos.x, float(_label_h.get(uid, 7.2)), uf.pos.y)
+			_update_chips(uid, uf, st)
 	_drift_camera(delta)
+	_scale_labels()
 	if _fi >= _frames.size() - 1 and not _done:
 		_done = true
-		_show_winner_banner()
+		# Hold the banner until the last corpses have sunk — the final frame must be clean.
+		get_tree().create_timer(BANNER_DELAY).timeout.connect(_show_winner_banner)
 		print("WATCH: replay complete — winner %s" % str(_result.winner))
+
+
+## Status chips: minimal coloured dots under the label, driven ONLY by a per-unit 'statuses'
+## array IF the frame stream carries one. Guarded with .get — absence renders nothing.
+func _update_chips(uid: String, uf: Dictionary, st: String) -> void:
+	var pool: Array = _chips.get(uid, [])
+	if pool.is_empty():
+		return
+	var statuses: Array = uf.get("statuses", []) if st != "dead" else []
+	for i in range(pool.size()):
+		var chip: MeshInstance3D = pool[i]
+		if i >= statuses.size():
+			chip.visible = false
+			continue
+		var s = statuses[i]
+		var sname := str(s.get("kind", s.get("name", ""))) if s is Dictionary else str(s)
+		var mat: StandardMaterial3D = chip.material_override
+		mat.albedo_color = STATUS_COL.get(sname.to_lower(), Color(0.7, 0.7, 0.7))
+		var n: int = mini(statuses.size(), pool.size())
+		chip.position = Vector3(uf.pos.x + (float(i) - float(n - 1) * 0.5) * 0.95,
+			float(_label_h.get(uid, 7.2)) - 1.2, uf.pos.y)
+		chip.visible = true
+
+
+## Labels shrink modestly with camera distance (on top of perspective) so far-side units
+## whisper while the framed action speaks — declutters the scrum without hiding anything.
+func _scale_labels() -> void:
+	if _cam == null:
+		return
+	for uid in _labels:
+		var lbl: Label3D = _labels[uid]
+		if lbl.text == "":
+			continue
+		var dist := _cam.position.distance_to(lbl.position)
+		lbl.pixel_size = 0.030 * clampf(52.0 / maxf(dist, 1.0), 0.62, 1.05)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -479,7 +573,13 @@ func _drift_camera(delta: float) -> void:
 	# Push in as the fight thins: full house = the wide shot, last duel = close and low.
 	var frac: float = clampf(float(alive) / float(_team_size * 2), 0.0, 1.0)
 	var zoom: float = lerpf(0.60, 1.0, frac)
-	var desired := Vector3(centroid.x * 0.55, 52.0 * zoom, centroid.y * 0.55 + 58.0 * zoom)
+	# Angle tells the story: the opening deploy is HIGH so the formations read as shapes;
+	# once the fight is joined the camera settles LOWER and more side-on so silhouettes read.
+	# open_frac decays continuously over the first seconds — a glide, never a cut.
+	var open_frac: float = smoothstep(0.0, 1.0, clampf(1.0 - _t / 7.0, 0.0, 1.0))
+	var cam_h: float = lerpf(33.0, 52.0, open_frac) * zoom
+	var cam_d: float = lerpf(66.0, 58.0, open_frac) * zoom
+	var desired := Vector3(centroid.x * 0.55, cam_h, centroid.y * 0.55 + cam_d)
 	var k: float = 1.0 - exp(-1.4 * delta)     # slow exponential drift — never a snap
 	_cam.position = _cam.position.lerp(desired, k)
 	var look_target := Vector3(centroid.x, 2.0, centroid.y)

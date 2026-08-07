@@ -15,10 +15,21 @@
 ## ⚠️ DETERMINISM CONTRACT: one injected RNG consumed in unit-id order, integer ticks, no clock,
 ## no engine physics. Same seed + same inputs -> byte-identical frames. The probe hashes it.
 ##
-## ⚠️ V1 SCOPE, STATED HONESTLY: movement, targeting, basic-attack strikes, deaths, victory.
-## Abilities/casts, projectiles (#34), statuses on the field, and innate auras layer on next —
-## the seams for them are the request keys the tree already writes (req_cast_allowed) and the
-## events array in the stream.
+## ⚠️ SCOPE, STATED HONESTLY: movement, targeting, basic-attack strikes, casts/kicks, deaths,
+## victory — and now FIELD STATUSES: application through the contracted StatusMath (DR, CON
+## floor, refresh/stacking), per-tick behaviour through the contracted Tick (DoT attrition,
+## doom detonate, CC-meter decay), hard control (stun/sleep freeze everything, silence blocks
+## casts, fear blocks swings), and the table-driven passives (speedMult, accPenalty,
+## damageTakenMult, breaksOnDamage, bonusVsStatus detonation). Still layering on next:
+## projectiles (#34), innate auras, mods (atk/def buffs), ally-targeted buffs, charm's
+## turncoat, confusion's veer steering, knockback displacement (its speedMult ticks; the
+## SHOVE needs the flight machinery), spreadStatus contagion.
+##
+## ⚠️ STATUS RNG DRAW ORDER (part of the determinism contract): a cast completion draws
+## acc/crit/variance as before, then — ONLY when the move carries a `status` block AND the
+## accuracy roll hit — ONE further draw for the status chance. Same accuracy gate for damage
+## and status (no double jeopardy); a miss draws nothing extra. Reordering or
+## unconditionalising that draw changes every fight that follows it.
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -26,6 +37,8 @@ const CombatTree = preload("res://scripts/ai/combat_tree.gd")
 const NavService = preload("res://scripts/sim/nav_service.gd")
 const Damage = preload("res://scripts/damage.gd")
 const Derive = preload("res://scripts/derive.gd")
+const StatusMathLib = preload("res://scripts/status_math.gd")  # the ONE status rulebook
+const TickLib = preload("res://scripts/tick.gd")               # the ONE per-tick rulebook
 
 const DT := 0.1                 # fixed step, matches Sp.DT — never frame delta
 const DECISION_EVERY := 5       # decision tick = 0.5s; movement executes every tick
@@ -110,8 +123,8 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"cooldown": 0, "has_attacked": false, "alive": true,
 			"mp": Derive.max_mana(float(stats.get("WIS", 10)), float(stats.get("INT", 10))),
 			"max_mp": Derive.max_mana(float(stats.get("WIS", 10)), float(stats.get("INT", 10))),
-			"regen": Derive.regen_per_sec(float(stats.get("WIS", 10)), false),
 			"kit": u.get("kit", []), "cds": {}, "casting": {},
+			"statuses": [], "cc_resist": 0.0, "last_cc_at": -999.0,
 			"dmg_from": {},   # attacker id -> decaying recent damage (the THREAT ledger)
 			"kite_ticks": int(u.get("kite_budget", 80)),  # #39: kiting ENDS - 8s default budget
 			"facing": Vector2(1, 0) if str(u["team"]) == "A" else Vector2(-1, 0),
@@ -160,7 +173,30 @@ func _step() -> void:
 			continue
 		for a in u.dmg_from.keys():
 			u.dmg_from[a] = float(u.dmg_from[a]) * 0.985   # ~2s half-life at 10Hz
-		u.mp = minf(u.max_mp, u.mp + u.regen * DT)
+		# STATUS TICK — the CONTRACTED per-tick rulebook (tick.gd), never inlined here: mana
+		# regen (same wis/200 formula the old inline line used), DoT attrition (burn/bleed
+		# hpPerSec, poison mpPerSec — poison drains MANA, that is the authored table), doom's
+		# detonate-on-expiry, status expiry, CC-meter decay. Cooldowns stay tick-integers on
+		# this side: pass none, keep ours.
+		var tout: Dictionary = TickLib.tick_unit({
+			"dt": DT, "now": tick_now * DT, "statuses": u.statuses, "mods": [],
+			"cooldowns": {}, "wis": float(u.stats.get("WIS", 10)), "isSupport": false,
+			"mp": u.mp, "maxMp": float(u.max_mp), "hp": float(u.hp), "maxHp": float(u.max_hp),
+			"ccResist": u.cc_resist, "lastCcAt": u.last_cc_at,
+		})
+		u.hp = tout["hp"]
+		u.mp = tout["mp"]
+		u.statuses = tout["statuses"]
+		u.cc_resist = tout["ccResist"]
+		# ⚠️ STAGNATION CHOICE, DOCUMENTED: DoT ticks are DELIBERATELY absent from the
+		# ratchet's pause list (it scans strike/cast_done only). The strike or cast that
+		# APPLIED the status already paused it when it landed; a lone dot ticking on a
+		# turtled remnant is not fight progress. A DoT DEATH still resets it — the death
+		# pass below does not care what killed you.
+		if float(tout["attrition"]) > 0.0:
+			events.append({"kind": "status_tick", "to": u.id, "dmg": float(tout["attrition"])})
+		for kind in tout["expired"]:
+			events.append({"kind": "status_expire", "to": u.id, "status": str(kind)})
 		for k in u.cds.keys():
 			u.cds[k] = maxi(0, int(u.cds[k]) - 1)
 		_execute_cast(u, events)
@@ -253,8 +289,10 @@ func _fill_bb(u: Dictionary) -> void:
 		if o2.alive and o2.team != u.team:
 			near_d = minf(near_d, u.pos.distance_to(o2.pos))
 	bb.set_value("nearest_enemy_dist", near_d)
-	bb.set_value("interrupt_ready", _ready_move(u, "interrupt") != "")
-	bb.set_value("cast_ready", _ready_move(u, "cast") != "")
+	# A status that blocks the action makes it read NOT-ready — the tree must not hold position
+	# for a cast the sim will refuse (stun blocks both; silence blocks casts, not the kick).
+	bb.set_value("interrupt_ready", not _incapacitated(u) and _ready_move(u, "interrupt") != "")
+	bb.set_value("cast_ready", not _casts_blocked(u) and _ready_move(u, "cast") != "")
 	# Guard/peel context: who is hurting my CHARGE right now? The charge's own threat ledger
 	# answers it - ties break by id order (strict >), determinism as always.
 	var gid: String = str(u.tactics.get("guard_ally", ""))
@@ -332,27 +370,30 @@ func _assign_slots() -> void:
 ## `face_along` false = STRAFE: the caller owns facing (locked on the target) while move_dir
 ## follows actual motion — the two decouple on the stream exactly here.
 func _steer(u: Dictionary, aim: Vector2, face_along: bool) -> void:
+	# Statuses scale speed via the table (haste 1.35, fear 1.15, knockback 0.6) — read fresh
+	# each tick, never cached on the unit, so expiry takes effect the tick it happens.
+	var spd: float = u.speed * _speed_mult_of(u)
 	var to_aim: Vector2 = aim - u.pos
 	var d: float = to_aim.length()
 	if d < 0.001:
 		u.vel = Vector2.ZERO
 		return
-	var desired: Vector2 = to_aim / d * u.speed
-	if d < u.speed * DT:
+	var desired: Vector2 = to_aim / d * spd
+	if d < spd * DT:
 		desired = to_aim / DT   # arrival: ask only for the closing speed, never overshoot
 	var cur: Vector2 = u.vel
 	if cur.length() > 0.1 and d > TURN_RELAX_DIST:
 		var max_turn: float = TURN_RATE * DT
 		var ang: float = cur.angle_to(desired)
 		if absf(ang) > max_turn:
-			desired = cur.rotated(signf(ang) * max_turn).normalized() * u.speed
+			desired = cur.rotated(signf(ang) * max_turn).normalized() * spd
 	var dv: Vector2 = desired - cur
 	var max_dv: float = MAX_ACCEL * DT
 	if dv.length() > max_dv:
 		dv = dv / dv.length() * max_dv
 	u.vel = cur + dv
-	if u.vel.length() > u.speed:
-		u.vel = u.vel / u.vel.length() * u.speed   # nothing outruns its own speed stat
+	if u.vel.length() > spd:
+		u.vel = u.vel / u.vel.length() * spd   # nothing outruns its own (status-scaled) speed
 	u.pos += u.vel * DT
 	if face_along and u.vel.length() > 0.05:
 		u.facing = u.vel / u.vel.length()
@@ -361,6 +402,12 @@ func _steer(u: Dictionary, aim: Vector2, face_along: bool) -> void:
 func _execute_move(u: Dictionary) -> void:
 	var bb: BT.Blackboard = u.bb
 	var prev_pos: Vector2 = u.pos
+	# HARD CONTROL: an incapacitated body (stun/sleep, table-driven) does not steer, kite or
+	# chase — but pushes still resolve, because other bodies do not stop being solid.
+	if _incapacitated(u):
+		u.vel = Vector2.ZERO
+		_resolve_pushes(u, prev_pos)
+		return
 	var dest = bb.get_value("req_move_to", null)
 	var tid: String = str(bb.get_value("req_attack", bb.get_value("target_id", "")))
 	var tgt = _unit(tid)
@@ -413,9 +460,13 @@ func _execute_move(u: Dictionary) -> void:
 		var before: float = float(prev_pos.distance_to(nearest.pos))
 		if u.pos.distance_to(nearest.pos) > before + 0.05:
 			u.kite_ticks = maxi(0, u.kite_ticks - 1)
-	# Overlap resolution, ALWAYS run (even standing still — someone may have walked into us):
-	# solid ENEMY bodies (#10/#22) push out hard but capped per tick; ALLIES are passable but
-	# drift apart softly when overlapping — a gentler force than the enemy push-out.
+	_resolve_pushes(u, prev_pos)
+
+
+## Overlap resolution, ALWAYS run (even standing still or stunned — someone may have walked
+## into us): solid ENEMY bodies (#10/#22) push out hard but capped per tick; ALLIES are
+## passable but drift apart softly when overlapping — a gentler force than the enemy push-out.
+func _resolve_pushes(u: Dictionary, prev_pos: Vector2) -> void:
 	for o in units:
 		if not o.alive or o.id == u.id:
 			continue
@@ -479,23 +530,26 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			# (kit.gd path); hand-built test kits still describe themselves inline.
 			var mv: Dictionary = kentry.get("move", {"name": str(kentry.name),
 				"power": float(kentry.get("power", 30)), "accuracy": float(kentry.get("accuracy", 100)),
-				"type": "damage", "channel": str(kentry.get("channel", "magic")), "effects": {}})
+				"type": "damage", "channel": str(kentry.get("channel", "magic")), "effects": {},
+				"status": kentry.get("status", null)})
 			# Mitigation follows the CHANNEL rule: physical (melee/ranged) vs CON, everything
 			# else vs WIS — the documented split, not a per-move choice.
 			var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
 			var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))
+			# bonusVsStatus arms BEFORE the strike (the status it detonates is consumed after).
+			var bvs_armed: bool = _bonus_status_armed(mv, tgt)
 			var out: Dictionary = Damage.resolve_strike({
 				"move": mv,
 				"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
 				"now": tick_now * DT,
 				"atk": float(u.stats.get(str(kentry.get("stat", "INT")), 10)),
 				"atkMult": 1.0, "attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
-				"accPenalty": 0.0, "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
+				"accPenalty": _acc_penalty_of(u), "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
 				"falloff": 1.0,
 				"defMit": Damage.mitigation_for(def_stat),
-				"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": 1.0,
+				"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": _dmg_taken_of(tgt),
 				"defGuard": 0, "defWard": 0, "defBlocking": false, "defHasAttacked": tgt.has_attacked,
-				"defHasBonusStatus": false, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
+				"defHasBonusStatus": bvs_armed, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
 				"defMaxHp": tgt.max_hp,
 			})
 			u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
@@ -504,6 +558,13 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 				tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
 				events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
 					"move": str(kentry.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
+				if int(out.get("toHp", 0)) > 0:
+					_break_on_damage(tgt, events)
+				if bvs_armed:
+					_consume_bonus_status(mv, tgt, events)
+				# ⚠️ THE 4TH DRAW — see the draw-order note in the file header. Only on a hit,
+				# only when the move authors a status.
+				_maybe_apply_status(u, tgt, mv, events)
 			else:
 				events.append({"kind": "cast_miss", "from": u.id, "to": tgt.id, "move": str(kentry.name)})
 			u.casting = {}
@@ -513,7 +574,9 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 		var iname := _ready_move(u, "interrupt")
 		var tid: String = str(bb.get_value("target_id", ""))
 		var tgt = _unit(tid)
-		if iname != "" and tgt != null and tgt.alive and not tgt.casting.is_empty() \
+		# Incapacitated blocks the kick; SILENCE does not — the kick is a boot, not a spell.
+		if iname != "" and not _incapacitated(u) and tgt != null and tgt.alive \
+				and not tgt.casting.is_empty() \
 				and u.pos.distance_to(tgt.pos) <= INTERRUPT_REACH:
 			var locked: String = str(tgt.casting.move.name)
 			tgt.casting = {}
@@ -523,7 +586,7 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			u.cds[iname] = INTERRUPT_CD
 			events.append({"kind": "interrupt", "from": u.id, "to": tid, "locked": locked})
 			return
-	if bool(bb.get_value("req_cast_allowed", false)):
+	if bool(bb.get_value("req_cast_allowed", false)) and not _casts_blocked(u):
 		var cname := _ready_move(u, "cast")
 		var tid2: String = str(bb.get_value("target_id", ""))
 		var tgt2 = _unit(tid2)
@@ -559,6 +622,11 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 	if u.cooldown > 0:
 		u.cooldown -= 1
 		return
+	# Cooldown ticks FIRST, gate second: being controlled costs tempo, never recovery — the
+	# tick.gd lesson (a stagger that pauses every clock becomes a fight-long stalemate).
+	# incapacitates (stun/sleep) and noAttack (fear) both stop the swing, per the table.
+	if _attack_blocked(u):
+		return
 	var tid: String = str(u.bb.get_value("req_attack", ""))
 	if tid == "":
 		return
@@ -573,10 +641,10 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 		"now": tick_now * DT,
 		"atk": float(u.stats.get("STR", 10)),
 		"atkMult": 1.0, "attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
-		"accPenalty": 0.0, "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
+		"accPenalty": _acc_penalty_of(u), "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
 		"falloff": 1.0,
 		"defMit": Damage.mitigation_for(float(tgt.stats.get("CON", 10))),
-		"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": 1.0,
+		"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": _dmg_taken_of(tgt),
 		"defGuard": 0, "defWard": 0, "defBlocking": false, "defHasAttacked": tgt.has_attacked,
 		"defHasBonusStatus": false, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
 		"defMaxHp": tgt.max_hp,
@@ -589,6 +657,8 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 		tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
 		events.append({"kind": "strike", "from": u.id, "to": tid,
 			"dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
+		if int(out.get("toHp", 0)) > 0:
+			_break_on_damage(tgt, events)   # sleep (breaksOnDamage, table-driven) wakes here too
 	else:
 		events.append({"kind": "miss", "from": u.id, "to": tid})
 
@@ -598,6 +668,136 @@ func _unit(id: String):
 		if o.id == id:
 			return o
 	return null
+
+
+# ═══ FIELD STATUSES ══════════════════════════════════════════════════════════════════════════
+# Application goes through the CONTRACTED StatusMath.apply_status (DR, CON floor, refresh takes
+# the longer, stacks); per-tick behaviour through the CONTRACTED Tick.tick_unit (in _step).
+# ⚠️ EVERYTHING BELOW READS THE fieldStatus TABLE — never a hardcoded status name outside the
+# rulebook's own HARD_CONTROL list. Hand-transcribing table rows is the forbidden pattern that
+# already bit status_math.gd once.
+
+
+func _has_status(u: Dictionary, kind: String) -> bool:
+	for s in u.statuses:
+		if str(s["kind"]) == kind:
+			return true
+	return false
+
+
+## Any active status whose table rule sets `flag` truthy (incapacitates / noSkills / noAttack).
+func _has_rule_flag(u: Dictionary, flag: String) -> bool:
+	for s in u.statuses:
+		if bool(StatusMathLib._rule(str(s["kind"])).get(flag, false)):
+			return true
+	return false
+
+
+func _incapacitated(u: Dictionary) -> bool:
+	return _has_rule_flag(u, "incapacitates")        # stun, sleep
+
+
+func _casts_blocked(u: Dictionary) -> bool:
+	return _incapacitated(u) or _has_rule_flag(u, "noSkills")   # + silence
+
+
+func _attack_blocked(u: Dictionary) -> bool:
+	return _incapacitated(u) or _has_rule_flag(u, "noAttack")   # + fear
+
+
+func _speed_mult_of(u: Dictionary) -> float:
+	var m := 1.0
+	for s in u.statuses:
+		m *= float(StatusMathLib._rule(str(s["kind"])).get("speedMult", 1.0))
+	return m
+
+
+## Attacker-side accuracy loss (blind 25, confusion 15 — percentage POINTS, per the table).
+func _acc_penalty_of(u: Dictionary) -> float:
+	var p := 0.0
+	for s in u.statuses:
+		p += float(StatusMathLib._rule(str(s["kind"])).get("accPenalty", 0.0))
+	return p
+
+
+## Defender-side damage-taken multiplier (vulnerable 1.2) — feeds defStatusDmgTaken.
+func _dmg_taken_of(u: Dictionary) -> float:
+	var m := 1.0
+	for s in u.statuses:
+		m *= float(StatusMathLib._rule(str(s["kind"])).get("damageTakenMult", 1.0))
+	return m
+
+
+## Is the move's bonusVsStatus detonator armed — does the target carry the fuel status?
+func _bonus_status_armed(mv: Dictionary, tgt: Dictionary) -> bool:
+	var e = mv.get("effects")
+	if not (e is Dictionary):
+		return false
+	var bvs = (e as Dictionary).get("bonusVsStatus")
+	if not (bvs is Dictionary):
+		return false
+	return _has_status(tgt, str((bvs as Dictionary).get("kind", "")))
+
+
+## The detonator SPENDS its fuel: landing a bonusVsStatus hit removes the status it cashed in
+## (all of that kind, matching the old sim), so one poison pays out once.
+func _consume_bonus_status(mv: Dictionary, tgt: Dictionary, events: Array) -> void:
+	var kind := str(((mv.get("effects") as Dictionary).get("bonusVsStatus") as Dictionary).get("kind", ""))
+	var kept: Array = []
+	for s in tgt.statuses:
+		if str(s["kind"]) != kind:
+			kept.append(s)
+	if kept.size() != tgt.statuses.size():
+		tgt.statuses = kept
+		events.append({"kind": "status_break", "to": tgt.id, "status": kind, "cause": "consumed"})
+
+
+## breaksOnDamage (sleep, per the table): any landed hit that reached HP wakes the target.
+## ⚠️ DoT ticks do NOT break it — the contracted Tick does not, so neither do we.
+func _break_on_damage(tgt: Dictionary, events: Array) -> void:
+	if (tgt.statuses as Array).is_empty():
+		return
+	var kept: Array = []
+	for s in tgt.statuses:
+		if bool(StatusMathLib._rule(str(s["kind"])).get("breaksOnDamage", false)):
+			events.append({"kind": "status_break", "to": tgt.id, "status": str(s["kind"]), "cause": "damage"})
+		else:
+			kept.append(s)
+	tgt.statuses = kept
+
+
+## Roll the move's authored status through the shared rng (the documented 4th draw) and apply
+## it through the contracted rulebook. Called ONLY on a landed hit — same accuracy gate as the
+## damage, no double jeopardy (#20 analogue).
+func _maybe_apply_status(u: Dictionary, tgt: Dictionary, mv: Dictionary, events: Array) -> void:
+	var spec = mv.get("status")
+	if not (spec is Dictionary) or not tgt.alive:
+		return
+	if rng.randf() * 100.0 >= float((spec as Dictionary).get("chance", 100.0)):
+		return
+	var kind := str((spec as Dictionary)["kind"])
+	var out: Dictionary = StatusMathLib.apply_status({
+		"kind": kind, "statuses": tgt.statuses, "ccResist": tgt.cc_resist,
+		"targetDead": not tgt.alive, "rounds": float((spec as Dictionary).get("duration", 1)),
+		"now": tick_now * DT, "ccImmuneUntil": -999.0,
+		"targetCon": float(tgt.stats.get("CON", 0)), "from": u.id,
+	})
+	# ⚠️ The DR meter advances even on a REFUSED (fullyDiminished) attempt — that is what stops
+	# spam-until-it-sticks being free. Persist the meter before checking `applied`.
+	tgt.cc_resist = float(out["ccResist"])
+	if bool(out["ccMeterTouched"]):
+		tgt.last_cc_at = tick_now * DT
+	if not bool(out["applied"]):
+		return
+	tgt.statuses = out["statuses"]
+	events.append({"kind": "status_applied", "to": tgt.id, "from": u.id,
+		"status": kind, "seconds": float(out["seconds"])})
+	# HARD CONTROL BREAKS A COMMITTED CAST — `status_break`, deliberately DISTINCT from the
+	# kick's `interrupt`: no school lockout, no kick cooldown spent, the cast is simply lost.
+	if StatusMathLib.HARD_CONTROL.has(kind) and not tgt.casting.is_empty():
+		events.append({"kind": "status_break", "to": tgt.id, "from": u.id,
+			"move": str(tgt.casting.move.name), "status": kind, "cause": "control"})
+		tgt.casting = {}
 
 
 ## The redesigned stream (#33): intent and reason come FROM THE TREE, per unit, per frame.
@@ -612,8 +812,16 @@ func _emit_frame(events: Array) -> void:
 			state = "cast"
 		elif u.pos.distance_to(u.get("prev_pos", u.pos)) > 0.02:
 			state = "advance"
+		# Statuses ride the frame as kind + remaining SECONDS — the renderer derives nothing,
+		# so the countdown it shows is computed here, not there.
+		var sts: Array = []
+		for s in u.statuses:
+			sts.append({"kind": str(s["kind"]), "left": maxf(0.0, float(s["until"]) - tick_now * DT)})
 		us.append({
-			"id": u.id, "team": u.team, "pos": u.pos, "hp": maxi(0, u.hp), "alive": u.alive,
+			# hp is float once DoTs tick; the stream shows ceil so a unit at 0.4 reads 1, never
+			# a dead-looking 0 that is still fighting.
+			"id": u.id, "team": u.team, "pos": u.pos, "hp": int(ceilf(maxf(0.0, float(u.hp)))),
+			"alive": u.alive, "statuses": sts,
 			"max_hp": u.max_hp, "mp": u.mp, "max_mp": u.max_mp, "state": state,
 			"move_dir": (u.pos - u.get("prev_pos", u.pos)).normalized() if u.pos != u.get("prev_pos", u.pos) else Vector2.ZERO,
 			"facing": u.facing,

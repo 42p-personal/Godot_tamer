@@ -4,8 +4,11 @@
 ## Derive maths — cast time from the channel table, cooldown in honest seconds, field mana
 ## cost. One source of truth; a renamed or retuned move changes the sim without an edit here.
 ##
-## ⚠️ V1 SCOPE: `damage`-type moves only. buff/debuff/control are the next layer (they need
-## statuses on the field); the builder SAYS SO rather than silently dropping them.
+## ⚠️ SCOPE: `damage`-type moves always; debuff/control moves that CARRY A FIELD STATUS now
+## build too — statuses are on the field, and a control move casts and lands its status through
+## the same accuracy roll as any strike (no double jeopardy). Still skipped, loudly: buffs
+## (ally/self targeting is not simulated — even haste would land on the wrong side), and
+## status-less debuff/control (their payload is the mods system, which is not built).
 extends RefCounted
 
 const Derive = preload("res://scripts/derive.gd")
@@ -24,8 +27,12 @@ static func build(move_names: Array, moves: Array) -> Array:
 	for name in move_names:
 		assert(by_name.has(str(name)), "kit move not in data.json: " + str(name))
 		var mv: Dictionary = by_name[str(name)]
-		if str(mv.get("type", "")) != "damage":
-			push_warning("kit: '%s' is %s-type — not simulated yet, skipped" % [name, mv.get("type")])
+		var mtype := str(mv.get("type", ""))
+		if mtype == "buff":
+			push_warning("kit: '%s' is buff-type — ally/self targeting not simulated yet, skipped" % [name])
+			continue
+		if mtype != "damage" and not (mv.get("status") is Dictionary):
+			push_warning("kit: '%s' is %s-type with no field status — mods not simulated yet, skipped" % [name, mv.get("type")])
 			continue
 		out.append({
 			"name": str(mv.name),

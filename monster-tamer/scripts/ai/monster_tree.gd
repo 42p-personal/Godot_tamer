@@ -1,3 +1,8 @@
+## ⚠️ SUPERSEDED (2026-08-07, user decision): the AI is being REWRITTEN CLEAN on
+## scripts/ai/bt.gd + combat_tree.gd + scripts/sim/sim.gd, with WoW-arena as the explicit
+## reference. Stream B stays LIVE (spatial_sim.gd still drives the game screens) until the
+## rewrite reaches parity and the renderer switches streams — then delete it. Mine it for
+## proven logic (dwells, peel, sticky holds); do not extend it.
 ## THE MONSTER TREE — per-monster decision-making, per docs/BUILD_CONTRACT.md §1 and
 ## docs/TACTICS_TREES.md. Stream B of the spatial rebuild.
 ##

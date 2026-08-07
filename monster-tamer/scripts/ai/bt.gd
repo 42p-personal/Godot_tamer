@@ -56,8 +56,19 @@ class Blackboard:
 	func decision_log() -> Array[Dictionary]:
 		return _log
 
-	func _commit_intent(tick: int) -> void:
-		_intent = _path.duplicate()
+	var _pending: Array[String] = []
+
+	## Actions RECORD their branch during the descent; the TREE commits exactly once per tick,
+	## with the LAST action's chain. A sequence's setup steps (mark target, choose position)
+	## would otherwise each log their own "intent change" every tick and the decision log would
+	## cycle A->B->C forever — one decision tick is ONE intent.
+	func _record_intent() -> void:
+		_pending = _path.duplicate()
+
+	func _commit_pending(tick: int) -> void:
+		if _pending.is_empty():
+			return
+		_intent = _pending
 		var s := intent_string()
 		if s != _last_logged_intent:
 			_log.append({"tick": tick, "intent": s, "reason": _reason})
@@ -65,7 +76,7 @@ class Blackboard:
 
 
 ## ── Node base ─────────────────────────────────────────────────────────────────────────────────
-class BTNode:
+class BTBase:
 	var label: String = ""
 
 	func _init(p_label: String = "") -> void:
@@ -90,7 +101,7 @@ class BTNode:
 
 ## ── Composites ────────────────────────────────────────────────────────────────────────────────
 ## Selector: first child that doesn't FAIL wins. The order IS the priority — author it.
-class Selector extends BTNode:
+class Selector extends BTBase:
 	var children: Array = []
 
 	func _init(p_label: String = "", p_children: Array = []) -> void:
@@ -109,7 +120,7 @@ class Selector extends BTNode:
 
 
 ## Sequence: every child must SUCCEED; a RUNNING child holds the sequence there.
-class Sequence extends BTNode:
+class Sequence extends BTBase:
 	var children: Array = []
 
 	func _init(p_label: String = "", p_children: Array = []) -> void:
@@ -129,7 +140,7 @@ class Sequence extends BTNode:
 
 ## ── Leaves ────────────────────────────────────────────────────────────────────────────────────
 ## Condition: a pure predicate over the blackboard. Never mutates, never RUNNING.
-class Condition extends BTNode:
+class Condition extends BTBase:
 	var fn: Callable
 
 	func _init(p_label: String, p_fn: Callable) -> void:
@@ -142,18 +153,18 @@ class Condition extends BTNode:
 
 ## Action: does the thing. Its label completes the intent string, and a successful or running
 ## action COMMITS the current branch as this tick's intent.
-class Action extends BTNode:
+class Action extends BTBase:
 	var fn: Callable  # func(bb) -> int status
 
 	func _init(p_label: String, p_fn: Callable) -> void:
 		super(p_label)
 		fn = p_fn
 
-	func tick(bb: Blackboard, t: int) -> int:
+	func tick(bb: Blackboard, _t: int) -> int:
 		_push(bb)
 		var r: int = fn.call(bb)
 		if r != FAILURE:
-			bb._commit_intent(t)
+			bb._record_intent()
 		_pop(bb)
 		return r
 
@@ -165,7 +176,7 @@ class Action extends BTNode:
 ##
 ## ⚠️ Ties break by CHILD ORDER (strict >), never by rng — determinism and authorability in one
 ## rule. The winning choice and its score are written as the tick's REASON.
-class UtilitySelector extends BTNode:
+class UtilitySelector extends BTBase:
 	var children: Array = []          # BTNode
 	var scorers: Array = []           # Callable(bb) -> float, parallel to children
 	var sticky_key: String = ""       # bb key holding the stickiness multiplier (>= 1.0)
@@ -209,10 +220,10 @@ class UtilitySelector extends BTNode:
 ## A named mount point. `Dive` and `Hold the line` are different subtrees mounted into the same
 ## slot; swapping is O(1) and the rest of the tree never knows. An empty slot FAILS, so a
 ## Selector above it falls through to the default branch.
-class SubtreeSlot extends BTNode:
-	var subtree: BTNode = null
+class SubtreeSlot extends BTBase:
+	var subtree: BTBase = null
 
-	func mount(p_subtree: BTNode) -> void:
+	func mount(p_subtree: BTBase) -> void:
 		subtree = p_subtree
 
 	func tick(bb: Blackboard, t: int) -> int:
@@ -227,20 +238,23 @@ class SubtreeSlot extends BTNode:
 ## ── The tree ──────────────────────────────────────────────────────────────────────────────────
 ## Owns the root and the slot registry. One tree per unit; the blackboard is per-unit too.
 class BehaviourTree:
-	var root: BTNode
+	var root: BTBase
 	var _slots: Dictionary = {}  # name -> SubtreeSlot
 
-	func _init(p_root: BTNode) -> void:
+	func _init(p_root: BTBase) -> void:
 		root = p_root
 
 	func register_slot(slot_name: String, slot: SubtreeSlot) -> void:
 		_slots[slot_name] = slot
 
 	## Tactics call this: mount a tactic's subtree into a named slot.
-	func mount(slot_name: String, subtree: BTNode) -> void:
+	func mount(slot_name: String, subtree: BTBase) -> void:
 		assert(_slots.has(slot_name), "unknown slot: " + slot_name)
 		(_slots[slot_name] as SubtreeSlot).mount(subtree)
 
 	func tick(bb: Blackboard, t: int) -> int:
 		bb._path.clear()
-		return root.tick(bb, t)
+		bb._pending = []
+		var r: int = root.tick(bb, t)
+		bb._commit_pending(t)
+		return r

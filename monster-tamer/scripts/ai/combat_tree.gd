@@ -70,7 +70,7 @@ static func build(tactics: Dictionary) -> BT.BehaviourTree:
 
 
 ## ── Urgent (decision #27: taunted · ordered target gone · about to die · unreachable) ─────────
-static func _urgent_branch(tactics: Dictionary) -> BT.BTNode:
+static func _urgent_branch(tactics: Dictionary) -> BT.BTBase:
 	var when_hurt: String = str(tactics.get("when_hurt", "fight_on"))
 	var children: Array = [
 		# Taunted: answer it. Taunt is an ability effect and it wins over every priority.
@@ -124,7 +124,7 @@ static func _urgent_branch(tactics: Dictionary) -> BT.BTNode:
 
 
 ## ── When hurt (axis D) — armed by hp fraction, never automatic (decision #14) ─────────────────
-static func _when_hurt_branch(tactics: Dictionary) -> BT.BTNode:
+static func _when_hurt_branch(tactics: Dictionary) -> BT.BTBase:
 	var mode: String = str(tactics.get("when_hurt", "fight_on"))
 	if mode == "fight_on":
 		# No branch at all: fight_on is the absence of self-preservation, not a check that
@@ -164,7 +164,7 @@ static func _when_hurt_branch(tactics: Dictionary) -> BT.BTNode:
 
 
 ## ── Combat: Target (axis A) → Move (axis B) → Act (axis D policy) ────────────────────────────
-static func _combat_branch(tactics: Dictionary) -> BT.BTNode:
+static func _combat_branch(tactics: Dictionary) -> BT.BTBase:
 	return BT.Sequence.new("Combat", [
 		_target_node(tactics),
 		_positional_node(tactics),
@@ -174,7 +174,7 @@ static func _combat_branch(tactics: Dictionary) -> BT.BTNode:
 
 ## Axis A: one scorer per priority, chosen by tactics; commitment via UtilitySelector
 ## stickiness keyed on focus_sticky (`reassess` == the sim sets it to 1.0).
-static func _target_node(tactics: Dictionary) -> BT.BTNode:
+static func _target_node(tactics: Dictionary) -> BT.BTBase:
 	var mode: String = str(tactics.get("target_priority", "nearest"))
 	return BT.Action.new("Mark " + mode, func(bb):
 		var enemies: Array = bb.get_value("enemies", [])
@@ -230,7 +230,7 @@ static func _best(arr: Array, score: Callable) -> Dictionary:
 
 ## Axis B: where do I want to be? `wings` and `dive` carry LATERAL geometry — they are the two
 ## options that spread a fight across a 160-wide board (§2B); do not straighten them.
-static func _positional_node(tactics: Dictionary) -> BT.BTNode:
+static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 	var mode: String = str(tactics.get("positional", "push"))
 	var wing: float = float(tactics.get("wing_side", 1))
 	match mode:
@@ -277,7 +277,7 @@ static func _positional_node(tactics: Dictionary) -> BT.BTNode:
 ## Axis D ability policy: free spends on cooldown; hold_big banks the capstone for the moment;
 ## combo spends only to set up or cash in a status. The sim supplies the booleans; the tree
 ## supplies the discipline.
-static func _act_node(tactics: Dictionary) -> BT.BTNode:
+static func _act_node(tactics: Dictionary) -> BT.BTBase:
 	var policy: String = str(tactics.get("ability_policy", "free"))
 	return BT.Action.new("Engage", func(bb):
 		var tid: String = str(bb.get_value("target_id", ""))

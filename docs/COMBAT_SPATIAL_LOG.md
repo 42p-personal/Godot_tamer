@@ -1075,3 +1075,26 @@ cost in one screenshot:
 - My first read of the giant models ("it's just perspective") was HALF wrong — front-row
   perspective was real, but the same-row sprawl was the genuine bug. The gallery's labelled
   same-row comparison is what separated the two.
+
+
+## The tenth 'already built' instance, and the clean-rewrite decision (2026-08-07)
+
+Asked to start the tree framework and sim rewrite, this session built both - and then
+discovered scripts/ai/ already carried a COMPLETE prior build (bt_* library, 1,469-line
+monster_tree.gd, 224-line selftest) with spatial_sim.gd already rebuilt as its Stream A,
+coordinated via docs/BUILD_CONTRACT.md. Even the determinism spike existed
+(docs/SPIKE_DETERMINISM.md) - this session re-derived the identical verdict, traps included.
+The task list said #22-24 pending; the tree said otherwise. ⚠️ LIST THE DIRECTORY BEFORE
+TRUSTING THE TASK LIST - the log's own rule, ignored at cost.
+
+**The user's call: rewrite clean anyway** - "now we've had practice and know what works",
+with **WoW arena as the explicit reference** (focus targets, peels, interrupts, cooldown
+trading, burst windows, kiting with real costs). So: the NEW stack (bt.gd + combat_tree.gd +
+sim/sim.gd + sim/nav_service.gd) is canon; the legacy streams carry SUPERSEDED banners, stay
+live for the game screens until the renderer switches over at parity, and serve as the mine
+for proven logic. All three new probes green: framework 15/15, combat tree 33/33, sim 8/8
+(fights resolve, wings spread laterally, twin-seed runs byte-identical).
+
+Two lessons paid for this session: a --script SceneTree cannot sync a navmesh (no main loop -
+probes that need nav run as SCENES); and one decision tick is ONE intent - per-action commits
+made the decision log cycle Mark->Move->Engage forever until the tree committed once per tick.

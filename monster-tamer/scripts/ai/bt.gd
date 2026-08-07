@@ -37,6 +37,7 @@ class Blackboard:
 	var _reason: String = ""            # why that branch won, set by the deciding node
 	var _log: Array[Dictionary] = []    # the decision log: {tick, intent, reason} on CHANGE only
 	var _last_logged_intent: String = ""
+	var _last_logged_reason: String = ""
 
 	func get_value(key: String, default = null):
 		return data.get(key, default)
@@ -70,9 +71,13 @@ class Blackboard:
 			return
 		_intent = _pending
 		var s := intent_string()
-		if s != _last_logged_intent:
+		# A change of REASON logs even when the intent string is unchanged - "Guard the charge"
+		# reads the same before and after a peel starts, and the peel is exactly the decision
+		# the log exists to record.
+		if s != _last_logged_intent or _reason != _last_logged_reason:
 			_log.append({"tick": tick, "intent": s, "reason": _reason})
 			_last_logged_intent = s
+			_last_logged_reason = _reason
 
 
 ## ── Node base ─────────────────────────────────────────────────────────────────────────────────

@@ -260,11 +260,27 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 		"guard":
 			return BT.Action.new("Guard the charge", func(bb):
 				var gid: String = str(bb.get_value("guard_id", ""))
+				var charge_pos = null
 				for a in bb.get_value("allies", []):
 					if str(a.id) == gid:
-						bb.set_value("req_move_to", a.pos)
-						return BT.SUCCESS
-				return BT.FAILURE)
+						charge_pos = a.pos
+				if charge_pos == null:
+					return BT.FAILURE
+				# THE PEEL (WoW-arena): someone is on my charge - swap to them and stand in
+				# the line between attacker and charge, so the body-block is literal.
+				var att: String = str(bb.get_value("charge_attacker_id", ""))
+				if att != "":
+					for e in bb.get_value("enemies", []):
+						if str(e.id) == att and e.hp > 0:
+							if str(bb.get_value("target_id", "")) != att:
+								bb._reason = "peel %s off %s" % [att, gid]
+							bb.set_value("target_id", att)
+							bb.set_value("target_pos", e.pos)
+							bb.set_value("req_move_to", charge_pos.lerp(Vector2(e.pos), 0.6))
+							return BT.SUCCESS
+				# Nobody on the charge: station beside it, stay boring on purpose.
+				bb.set_value("req_move_to", charge_pos)
+				return BT.SUCCESS)
 		_:
 			return BT.Action.new("Push", func(bb):
 				bb.set_value("req_move_to", bb.get_value("target_pos", Vector2.ZERO))

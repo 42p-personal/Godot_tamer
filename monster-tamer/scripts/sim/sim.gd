@@ -71,6 +71,7 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"max_mp": Derive.max_mana(float(stats.get("WIS", 10)), float(stats.get("INT", 10))),
 			"regen": Derive.regen_per_sec(float(stats.get("WIS", 10)), false),
 			"kit": u.get("kit", []), "cds": {}, "casting": {},
+			"dmg_from": {},   # attacker id -> decaying recent damage (the THREAT ledger)
 			"facing": Vector2(1, 0) if str(u["team"]) == "A" else Vector2(-1, 0),
 		})
 	units.sort_custom(func(a, b): return a.id < b.id)  # id order IS the tick order
@@ -110,6 +111,8 @@ func _step() -> void:
 	for u in units:
 		if not u.alive:
 			continue
+		for a in u.dmg_from.keys():
+			u.dmg_from[a] = float(u.dmg_from[a]) * 0.985   # ~2s half-life at 10Hz
 		u.mp = minf(u.max_mp, u.mp + u.regen * DT)
 		for k in u.cds.keys():
 			u.cds[k] = maxi(0, int(u.cds[k]) - 1)
@@ -170,7 +173,34 @@ func _fill_bb(u: Dictionary) -> void:
 	bb.set_value("target_casting", tgt != null and tgt.alive and not tgt.casting.is_empty())
 	bb.set_value("interrupt_ready", _ready_move(u, "interrupt") != "")
 	bb.set_value("cast_ready", _ready_move(u, "cast") != "")
+	# Guard/peel context: who is hurting my CHARGE right now? The charge's own threat ledger
+	# answers it - ties break by id order (strict >), determinism as always.
+	var gid: String = str(u.tactics.get("guard_ally", ""))
+	bb.set_value("guard_id", gid)
+	if gid != "":
+		var charge = _unit(gid)
+		if charge != null and charge.alive:
+			bb.set_value("charge_pos", charge.pos)
+			var best_att := ""
+			var best_v := 0.0
+			for a in _ledger_keys_sorted(charge):
+				var v: float = float(charge.dmg_from[a])
+				var att = _unit(str(a))
+				if att != null and att.alive and att.team != u.team and v > best_v:
+					best_v = v
+					best_att = str(a)
+			bb.set_value("charge_attacker_id", best_att)
+		else:
+			bb.set_value("charge_attacker_id", "")
 	# taunt/orders arrive here when abilities and the tactics screen wire in (v1: keys absent).
+
+
+## Dictionary key order is insertion order in Godot, which depends on hit history - SORT before
+## iterating a ledger anywhere a decision hangs on it.
+func _ledger_keys_sorted(u: Dictionary) -> Array:
+	var ks: Array = u.dmg_from.keys()
+	ks.sort()
+	return ks
 
 
 func _execute_move(u: Dictionary) -> void:
@@ -272,6 +302,7 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			u.cds[str(mv.name)] = int(float(mv.get("cooldown", 4.0)) / DT)
 			if bool(out.get("hit", false)):
 				tgt.hp -= int(out.get("toHp", 0))
+				tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
 				events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
 					"move": str(mv.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
 			else:
@@ -338,6 +369,7 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 	u.facing = (tgt.pos - u.pos).normalized() if u.pos != tgt.pos else u.facing
 	if bool(out.get("hit", false)):
 		tgt.hp -= int(out.get("toHp", 0))
+		tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("toHp", 0))
 		events.append({"kind": "strike", "from": u.id, "to": tid,
 			"dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
 	else:

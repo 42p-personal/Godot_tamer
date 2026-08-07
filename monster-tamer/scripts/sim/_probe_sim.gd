@@ -95,6 +95,16 @@ func _go() -> void:
 	_check("determinism holds with casts and kicks in play",
 		_hash_frames(duel_kick) == _hash_frames(dk2))
 
+	# The PEEL: a diver goes for the caster; the bodyguard swaps to the diver and body-blocks.
+	var peel: Dictionary = await _run_peel()
+	_check("peel: the guard swaps to the charge's attacker (reason logged)",
+		_log_has(peel, "a1", "peel b0 off a0"))
+	_check("peel: the guard actually fights the diver (strikes a1->b0)",
+		_strikes_between(peel, "a1", "b0") > 0)
+	_check("threat: the priority tracks the real damager", _log_has(peel, "a0", "(threat)"))
+	var peel2: Dictionary = await _run_peel()
+	_check("determinism holds with peels in play", _hash_frames(peel) == _hash_frames(peel2))
+
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
 
@@ -160,3 +170,46 @@ func _lockout_respected(res: Dictionary, lockout: int) -> bool:
 							print("    LOCKOUT VIOLATION: kick@%d cast_start@%d by %s move %s" % [i, j, str(e2.from), str(e2.move)])
 							return false
 	return found
+
+
+func _log_has(res: Dictionary, unit_id: String, needle: String) -> bool:
+	for entry in res.decision_logs.get(unit_id, []):
+		if str(entry.get("reason", "")).contains(needle):
+			return true
+	return false
+
+
+func _strikes_between(res: Dictionary, from_id: String, to_id: String) -> int:
+	var n := 0
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == "strike" and str(e.get("from", "")) == from_id and str(e.get("to", "")) == to_id:
+				n += 1
+	return n
+
+
+## The peel scenario: a0 is a soft caster on `threat` priority, a1 its bodyguard on `guard`,
+## b0 a fast diver ordered onto the weakest, b1 a frontliner to keep a1 honest.
+func _run_peel() -> Dictionary:
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-24, 0), "speed": 6.0,
+			"stats": {"STR": 15, "CON": 30, "INT": 80, "WIS": 55},
+			"kit": [{"name": "Bolt", "kind": "cast", "power": 30, "cast_time": 1.4,
+				"cooldown": 2.0, "mana": 5, "channel": "magic"}],
+			"tactics": {"target_priority": "threat", "positional": "hold"}},
+		{"id": "a1", "team": "A", "pos": Vector2(-18, 2), "speed": 9.5,
+			"stats": {"STR": 65, "CON": 70, "INT": 10, "WIS": 25},
+			"tactics": {"target_priority": "nearest", "positional": "guard", "guard_ally": "a0"}},
+		{"id": "b0", "team": "B", "pos": Vector2(24, -4), "speed": 11.0,
+			"stats": {"STR": 60, "CON": 35, "INT": 10, "WIS": 15},
+			"tactics": {"target_priority": "weakest", "positional": "dive"}},
+		{"id": "b1", "team": "B", "pos": Vector2(24, 4), "speed": 8.0,
+			"stats": {"STR": 55, "CON": 60, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(4242, us, Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-20, 0), Vector2(20, 0))
+	if not ok:
+		return {}
+	return sim.run()

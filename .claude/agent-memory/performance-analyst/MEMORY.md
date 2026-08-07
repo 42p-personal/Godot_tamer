@@ -1,0 +1,5 @@
+- [No invented numbers](feedback_no_invented_numbers.md) — defend methodology (sign test, beat-2×sd), never propose a target value nobody measured
+- [Balance baseline suspended during Godot rebuild](project_suspended_balance_baseline.md) — don't quote old sweep40 figures as current; still fine to build new instruments, just require rework to beat a captured noise floor, not an invented target
+- [Where balance tooling lives](reference_balance_tooling_locations.md) — TS precedents (sweep40/ab/focus/comps.ts) and Godot-side spatial sim files + headless-harness gotchas
+- [Perf-probe harness + the --script autoload trap](reference_perf_probe_harness.md) — _perf_probe.gd sim/render modes, and the fix for GameData bare-reference compile races under --script
+- [First Godot perf baseline (2026-08-04)](project_first_perf_baseline.md) — docs/PERFORMANCE_BUDGETS.md exists now; stale the moment the leash removal or pathfinding lands, re-check before quoting

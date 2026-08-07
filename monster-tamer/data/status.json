@@ -1,0 +1,989 @@
+{
+  "schema": 1,
+  "subject": "tamerengine/statusMath.ts:applyStatus",
+  "note": "Status application, refresh, stacking and CC diminishing returns. The charm lurch is reported as a number; the caller performs the movement. Regenerate with `npx tsx tools/exportport.ts`.",
+  "cases": [
+    {
+      "name": "a stun lands on a clean target",
+      "axis": "apply",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "a burn lands on a clean target",
+      "axis": "apply",
+      "input": {
+        "kind": "burn",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "nothing lands on a dead target",
+      "axis": "apply",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": true
+      },
+      "expect": {
+        "applied": false,
+        "refusedBecause": "dead",
+        "ccMeterTouched": false,
+        "statuses": [],
+        "ccResist": 0,
+        "seconds": 0,
+        "lurch": 0
+      }
+    },
+    {
+      "name": "control at DR rung 0 (ccResist 0)",
+      "axis": "ccDr",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control at DR rung 1 (ccResist 0.25)",
+      "axis": "ccDr",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0.25,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 13,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.5,
+        "seconds": 3,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control at DR rung 2 (ccResist 0.5)",
+      "axis": "ccDr",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0.5,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 12,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.75,
+        "seconds": 2,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control at DR rung 3 (ccResist 0.75)",
+      "axis": "ccDr",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0.75,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 11,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 1,
+        "seconds": 1,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control at DR rung 4 (ccResist 1)",
+      "axis": "ccDr",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 1,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": false,
+        "refusedBecause": "fullyDiminished",
+        "statuses": [],
+        "ccResist": 1,
+        "seconds": 0,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "an attrition status ignores the meter entirely",
+      "axis": "ccDr",
+      "input": {
+        "kind": "burn",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0.75,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.75,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "the meter advances even when the control fully fails",
+      "axis": "ccDr",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 1,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": false,
+        "refusedBecause": "fullyDiminished",
+        "statuses": [],
+        "ccResist": 1,
+        "seconds": 0,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control against CON 0",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control against CON 300",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 300,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 13.6,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.35,
+        "seconds": 3.6,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control against CON 900",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 900,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 12.8,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.55,
+        "seconds": 2.8,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control against CON 1200",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 1200,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 12.8,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.55,
+        "seconds": 2.8,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control against CON 3000",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 3000,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 12.8,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.55,
+        "seconds": 2.8,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "the CON floor caps at 0.3 however high CON goes",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 100000,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 12.8,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.55,
+        "seconds": 2.8,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "an already-high meter beats a low CON floor",
+      "axis": "conFloor",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0.75,
+        "ccImmuneUntil": 0,
+        "targetCon": 300,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 11,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 1,
+        "seconds": 1,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "control is refused inside the immunity window",
+      "axis": "immunity",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 11,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": false,
+        "refusedBecause": "immune",
+        "ccMeterTouched": false,
+        "statuses": [],
+        "ccResist": 0,
+        "seconds": 0,
+        "lurch": 0
+      }
+    },
+    {
+      "name": "control lands once the window closes",
+      "axis": "immunity",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 11,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 11,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 15,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "immunity does not block an attrition status",
+      "axis": "immunity",
+      "input": {
+        "kind": "burn",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 11,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "a longer re-application extends",
+      "axis": "refresh",
+      "input": {
+        "kind": "burn",
+        "rounds": 5,
+        "now": 10,
+        "from": "a1",
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 12,
+            "from": "e1"
+          }
+        ],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 20,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 10,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "a shorter re-application does NOT cut it short",
+      "axis": "refresh",
+      "input": {
+        "kind": "burn",
+        "rounds": 1,
+        "now": 10,
+        "from": "a1",
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 30,
+            "from": "e1"
+          }
+        ],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 30,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 2,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "refresh re-attributes the source",
+      "axis": "refresh",
+      "input": {
+        "kind": "fear",
+        "rounds": 3,
+        "now": 10,
+        "from": "a1",
+        "statuses": [
+          {
+            "kind": "fear",
+            "until": 12,
+            "from": "old"
+          }
+        ],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "fear",
+            "until": 16,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 6,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "bleed stacks onto an empty target",
+      "axis": "stacks",
+      "input": {
+        "kind": "bleed",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "bleed stacks a second time",
+      "axis": "stacks",
+      "input": {
+        "kind": "bleed",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "e1"
+          }
+        ],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "bleed stacks a third time",
+      "axis": "stacks",
+      "input": {
+        "kind": "bleed",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 15,
+            "from": "e1"
+          }
+        ],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 15,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "a fourth bleed is refused",
+      "axis": "stacks",
+      "input": {
+        "kind": "bleed",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 15,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 16,
+            "from": "e1"
+          }
+        ],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": false,
+        "refusedBecause": "maxStacks",
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 14,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 15,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 16,
+            "from": "e1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 0,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "charm reports a pull for the caller to perform",
+      "axis": "lurch",
+      "input": {
+        "kind": "charm",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "charm",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 4,
+        "lurch": 2.5,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "a stun reports no pull",
+      "axis": "lurch",
+      "input": {
+        "kind": "stun",
+        "rounds": 2,
+        "now": 10,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "stun",
+            "until": 14,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0.25,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": true
+      }
+    },
+    {
+      "name": "rounds convert to seconds",
+      "axis": "duration",
+      "input": {
+        "kind": "burn",
+        "rounds": 3,
+        "now": 0,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 6,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 6,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    },
+    {
+      "name": "expiry is now plus the granted seconds",
+      "axis": "duration",
+      "input": {
+        "kind": "burn",
+        "rounds": 2,
+        "now": 7.5,
+        "from": "a1",
+        "statuses": [],
+        "ccResist": 0,
+        "ccImmuneUntil": 0,
+        "targetCon": 0,
+        "targetDead": false
+      },
+      "expect": {
+        "applied": true,
+        "refusedBecause": null,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 11.5,
+            "from": "a1"
+          }
+        ],
+        "ccResist": 0,
+        "seconds": 4,
+        "lurch": 0,
+        "ccMeterTouched": false
+      }
+    }
+  ]
+}

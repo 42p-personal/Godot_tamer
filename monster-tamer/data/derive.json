@@ -1,0 +1,409 @@
+{
+  "schema": 1,
+  "subject": "monster.ts stat derivations + tamerengine/types.ts pacing constants",
+  "note": "Pure arithmetic over stats — pools, mana pricing, regen, cooldowns, cast times. No geometry, so all of it survives the spatial rebuild. Regenerate with `npx tsx tools/exportport.ts`.",
+  "cases": [
+    {
+      "name": "maxHp at CON 0",
+      "axis": "maxHp",
+      "input": {
+        "CON": 0
+      },
+      "expect": 40
+    },
+    {
+      "name": "maxHp at CON 50",
+      "axis": "maxHp",
+      "input": {
+        "CON": 50
+      },
+      "expect": 142
+    },
+    {
+      "name": "maxHp at CON 100",
+      "axis": "maxHp",
+      "input": {
+        "CON": 100
+      },
+      "expect": 246
+    },
+    {
+      "name": "maxHp at CON 200",
+      "axis": "maxHp",
+      "input": {
+        "CON": 200
+      },
+      "expect": 465
+    },
+    {
+      "name": "maxHp at CON 300",
+      "axis": "maxHp",
+      "input": {
+        "CON": 300
+      },
+      "expect": 696
+    },
+    {
+      "name": "maxHp at CON 400",
+      "axis": "maxHp",
+      "input": {
+        "CON": 400
+      },
+      "expect": 940
+    },
+    {
+      "name": "maxHp at CON 500",
+      "axis": "maxHp",
+      "input": {
+        "CON": 500
+      },
+      "expect": 1196
+    },
+    {
+      "name": "maxHp at CON 800",
+      "axis": "maxHp",
+      "input": {
+        "CON": 800
+      },
+      "expect": 2040
+    },
+    {
+      "name": "maxMana at WIS 0 INT 0",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 0,
+        "INT": 0
+      },
+      "expect": 0
+    },
+    {
+      "name": "maxMana at WIS 100 INT 0",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 100,
+        "INT": 0
+      },
+      "expect": 100
+    },
+    {
+      "name": "maxMana at WIS 0 INT 100",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 0,
+        "INT": 100
+      },
+      "expect": 50
+    },
+    {
+      "name": "maxMana at WIS 100 INT 100",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 100,
+        "INT": 100
+      },
+      "expect": 150
+    },
+    {
+      "name": "maxMana at WIS 50 INT 51",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 50,
+        "INT": 51
+      },
+      "expect": 75
+    },
+    {
+      "name": "maxMana at WIS 50 INT 50",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 50,
+        "INT": 50
+      },
+      "expect": 75
+    },
+    {
+      "name": "maxMana at WIS 300 INT 200",
+      "axis": "maxMana",
+      "input": {
+        "WIS": 300,
+        "INT": 200
+      },
+      "expect": 400
+    },
+    {
+      "name": "authored cost overrides the formula",
+      "axis": "manaCost",
+      "input": {
+        "mana": 10,
+        "power": 100,
+        "type": "damage"
+      },
+      "expect": 10
+    },
+    {
+      "name": "derived damage cost",
+      "axis": "manaCost",
+      "input": {
+        "power": 100,
+        "type": "damage"
+      },
+      "expect": 90
+    },
+    {
+      "name": "derived damage cost, tiny power hits the floor",
+      "axis": "manaCost",
+      "input": {
+        "power": 1,
+        "type": "damage"
+      },
+      "expect": 8
+    },
+    {
+      "name": "derived damage cost folds expected hits",
+      "axis": "manaCost",
+      "input": {
+        "power": 20,
+        "type": "damage",
+        "hits": [
+          1,
+          6
+        ]
+      },
+      "expect": 64
+    },
+    {
+      "name": "non-damage move with power takes the heal branch",
+      "axis": "manaCost",
+      "input": {
+        "power": 100,
+        "type": "buff"
+      },
+      "expect": 80
+    },
+    {
+      "name": "the heal branch has its own floor",
+      "axis": "manaCost",
+      "input": {
+        "power": 1,
+        "type": "buff"
+      },
+      "expect": 12
+    },
+    {
+      "name": "zero-power utility takes the flat price",
+      "axis": "manaCost",
+      "input": {
+        "power": 0,
+        "type": "control"
+      },
+      "expect": 12
+    },
+    {
+      "name": "field cost of a 10-mana move",
+      "axis": "fieldMpCost",
+      "input": {
+        "mana": 10
+      },
+      "expect": 3
+    },
+    {
+      "name": "field cost of a 30-mana move",
+      "axis": "fieldMpCost",
+      "input": {
+        "mana": 30
+      },
+      "expect": 9
+    },
+    {
+      "name": "field cost of a 60-mana move",
+      "axis": "fieldMpCost",
+      "input": {
+        "mana": 60
+      },
+      "expect": 18
+    },
+    {
+      "name": "regen at WIS 0",
+      "axis": "regen",
+      "input": {
+        "WIS": 0,
+        "support": false
+      },
+      "expect": 0
+    },
+    {
+      "name": "regen at WIS 0, support role",
+      "axis": "regen",
+      "input": {
+        "WIS": 0,
+        "support": true
+      },
+      "expect": 1
+    },
+    {
+      "name": "regen at WIS 100",
+      "axis": "regen",
+      "input": {
+        "WIS": 100,
+        "support": false
+      },
+      "expect": 0.5
+    },
+    {
+      "name": "regen at WIS 100, support role",
+      "axis": "regen",
+      "input": {
+        "WIS": 100,
+        "support": true
+      },
+      "expect": 1.5
+    },
+    {
+      "name": "regen at WIS 200",
+      "axis": "regen",
+      "input": {
+        "WIS": 200,
+        "support": false
+      },
+      "expect": 1
+    },
+    {
+      "name": "regen at WIS 200, support role",
+      "axis": "regen",
+      "input": {
+        "WIS": 200,
+        "support": true
+      },
+      "expect": 2
+    },
+    {
+      "name": "regen at WIS 400",
+      "axis": "regen",
+      "input": {
+        "WIS": 400,
+        "support": false
+      },
+      "expect": 2
+    },
+    {
+      "name": "regen at WIS 400, support role",
+      "axis": "regen",
+      "input": {
+        "WIS": 400,
+        "support": true
+      },
+      "expect": 3
+    },
+    {
+      "name": "cast time for melee",
+      "axis": "castTime",
+      "input": {
+        "channel": "melee"
+      },
+      "expect": 0.15
+    },
+    {
+      "name": "cooldown of a 4s melee move",
+      "axis": "cooldown",
+      "input": {
+        "cooldown": 4,
+        "channel": "melee"
+      },
+      "expect": 4.15
+    },
+    {
+      "name": "cast time for ranged",
+      "axis": "castTime",
+      "input": {
+        "channel": "ranged"
+      },
+      "expect": 0.3
+    },
+    {
+      "name": "cooldown of a 4s ranged move",
+      "axis": "cooldown",
+      "input": {
+        "cooldown": 4,
+        "channel": "ranged"
+      },
+      "expect": 4.3
+    },
+    {
+      "name": "cast time for magic",
+      "axis": "castTime",
+      "input": {
+        "channel": "magic"
+      },
+      "expect": 0.55
+    },
+    {
+      "name": "cooldown of a 4s magic move",
+      "axis": "cooldown",
+      "input": {
+        "cooldown": 4,
+        "channel": "magic"
+      },
+      "expect": 4.55
+    },
+    {
+      "name": "cast time for voice",
+      "axis": "castTime",
+      "input": {
+        "channel": "voice"
+      },
+      "expect": 0.45
+    },
+    {
+      "name": "cooldown of a 4s voice move",
+      "axis": "cooldown",
+      "input": {
+        "cooldown": 4,
+        "channel": "voice"
+      },
+      "expect": 4.45
+    },
+    {
+      "name": "cast time for support",
+      "axis": "castTime",
+      "input": {
+        "channel": "support"
+      },
+      "expect": 0.4
+    },
+    {
+      "name": "cooldown of a 4s support move",
+      "axis": "cooldown",
+      "input": {
+        "cooldown": 4,
+        "channel": "support"
+      },
+      "expect": 4.4
+    },
+    {
+      "name": "an authored castTime overrides the channel default",
+      "axis": "cooldown",
+      "input": {
+        "cooldown": 4,
+        "channel": "magic",
+        "castTime": 0.1
+      },
+      "expect": 4.1
+    },
+    {
+      "name": "one round in seconds",
+      "axis": "roundsToSeconds",
+      "input": {
+        "rounds": 1
+      },
+      "expect": 2
+    },
+    {
+      "name": "three rounds in seconds",
+      "axis": "roundsToSeconds",
+      "input": {
+        "rounds": 3
+      },
+      "expect": 6
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+- [Audio direction established](project_audio_direction_established.md) — docs/AUDIO_DIRECTION.md written 2026-08-04, the project's first audio doc; crowd-as-instrument, 5-channel SFX taxonomy, mix priority, MVP sound list
+- [No audio pipeline exists](no-audio-pipeline-exists.md) — unlike the working image-gen pipeline, nothing generates/sources audio in this repo; CC0 libraries (Kenney/Sonniss/Freesound) are the realistic near-term route

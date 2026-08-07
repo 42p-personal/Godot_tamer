@@ -1,0 +1,176 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+*.tsbuildinfo
+.claude/settings.local.json
+.wrangler/
+
+# design-review skill source (embedded clone, not part of the game)
+awesome-ux-skills/
+
+# Raw image-generator output. Reprocess with tools/proc_arena_art.py; the
+# committed derivatives in public/field/ are what the game loads.
+public/field/_raw/
+fight.json
+
+# dev-only visual capture (vite.config.ts shotPlugin)
+.shots/
+# === IDE and Editor ===
+.vs/
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# === Claude Code Local ===
+.claude/settings.local.json
+CLAUDE.local.md
+production/session-logs/
+
+# === Internal Planning (not for public) ===
+
+expansions/
+
+# === Marrow (eval tooling — never commit) ===
+marrow/
+
+# === Runtime Artifacts (auto-generated, start empty on fresh clone) ===
+# Created on first use by /consistency-check and /architecture-review
+docs/consistency-failures.md
+
+# === Build Output ===
+build/
+builds/
+bin/
+obj/
+out/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+
+# === Engine: Godot ===
+.godot/
+*.translation
+export_presets.cfg
+# Uncomment if using Godot:
+# *.import
+
+# === Engine: Unity ===
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+crashlytics-buildid.txt
+sysinfo.txt
+# Uncomment if using Unity:
+# [Aa]ssets/[Aa]sset[Ss]tore[Tt]ools/
+
+# === Engine: Unreal ===
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.VC.opendb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+# Uncomment if using Unreal:
+# *.uasset
+# *.umap
+
+# === Compiled Shaders ===
+*.spv
+*.cso
+*.dxbc
+
+# === Temporary and Cache ===
+*.tmp
+*.temp
+*.cache
+*.log
+__pycache__/
+*.pyc
+node_modules/
+.npm/
+
+# === Archives ===
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# === Secrets and Environment ===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# === Large Binary Assets (use Git LFS instead) ===
+# Uncomment and configure with Git LFS for your project:
+# *.png
+# *.jpg
+# *.jpeg
+# *.wav
+# *.mp3
+# *.ogg
+# *.fbx
+# *.blend
+# *.psd
+# *.tga
+# *.exr
+# *.hdr
+
+# === OS Generated ===
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# The Claude Code Game Studios template, cloned in-tree. Separate git repo, not project
+# work — it was silently swept into a commit as a gitlink on 2026-08-03, which would have
+# broken every clone. Ignored, not deleted: it has its own history and is not ours to bin.
+my-game/
+
+# Python bytecode from the art-processing tools.
+tools/__pycache__/
+
+# ⚠️ Meshy animation GLBs — 8.4 MB EACH because every clip embeds the full mesh AND texture,
+# not just the animation tracks. One character with 10 clips is 84 MB; a 20-creature roster
+# would be 1.6 GB. Regenerable from tools/meshy_animate.py, so they stay out of git until the
+# shared-mesh extraction below is solved.
+monster-tamer/assets/models/anim/

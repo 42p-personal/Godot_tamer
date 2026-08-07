@@ -1,0 +1,1219 @@
+{
+  "schema": 1,
+  "subject": "tamerengine/tickMath.ts:tickUnit + suddenDeathLoss",
+  "note": "Per-tick unit update — timers, regen, attrition, expiry, CC decay, sudden death. Pure arithmetic over time, no geometry. ⚠️ The step ORDER is part of the contract. Regenerate with `npx tsx tools/exportport.ts`.",
+  "cases": [
+    {
+      "name": "cooldowns count down by dt",
+      "axis": "cooldowns",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {
+          "a": 1,
+          "b": 0.25
+        },
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {
+          "a": 0.9,
+          "b": 0.15
+        },
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "a cooldown floors at zero, never negative",
+      "axis": "cooldowns",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {
+          "a": 0.05
+        },
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {
+          "a": 0
+        },
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "an empty cooldown table stays empty",
+      "axis": "cooldowns",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "no WIS, no regen",
+      "axis": "manaRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "regen at WIS 200",
+      "axis": "manaRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 200,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50.1,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "regen at WIS 400",
+      "axis": "manaRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 400,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50.2,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "a support earns a flat trickle on top",
+      "axis": "manaRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 200,
+        "isSupport": true,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50.2,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "regen cannot exceed the pool",
+      "axis": "manaRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 99.9,
+        "maxMp": 100,
+        "wis": 4000,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 100,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "a regen mod is a per-round value paid per second",
+      "axis": "manaRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 99,
+            "regen": 10
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50.5,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 99,
+            "regen": 10
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "an hpRegen mod restores per second",
+      "axis": "hpRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 400,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 99,
+            "hpRegen": 10
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 400.5,
+        "mp": 50,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 99,
+            "hpRegen": 10
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "hp regen cannot exceed the pool",
+      "axis": "hpRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 499.99,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 99,
+            "hpRegen": 100
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 99,
+            "hpRegen": 100
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "healblock stops regen dead",
+      "axis": "hpRegen",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 400,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "healblock",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [
+          {
+            "until": 99,
+            "hpRegen": 10
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 400,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "healblock",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [
+          {
+            "until": 99,
+            "hpRegen": 10
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "the meter holds inside the reset window",
+      "axis": "ccDecay",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0.5,
+        "lastCcAt": 8
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0.5,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "the meter clears once the window passes",
+      "axis": "ccDecay",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0.5,
+        "lastCcAt": 6
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "a cold meter stays cold",
+      "axis": "ccDecay",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 0
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "burn drains hp",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 498.75,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 1.25
+      }
+    },
+    {
+      "name": "bleed drains hp",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 499.5,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0.5
+      }
+    },
+    {
+      "name": "three bleed stacks drain three times",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 498.5,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 1.5
+      }
+    },
+    {
+      "name": "burn and bleed together",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 99,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 498.25,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 99,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 1.75
+      }
+    },
+    {
+      "name": "poison drains mana",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "poison",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 49.25,
+        "statuses": [
+          {
+            "kind": "poison",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "mana drain floors at zero",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 0.5,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "poison",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 0,
+        "statuses": [
+          {
+            "kind": "poison",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "attrition can kill",
+      "axis": "dot",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 0.5,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 0,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 99,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": true,
+        "expired": [],
+        "attrition": 1.25
+      }
+    },
+    {
+      "name": "a status expires when its time is up",
+      "axis": "expiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 10,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 498.75,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [
+          "burn"
+        ],
+        "attrition": 1.25
+      }
+    },
+    {
+      "name": "a status one tick from expiry survives",
+      "axis": "expiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 10.01,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 498.75,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 10.01,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 1.25
+      }
+    },
+    {
+      "name": "doom detonates for a quarter of max hp when it expires",
+      "axis": "expiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "doom",
+            "until": 10,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 375,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [
+          "doom"
+        ],
+        "attrition": 125
+      }
+    },
+    {
+      "name": "doom does NOTHING while it is still ticking",
+      "axis": "expiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "doom",
+            "until": 20,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "doom",
+            "until": 20,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "a doom detonation can kill",
+      "axis": "expiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 100,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "doom",
+            "until": 10,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 0,
+        "mp": 50,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": true,
+        "expired": [
+          "doom"
+        ],
+        "attrition": 125
+      }
+    },
+    {
+      "name": "several statuses expire at once",
+      "axis": "expiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [
+          {
+            "kind": "burn",
+            "until": 9,
+            "from": "e1"
+          },
+          {
+            "kind": "bleed",
+            "until": 10,
+            "from": "e1"
+          },
+          {
+            "kind": "blind",
+            "until": 30,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 498.25,
+        "mp": 50,
+        "statuses": [
+          {
+            "kind": "blind",
+            "until": 30,
+            "from": "e1"
+          }
+        ],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [
+          "burn",
+          "bleed"
+        ],
+        "attrition": 1.75
+      }
+    },
+    {
+      "name": "an expired mod is dropped",
+      "axis": "modExpiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 9,
+            "regen": 5
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50.25,
+        "statuses": [],
+        "mods": [],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "a live mod is kept",
+      "axis": "modExpiry",
+      "input": {
+        "dt": 0.1,
+        "now": 10,
+        "hp": 500,
+        "maxHp": 500,
+        "mp": 50,
+        "maxMp": 100,
+        "wis": 0,
+        "isSupport": false,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 11,
+            "regen": 5
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "lastCcAt": 10
+      },
+      "expect": {
+        "hp": 500,
+        "mp": 50.25,
+        "statuses": [],
+        "mods": [
+          {
+            "until": 11,
+            "regen": 5
+          }
+        ],
+        "cooldowns": {},
+        "ccResist": 0,
+        "dead": false,
+        "expired": [],
+        "attrition": 0
+      }
+    },
+    {
+      "name": "sudden death before the cap, nothing",
+      "axis": "suddenDeath",
+      "input": {
+        "now": 254,
+        "maxHp": 500,
+        "dt": 0.1
+      },
+      "expect": {
+        "loss": 0
+      }
+    },
+    {
+      "name": "sudden death exactly at the cap",
+      "axis": "suddenDeath",
+      "input": {
+        "now": 255,
+        "maxHp": 500,
+        "dt": 0.1
+      },
+      "expect": {
+        "loss": 0.5
+      }
+    },
+    {
+      "name": "sudden death 10s past the cap",
+      "axis": "suddenDeath",
+      "input": {
+        "now": 265,
+        "maxHp": 500,
+        "dt": 0.1
+      },
+      "expect": {
+        "loss": 2.5
+      }
+    },
+    {
+      "name": "sudden death 60s past the cap ramps hard",
+      "axis": "suddenDeath",
+      "input": {
+        "now": 315,
+        "maxHp": 500,
+        "dt": 0.1
+      },
+      "expect": {
+        "loss": 12.5
+      }
+    }
+  ]
+}

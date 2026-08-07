@@ -1,0 +1,2 @@
+- [Guild Colours — the whole-game art theme](art-theme-guild-colours.md) — docs/ART_THEME.md, its key mechanisms, and the open audit items it left behind
+- [Guild Colours — production plan](art-production-plan.md) — docs/ART_PRODUCTION.md, the carrier-mask technique, real asset counts, and what's blocked on ARENA_BLUEPRINT.md

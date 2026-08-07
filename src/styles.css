@@ -1,0 +1,977 @@
+:root {
+  --bg: #12141c;
+  --panel: #1b1e2b;
+  --panel2: #232739;
+  --ink: #e7e9f3;
+  --muted: #9aa0b8;
+  --accent: #6ee7b7;
+  --accent2: #f0a860;
+  --line: #313650;
+  --str: #e06c6c; --dex: #6cd08a; --con: #d0b04c; --wis: #6ca8e0; --int: #a97be0; --cha: #e07bb8;
+  --btn-ink: #0c1a13; /* text colour that sits on the accent-filled buttons */
+  font-family: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Day mode (v0.76): a light palette toggled from the top-right theme switch.
+   Dark stays the default so the established look is untouched; light overrides
+   only the tokens, and every component reads through the tokens. Stat/accent
+   hues are deepened so they keep enough contrast on a pale ground. */
+:root[data-theme="light"] {
+  --bg: #f3f5fa;
+  --panel: #ffffff;
+  --panel2: #eaedf5;
+  --ink: #1a1d29;
+  --muted: #5b6178;
+  --accent: #0fb488;
+  --accent2: #d97706;
+  --line: #d3d8e6;
+  --str: #cf4640; --dex: #2f9e5b; --con: #a5842c; --wis: #3f7fca; --int: #8a4fd0; --cha: #c94f9a;
+  /* Dark ink, same as night mode: white on #0fb488 is only 2.7:1 (fails AA);
+     near-black on it is ~6.6:1 and matches the dark theme's accent-button look. */
+  --btn-ink: #0c1a13;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); }
+
+/* Persistent theme toggle — fixed top-right, present on every screen. */
+.theme-toggle {
+  position: fixed; top: 12px; right: 12px; z-index: 9000;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--panel2); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+.theme-toggle:hover { filter: brightness(1.06); }
+@media (max-width: 560px) {
+  .theme-toggle { padding: 6px 9px; font-size: 14px; }
+  .theme-toggle .tt-label { display: none; } /* icon-only — the word overlapped the header */
+  .app h1 { padding-right: 44px; } /* clear the fixed toggle */
+}
+.app { max-width: 1040px; margin: 0 auto; padding: 24px 20px 60px; position: relative; z-index: 1; }
+h1 { font-size: 24px; margin: 0 0 2px; }
+h1 .tag { color: var(--accent); }
+h1 .version { font-size: 12px; font-weight: 700; color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; vertical-align: middle; margin-left: 4px; }
+.sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+
+.arena { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: start; }
+.vs { align-self: center; color: var(--muted); font-weight: 700; font-size: 20px; padding-top: 120px; }
+.sandbox-team { display: flex; flex-direction: column; gap: 14px; }
+.addfighter { width: 100%; text-align: center; }
+.addfighter:disabled { opacity: .4; cursor: not-allowed; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.controls { display: flex; gap: 8px; margin-bottom: 12px; }
+.controls input[type=text] { flex: 1; min-width: 0; background: var(--panel2); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 8px 10px; }
+button { background: var(--accent); color: var(--btn-ink); border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
+button.ghost { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); }
+button:hover { filter: brightness(1.08); }
+
+.mhead { display: flex; gap: 12px; align-items: center; }
+.mhead .name { font-size: 18px; font-weight: 700; }
+.mhead .meta { color: var(--muted); font-size: 13px; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.badge { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font-size: 12px; color: var(--muted); }
+.badge.on { color: var(--accent2); border-color: var(--accent2); }
+
+.stat { display: grid; grid-template-columns: 40px 1fr 42px; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; }
+.stat .bar { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; }
+.stat .bar > i { display: block; height: 100%; border-radius: 6px; }
+.stat .v { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 6px; }
+.moves { display: flex; flex-direction: column; gap: 5px; }
+.move { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 13px; }
+.move .mn { font-weight: 700; }
+.move .md { color: var(--muted); font-size: 12px; }
+.move .lvl { color: var(--accent); font-size: 11px; float: right; }
+.move.ultimate { border-color: var(--accent2); }
+.move.ultimate .lvl { color: var(--accent2); }
+.ability { font-size: 13px; color: var(--ink); }
+.ability small { color: var(--muted); }
+
+.sig { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-top: 3px; }
+.sig .dim { color: var(--muted); font-size: 11px; }
+
+/* Training-aptitude marks (2026-07-25): uniform coloured arrow + stat, tinted
+   to the stat's own colour, everywhere a growth profile is summarised. Major
+   ▲ / minor ▴ (smaller glyph = weaker buff) / flaw ▼. */
+.aptmarks { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
+.aptmark { font-weight: 700; white-space: nowrap; }
+.aptmark.major { font-size: 1.02em; }
+.aptmark.minor { font-size: .96em; }
+
+.afftaste { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; margin: 6px 0 10px; color: var(--muted); }
+.afftaste .up { color: var(--dex); }
+.afftaste .down { color: var(--str); }
+.afftaste b { text-transform: capitalize; }
+
+.feed { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.happyrow { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+.happyrow .dim { color: var(--muted); font-size: 12px; }
+.happybar { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.happybar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--con), var(--dex)); border-radius: 6px; transition: width .2s; }
+/* Tiered food picker (2026-07-25): Rations / Training foods / Premium groups,
+   each food a small card showing its effect in-line (not tooltip-only). */
+.foodgroups { display: flex; flex-direction: column; gap: 12px; padding: 6px; border-radius: 10px; border: 1px solid transparent; transition: border-color .2s, box-shadow .2s; }
+.foodgroup-h { font-size: 10.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+.foods { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.food { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 12.5px; font-weight: 600; }
+.food-top { font-weight: 700; }
+.food-eff { font-size: 11px; font-weight: 600; }
+.food-eff.pos { color: var(--dex); }
+.food-eff.neg { color: #ef5350; }
+.food-eff.gold { color: #e8c77a; }
+.food-eff.dim { color: var(--muted); }
+.food-cost { font-size: 10px; color: var(--muted); }
+.food-price { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.food.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.food:disabled { opacity: .4; cursor: not-allowed; }
+/* A food hasn't been picked yet — highlight the whole picker so it's obvious
+   what's blocking Next Monster / Continue to Stable, rather than silently
+   bouncing the player back here (user spec 2026-07-24). */
+.foodgroups.foods-missing { border-color: var(--str); box-shadow: 0 0 0 1px var(--str) inset; animation: foodsPulse 1.6s ease-in-out infinite; }
+@keyframes foodsPulse { 50% { border-color: color-mix(in srgb, var(--str) 50%, var(--line)); } }
+.hint { font-size: 11.5px; color: var(--muted); margin: 6px 0 2px; }
+
+.bestiary { margin-top: 28px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 16px; }
+.bestiary > summary { cursor: pointer; padding: 12px 0; font-size: 16px; font-weight: 700; list-style: none; }
+.bestiary > summary::-webkit-details-marker { display: none; }
+.bestiary > summary::before { content: '▸ '; color: var(--muted); }
+.bestiary[open] > summary::before { content: '▾ '; }
+.bestbody { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 8px 0 16px; }
+.bestgroup-h { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
+.bestrow { border-bottom: 1px solid var(--line); }
+.bestrow > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 6px 0; list-style: none; font-size: 14px; }
+.bestrow > summary::-webkit-details-marker { display: none; }
+.bestrow .bn { font-weight: 700; }
+.bestrow .dim { color: var(--muted); font-size: 12px; }
+.bestrow > summary .bsmall { flex-basis: 100%; margin-left: 44px; font-weight: 700; }
+.bio { font-size: 13px; line-height: 1.55; color: var(--ink); margin: 4px 0 6px 44px; }
+.bsmall { margin: 0 0 8px 44px; font-size: 11.5px; }
+@media (max-width: 720px) { .bestbody { grid-template-columns: 1fr; } }
+
+.slider { margin: 10px 0 4px; }
+.slider label { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+/* Range sliders: a 24px minimum hit area (WCAG 2.5.8) with a styled track +
+   thumb — the default 16px control was the one flagged target in the UX audit. */
+input[type=range] { width: 100%; height: 24px; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
+input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--line); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+input[type=range]::-moz-range-track { height: 8px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--line); }
+input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+
+.tabs { display: flex; gap: 8px; margin: 4px 0 18px; }
+.tab { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 8px 16px; font-weight: 700; }
+.tab.on { background: var(--accent); color: var(--btn-ink); border-color: var(--accent); }
+
+.career { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.careerbar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+.meters { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.meter label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+.meter .bar { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; }
+.meter .bar > i { display: block; height: 100%; border-radius: 6px; transition: width .2s; }
+.actions .drillgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.drill { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; font-size: 12.5px; font-weight: 600; text-align: left; }
+.drill.int { border-color: var(--accent2); }
+.drill:hover, .food:hover { border-color: var(--accent); }
+.carerow { display: flex; gap: 6px; flex-wrap: wrap; }
+.carerow button { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-weight: 700; }
+.carerow .rankup { background: var(--accent2); color: #1a1206; border-color: var(--accent2); }
+.careerlog { max-height: 220px; }
+.retired { background: var(--panel2); border: 1px solid var(--accent2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.5; }
+@media (max-width: 720px) { .career { grid-template-columns: 1fr; } }
+/* Sandbox builder: the two team columns need ~640px of intrinsic width — stack
+   them on phones instead of forcing the whole page to side-scroll. */
+@media (max-width: 720px) {
+  .arena { grid-template-columns: 1fr; }
+  .vs { padding-top: 0; text-align: center; justify-self: center; }
+}
+
+.battlebar { display: flex; justify-content: center; gap: 12px; margin: 22px 0 10px; }
+.log { background: #0c0e15; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; max-height: 420px; overflow: auto; }
+.log .win { color: var(--accent); font-weight: 700; }
+.result { text-align: center; font-size: 18px; font-weight: 700; margin: 8px 0; }
+
+/* ---- Town hub (§13) ---- */
+.townbar { display: flex; flex-wrap: wrap; gap: 14px; font-size: 14px; font-weight: 700; margin: 0 0 16px; padding: 10px 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; }
+.townbar .up { color: var(--accent); }
+.townmap { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+/* Town hub (v0.62): a map of location buttons. */
+.townback { margin-bottom: 12px; }
+.townhub { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+/* color MUST be set here: the global `button` rule uses --btn-ink (text-on-accent),
+   which is near-invisible on the panel background this button uses instead. */
+.hubbtn { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 16px 18px; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; transition: border-color .12s ease, transform .12s ease; }
+.hubbtn .dim { color: var(--muted); }
+.hubbtn:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-2px); }
+.hubbtn:disabled { opacity: .5; cursor: default; }
+.hubbtn b { font-size: 16px; }
+.hubbtn .hubicon { font-size: 30px; line-height: 1; margin-bottom: 4px; }
+.hubbtn .dim { font-size: 12px; }
+@media (max-width: 720px) { .townhub { grid-template-columns: 1fr; } }
+.loc .loc-h { display: flex; justify-content: space-between; align-items: center; font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.loc .loc-h .dim { color: var(--muted); font-size: 12px; font-weight: 400; }
+.offers { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+.offer { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.offer > button { width: 100%; margin-top: 8px; }
+.offer > button:disabled { opacity: .4; cursor: not-allowed; }
+.labrows { display: flex; flex-direction: column; gap: 5px; }
+.labrow { display: flex; align-items: center; gap: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 13px; }
+.labrow .bn { font-weight: 700; }
+.labrow .dim { color: var(--muted); font-size: 12px; }
+.labrow button { margin-left: auto; padding: 5px 10px; font-size: 12px; }
+.labrow button:disabled { opacity: .4; cursor: not-allowed; }
+.fuserow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fuserow select { flex: 1; min-width: 120px; background: var(--panel2); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 7px 8px; font-size: 13px; }
+.fuserow .rankup { background: var(--accent2); color: #1a1206; }
+.fuserow .rankup:disabled { opacity: .4; cursor: not-allowed; }
+.loc .enter { width: 100%; margin-top: 8px; padding: 12px; font-size: 15px; }
+.loc .enter:disabled { opacity: .4; cursor: not-allowed; }
+.shoprow { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 8px; font-size: 13px; }
+.shoprow .dim { color: var(--muted); font-size: 12px; }
+.shoprow button:disabled { opacity: .4; cursor: not-allowed; }
+.ranchtop { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 14px; font-weight: 700; }
+.ranchtop select { background: var(--panel2); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 6px 8px; margin-left: auto; }
+.food:disabled { opacity: .4; cursor: not-allowed; }
+
+.pos { color: var(--dex); font-weight: 700; }
+.neg { color: #ef5350; font-weight: 700; }
+
+/* ---------- Tournament calendar grid (Monster-Rancher style) ---------- */
+.calgrid { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 4px; }
+.calgrid-row { display: grid; grid-template-columns: 90px repeat(4, 1fr); align-items: center; gap: 4px; }
+.calgrid-label { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calgrid-label .dim { font-weight: 400; font-size: 11px; }
+.calgrid-cell { height: 32px; display: flex; align-items: center; justify-content: center; gap: 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; }
+.calgrid-cell.now { border-color: var(--accent); }
+.calicon { width: 28px; height: 28px; padding: 0; border-radius: 6px; font-size: 14px; line-height: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--ink); }
+.calicon.open { background: var(--accent); color: var(--btn-ink); border-color: var(--accent); animation: calPulse 1.6s ease-in-out infinite; }
+.calicon.selected { outline: 2px solid var(--accent2); outline-offset: 1px; }
+.calicon.trial { width: auto; height: auto; background: none; border: none; font-size: 13px; cursor: help; }
+@keyframes calPulse { 50% { filter: brightness(1.15); } }
+.calgrid-footer { margin-top: 2px; }
+.calgrid-wk { text-align: center; font-size: 10.5px; color: var(--muted); font-weight: 700; }
+.calgrid-wk.now { color: var(--accent); }
+.tour-entry { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 6px; font-size: 13px; }
+.tour-entry-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 2px; }
+.tour-entry-head button { padding: 3px 8px; font-size: 12px; }
+.tour-entry-hint { margin-top: 6px; }
+
+/* ---------- Ranch: stable screen (1c) ---------- */
+.stablescreen { display: grid; grid-template-columns: 1fr 84px; gap: 10px; align-items: start; margin-top: 10px; }
+.stablemain { min-width: 0; }
+.feedok { font-size: 11px; color: var(--accent); margin-bottom: 8px; }
+.stablestrip { display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; }
+.stablecard { cursor: pointer; flex: 1 0 130px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+.stablecard.selected { outline: 2px solid var(--accent); border-color: var(--accent); }
+.stablecard.retired { opacity: .6; }
+.stablecard .bn { display: block; font-weight: 700; font-size: 12.5px; margin-top: 4px; }
+.stablechip { display: inline-block; font-size: 10px; font-weight: 700; margin-top: 3px; margin-right: 4px; }
+.stablechip.ok { color: var(--accent); }
+.stablechip.warn { color: var(--accent2); }
+.stablechip.hurt { color: #ef5350; }
+.stablechip.star { color: #ffd54f; }
+.detailgrid { display: grid; grid-template-columns: 220px 1fr; gap: 12px; margin-bottom: 12px; }
+.detail-namerow { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.detail-namerow .bn { font-weight: 700; font-size: 15px; flex: 1; }
+.detail-nameinput { flex: 1; background: var(--bg); border: 1px solid var(--accent); color: var(--ink); border-radius: 6px; padding: 3px 6px; font-size: 15px; font-weight: 700; }
+.iconbtn { width: 26px; height: 26px; padding: 0; font-size: 11px; border-radius: 6px; }
+.detail-actionbtn { display: block; width: 100%; text-align: left; background: var(--panel2); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 7px 9px; font-size: 12px; font-weight: 700; cursor: pointer; margin-top: 6px; }
+.detail-actionbtn:disabled { opacity: .45; cursor: not-allowed; }
+.tour-history { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 11px; }
+.tour-history-podiums { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+.tour-history-row { display: flex; justify-content: space-between; padding: 2px 0; }
+.detail-meters { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.detail-stats { align-self: start; }
+.detailstat { display: grid; grid-template-columns: 32px 1fr 34px 96px; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.detailstat .bar { height: 7px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.detailstat .bar > i { display: block; height: 100%; border-radius: 4px; }
+.detailstat .v { text-align: right; color: var(--muted); }
+.detailstat-tag { text-align: right; font-size: 9.5px; font-weight: 700; }
+.trainrow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.traincol { display: flex; flex-direction: column; gap: 4px; }
+.traincol-h { text-align: center; font-size: 11px; font-weight: 700; }
+.trainblock { cursor: pointer; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 4px; text-align: center; color: var(--ink); }
+.trainblock.selected { border-color: var(--accent2); box-shadow: inset 0 0 0 1px var(--accent2); }
+.trainblock-name { font-size: 9.5px; font-weight: 700; }
+.trainblock-sub { font-size: 8.5px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+/* Planned-action benefit preview on the feeding screen: gains white, maluses
+   black (user spec) — black text sits on a light chip so it stays readable on
+   the dark theme; the black bar segment reads as a darker notch on the track. */
+.planbenefit { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.benefitrow { display: grid; grid-template-columns: 56px 1fr 76px 44px; align-items: center; gap: 8px; font-size: 12px; }
+.benefitrow.flat { grid-template-columns: 56px auto; justify-content: start; }
+.benefitrow .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; display: flex; }
+.benefitrow .bar > i { display: block; height: 100%; }
+.benefitrow .v { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.benefit-gain { color: #fff; font-weight: 700; }
+.benefit-gain.big { font-size: 16px; }
+.benefit-malus { color: #000; background: #aab1c9; font-weight: 700; border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+
+/* UI pass 2026-07-21: status/pre-flight/digest/sign-up polish */
+.rail-note { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 2px; line-height: 1.5; }
+.lastweek { margin-bottom: 12px; font-size: 12.5px; line-height: 1.6; }
+.lastweek .lw-hl { color: var(--accent); font-weight: 700; }
+.feedhead { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.feedhead .name { font-size: 18px; font-weight: 800; }
+.feedhead .meta { font-size: 12px; color: var(--muted); }
+button.signup { background: var(--accent); color: var(--btn-ink); font-weight: 700; padding: 8px 16px; }
+button.signup:disabled { opacity: .4; cursor: not-allowed; }
+.arena-transcript { padding: 6px 12px 10px; border-top: 1px solid var(--line); }
+.arena-transcript summary { cursor: pointer; font-size: 12px; }
+
+.rail { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 12px; }
+.railbtn { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 2px; font-weight: 700; font-size: 10px; line-height: 1.4; cursor: pointer; }
+.railbtn.primary { background: var(--accent); color: var(--btn-ink); border-color: var(--accent); }
+.railbtn.on { border-color: var(--accent2); color: var(--accent2); }
+.abilityeditor { background: var(--panel); }
+.abilityslots { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 8px 0; }
+.abilityslot { cursor: pointer; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; min-height: 44px; }
+.abilityslot.selected { border-color: var(--accent2); box-shadow: inset 0 0 0 1px var(--accent2); }
+.abilitychips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+/* min-height 24px: WCAG 2.5.8 minimum hit area, same rule the range sliders
+   follow above. These chips were 22px — thumb-hostile on a phone. */
+.abilitychip { font-size: 11px; font-weight: 700; padding: 4px 10px; min-height: 24px; border-radius: 999px; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); cursor: pointer; }
+.abilitychip.on { background: var(--accent); color: var(--btn-ink); border-color: var(--accent); }
+.abilitypool { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 300px; overflow-y: auto; }
+.abilitypool .move { cursor: pointer; }
+.abilitypool .move.dim-eq { opacity: .4; cursor: default; }
+.innatepick { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; cursor: pointer; }
+.innatepick .mn { font-weight: 700; }
+.innatepick .md { color: var(--muted); font-size: 12px; }
+.innatepick.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel2)); }
+.innatepick.active .md { color: var(--accent); }
+.innatepick.locked { opacity: .45; cursor: not-allowed; }
+@media (max-width: 820px) {
+  .stablescreen { grid-template-columns: 1fr; padding-bottom: 88px; } /* clear the fixed bottom rail incl. its padding */
+  /* Sticky bottom action bar on small screens — Advance Week shouldn't need a
+     full-page scroll. */
+  .rail { flex-direction: row; position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 20;
+    background: var(--panel); border-top: 1px solid var(--line); padding: 8px 10px; justify-content: center; }
+  .rail .railbtn { flex: 1; max-width: 160px; padding: 8px 4px; }
+  .rail .rail-note { display: none; }
+  .detailgrid { grid-template-columns: 1fr; }
+  .trainrow { grid-template-columns: repeat(4, 1fr); }
+  .abilitypool { grid-template-columns: 1fr; }
+}
+
+/* ---------- Arena battle (animated replay) ---------- */
+.battle-arena { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #10131c; margin: 12px 0; }
+.arena-hud { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 8px 12px; background: var(--panel2); border-bottom: 1px solid var(--line); }
+.arena-fighter-hud { flex: 1; min-width: 0; }
+.arena-fighter-hud.right { text-align: right; }
+.ahn { font-weight: 700; font-size: 14px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.abar { position: relative; height: 13px; border-radius: 7px; background: #0b0d14; border: 1px solid var(--line); margin-top: 4px; overflow: hidden; }
+.abar i { position: absolute; left: 0; top: 0; bottom: 0; display: block; transition: width .35s ease; }
+.abar.hp i { background: linear-gradient(90deg, #43a047, #7cb342); }
+.abar.mp i { background: linear-gradient(90deg, #1e88e5, #42a5f5); }
+.abar span { position: absolute; inset: 0; font-size: 9px; display: flex; align-items: center; justify-content: center; color: #fff; text-shadow: 0 1px 2px #000c; font-weight: 700; }
+.award { font-size: 11px; color: #80cbc4; margin-top: 3px; font-weight: 700; }
+.ahud-row { display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap; }
+.ahud-row.right { justify-content: flex-end; }
+.status-row { display: flex; gap: 3px; }
+.status-chip { font-size: 14px; filter: drop-shadow(0 1px 2px #000c); }
+.arena-round { min-width: 120px; text-align: center; font-weight: 800; font-size: 15px; }
+/* League-themed backdrop (2026-07-25): a painted arena backdrop per league
+   (see leagueArt.ts), set inline via style={backgroundImage}. The radial
+   fallback gradient stays as background-color for the instant before the
+   image decodes, and .arena-floor-scrim darkens the lower two-thirds so HUD
+   text/bars/floats stay readable over a busy painted background regardless
+   of that specific league art's own brightness. */
+.arena-floor { position: relative; height: 340px; display: flex; align-items: center; justify-content: space-between; padding: 0 9%;
+  background-color: #2e2519; background-size: cover; background-position: center 35%; background-repeat: no-repeat; overflow: hidden; }
+.arena-floor-scrim { position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(10, 12, 18, .1) 0%, rgba(10, 12, 18, .35) 55%, rgba(10, 12, 18, .78) 100%); }
+.combatant { position: relative; z-index: 1; }
+.combatant.ko { filter: grayscale(1) brightness(.5); transform: rotate(90deg); transition: all .6s ease; }
+.combatant .floats { position: absolute; left: 50%; top: -6px; width: 0; z-index: 3; }
+.float { position: absolute; transform: translateX(-50%); white-space: nowrap; font-weight: 800; font-size: 16px; animation: floatUp 1.05s ease-out forwards; text-shadow: 0 1px 3px #000; }
+.float.dmg { color: #ef5350; }
+.float.heal { color: #66bb6a; }
+.float.mana { color: #42a5f5; }
+.float.burn { color: #ff9800; }
+.float.info { color: #eceff1; font-size: 12px; }
+@keyframes floatUp { from { opacity: 1; top: -4px; } to { opacity: 0; top: -46px; } }
+.mirror { display: inline-block; transform: scaleX(-1); }
+.lungeA { animation: lungeA .5s ease; }
+.lungeB { animation: lungeB .5s ease; }
+@keyframes lungeA { 35% { transform: translateX(52px); } 100% { transform: none; } }
+@keyframes lungeB { 35% { transform: translateX(-52px); } 100% { transform: none; } }
+.stancePulse { animation: stancePulse .55s ease; }
+@keyframes stancePulse { 40% { filter: drop-shadow(0 0 12px #80cbc4); transform: scale(.95); } }
+.arena-floor.shake { animation: arenaShake .35s; }
+@keyframes arenaShake { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-5px); } 40%, 60% { transform: translateX(5px); } }
+
+/* Per-move visual identity (§ battle FX, user spec 2026-07-25: "a claw
+   raking the enemy, a thunderbolt, etc" — every move looks like what it is).
+   'proj' kinds travel attacker->target on the existing projA/projB path;
+   'lunge'/claw and every 'burst' kind land directly at the target — see
+   arena.tsx:MoveFx / targetX1v1 for the positioning logic. */
+.proj { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; z-index: 2; box-shadow: 0 0 12px 3px currentColor; }
+.projA { left: 17%; animation: projA .45s linear forwards; }
+.projB { right: 17%; animation: projB .45s linear forwards; }
+@keyframes projA { to { left: 78%; } }
+@keyframes projB { to { right: 78%; } }
+.proj-arrow { width: 22px; height: 5px; border-radius: 2px 6px 6px 2px; }
+.proj-arrow.projB { transform: scaleX(-1); }
+.proj-fireball { border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff3b0, currentColor 65%, #b71c1c); animation-name: projA, fireFlicker; animation-duration: .45s, .18s; animation-iteration-count: 1, infinite; }
+.proj-fireball.projB { animation-name: projB, fireFlicker; }
+@keyframes fireFlicker { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
+.proj-waterbolt { border-radius: 40% 60% 60% 40%; background: radial-gradient(circle at 35% 35%, #e1f5fe, currentColor 70%); }
+.proj-arcane { border-radius: 30%; background: radial-gradient(circle at 40% 40%, #f3e5f5, currentColor 70%); animation-name: projA, arcaneSpin; animation-duration: .45s, .45s; animation-timing-function: linear, linear; }
+.proj-arcane.projB { animation-name: projB, arcaneSpin; }
+@keyframes arcaneSpin { to { transform: rotate(360deg); } }
+
+/* Claw rake — appears over the TARGET on a melee hit, timed with the lunge */
+.claw-fx { position: absolute; top: 50%; width: 74px; height: 74px; margin-top: -37px; margin-left: -37px; z-index: 4; pointer-events: none; }
+.claw-fx svg { width: 100%; height: 100%; overflow: visible; }
+.claw-slash { fill: none; stroke: #f5f5f5; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 46; stroke-dashoffset: 46; filter: drop-shadow(0 0 3px #ef5350); animation: clawSlash .4s ease-out forwards; }
+.claw-2 { animation-delay: .05s; }
+.claw-3 { animation-delay: .1s; }
+@keyframes clawSlash { 0% { stroke-dashoffset: 46; opacity: 0; } 20% { opacity: 1; } 70% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+
+/* Earth spike — erupts from the ground under the target, no travel */
+.burst-fx { position: absolute; bottom: 26px; width: 24px; margin-left: -12px; z-index: 4; pointer-events: none; }
+.earthspike-fx { height: 50px; background: linear-gradient(180deg, #c8a27a, #7a5233); clip-path: polygon(50% 0%, 100% 100%, 0% 100%); transform-origin: bottom center; animation: spikeRise .5s cubic-bezier(.22, 1.7, .4, 1) forwards; }
+@keyframes spikeRise { 0% { transform: scaleY(0); opacity: 0; } 35% { opacity: 1; } 55% { transform: scaleY(1.12); } 75% { transform: scaleY(1); } 100% { opacity: 0; } }
+
+/* Lightning — a jagged bolt striking straight down onto the target */
+.lightning-fx { position: absolute; top: -30px; bottom: -20px; width: 22px; margin-left: -11px; z-index: 5; pointer-events: none; }
+.lightning-bolt { width: 100%; height: 100%; filter: drop-shadow(0 0 6px #fff59d) drop-shadow(0 0 16px #ffee58); animation: boltFlash .35s steps(1) forwards; }
+@keyframes boltFlash { 0%, 100% { opacity: 0; } 8%, 24%, 42% { opacity: 1; } 16%, 33% { opacity: .25; } }
+
+/* Sonic — voice channel, concentric rings expanding at the target */
+.sonic-anchor { position: absolute; top: 50%; left: 0; }
+.sonic-fx { position: absolute; top: 0; left: 0; width: 10px; height: 10px; margin: -5px; border: 2px solid #f48fb1; border-radius: 50%; pointer-events: none; z-index: 4; }
+.sonic-ring1 { animation: sonicRing .6s ease-out forwards; }
+.sonic-ring2 { animation: sonicRing .6s ease-out .12s forwards; }
+@keyframes sonicRing { 0% { width: 10px; height: 10px; margin: -5px; opacity: .9; } 100% { width: 76px; height: 76px; margin: -38px; opacity: 0; } }
+
+/* Psychic — support/WIS hostile moves, a swirling pulse at the target */
+.psychic-fx { position: absolute; top: 50%; width: 50px; height: 50px; margin-top: -25px; margin-left: -25px; z-index: 4; pointer-events: none;
+  border-radius: 50%; background: radial-gradient(circle, rgba(128, 203, 196, .65), transparent 70%); animation: psychicPulse .55s ease forwards; }
+@keyframes psychicPulse { 0% { transform: scale(.3) rotate(0deg); opacity: 0; } 40% { opacity: 1; } 100% { transform: scale(1.35) rotate(160deg); opacity: 0; } }
+.arena-controls { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--panel2); }
+.arena-caption { color: var(--muted, #9aa3b5); font-size: 12px; margin-left: auto; text-align: right; min-height: 1em; }
+.arena-log { max-height: 170px; overflow-y: auto; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 11.5px; line-height: 1.55; color: var(--ink); }
+.arena-log .rnd { color: var(--muted); font-weight: 700; margin-top: 4px; }
+.arena-log .fin { font-weight: 700; color: var(--accent); margin-top: 4px; }
+
+/* Team battles (>1 per side): compact roster rows instead of the 1v1 lunge/
+   projectile choreography — stays legible up to 6v6. */
+.team-mode .arena-hud { justify-content: center; }
+/* .team-floor always co-occurs with .arena-floor on the same element (see
+   arena.tsx) — background-image/size/position/overflow already come from
+   that rule; this just overrides the 1v1 sizing/layout for team mode. */
+.team-floor { height: auto; min-height: 360px; padding: 0; display: block; position: relative; }
+
+/* ---- The 2D battlefield (v0.93) ----
+   Combatants are absolutely placed from --x/--y (percentages computed in
+   arena.tsx from the engine's LIVING formation). Movement is a transition on
+   `transform`, so an attacker closing on its target, and a survivor being
+   promoted into a dead front-liner's post, both animate for free.
+   transform/opacity only — never animate layout properties here. */
+.battlefield { position: absolute; inset: 0; z-index: 1; isolation: isolate; }
+/* ⚠️ Positions arrive as PIXELS (--x/--y), measured against the field in JS.
+   Never percentages: a % in `transform` resolves against the element's own box
+   (translateX(35%) = 35% of the 92px tile, not of the field), and % on left/top
+   proved unreliable here. Pixels are unambiguous and stay GPU-composited. The
+   trailing translate(-50%,-50%) centres the card on its post — that % IS meant
+   to be of the element. */
+.roster-tile {
+  position: absolute; left: 0; top: 0; width: var(--tile-w, 92px);
+  transform: translate(-50%, -50%); /* JS overwrites this inline with the full post transform */
+  background: color-mix(in srgb, var(--panel2) 78%, transparent);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 4px; text-align: center;
+  transition: transform .42s cubic-bezier(.34, .8, .3, 1), opacity .3s, filter .3s;
+}
+/* The sprite carries facing + the idle; the tile carries position. Splitting
+   them keeps the travel transition from fighting the idle animation. */
+.rt-body { transform: scaleX(var(--face, 1)); transition: transform .3s; }
+
+/* ---- Personality: the resting stance IS the monster's tactics ----
+   ⚠️ The ONLY Temperament values are aggressive | balanced | cautious
+   (battle.ts TEMPERAMENT_MOD). There is no 'defensive' — a class keyed to one
+   would silently never match. */
+.roster-tile.temper-aggressive .rt-body { animation: stanceAggressive 1.6s ease-in-out infinite; }
+.roster-tile.temper-cautious .rt-body { animation: stanceCautious 2.8s ease-in-out infinite; }
+.roster-tile.temper-balanced .rt-body { animation: stanceBalanced 2.2s ease-in-out infinite; }
+.roster-tile.hasted .rt-body { animation-duration: .8s; }
+.roster-tile.guarding { filter: saturate(.75); }
+.roster-tile.guarding .rt-body { animation: stanceGuard 1.4s ease-in-out infinite; }
+.roster-tile.hurt .rt-body { animation: stanceHurt 1.1s ease-in-out infinite; }
+.roster-tile.shaken .rt-body { animation: stanceShaken .5s ease-in-out infinite; }
+.roster-tile.downed .rt-body { animation: none; transform: scaleX(var(--face, 1)) rotate(8deg) translateY(4px); opacity: .75; }
+
+@keyframes stanceAggressive { 0%, 100% { transform: scaleX(var(--face,1)) translateX(0) } 50% { transform: scaleX(var(--face,1)) translateX(4px) scale(1.03) } }
+@keyframes stanceCautious   { 0%, 100% { transform: scaleX(var(--face,1)) translateX(0) } 50% { transform: scaleX(var(--face,1)) translateX(-3px) } }
+@keyframes stanceBalanced   { 0%, 100% { transform: scaleX(var(--face,1)) translateY(0) } 50% { transform: scaleX(var(--face,1)) translateY(-3px) } }
+@keyframes stanceGuard      { 0%, 100% { transform: scaleX(var(--face,1)) translateX(-2px) scaleY(.97) } 50% { transform: scaleX(var(--face,1)) translateX(-4px) scaleY(.94) } }
+@keyframes stanceHurt       { 0%, 100% { transform: scaleX(var(--face,1)) rotate(-3deg) } 50% { transform: scaleX(var(--face,1)) rotate(2deg) translateY(2px) } }
+@keyframes stanceShaken     { 0%, 100% { transform: scaleX(var(--face,1)) translateX(-1.5px) } 50% { transform: scaleX(var(--face,1)) translateX(1.5px) } }
+
+/* Ranged/magic casts throw a real shot across the lane, post to post. */
+/* Same percentage trap as the tiles — animate left/top, which resolve against
+   the field, and keep transform for centring only. */
+.field-shot {
+  position: absolute; left: 0; top: 0; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--fx-color, #fff); pointer-events: none; z-index: 3;
+  box-shadow: 0 0 10px 3px var(--fx-color, #fff); transform: translate(-50%, -50%);
+  animation: fieldShot .38s ease-in forwards;
+}
+@keyframes fieldShot {
+  from { transform: translate3d(var(--x0), var(--y0), 0) translate(-50%, -50%) scale(.7); opacity: 0; }
+  15%  { opacity: 1; }
+  to   { transform: translate3d(var(--x1), var(--y1), 0) translate(-50%, -50%) scale(1); opacity: 0; }
+}
+.roster-tile.ko { opacity: .4; filter: grayscale(1); }
+.roster-tile.acting { border-color: var(--fx-color, var(--accent)); box-shadow: 0 0 0 1px var(--fx-color, var(--accent)); animation: tilePulse .5s ease; }
+.roster-tile.impact { animation: tileImpact .45s ease; }
+/* Diverse drills (v0.90) train a PAIR, so their row wraps freely instead of
+   using the 7-column per-stat grid the main training row uses. */
+.trainrow.diverserow { display: flex; flex-wrap: wrap; gap: 6px; }
+.trainrow.diverserow .trainblock { flex: 1 1 150px; }
+/* Buff/aura glow — every buff, ward, song or Guard lights up the affected tile
+   in the effect's colour (--glow-color), so no buff plays without a visible tell. */
+.roster-tile.buffed { border-color: var(--glow-color, #ffd54f); box-shadow: 0 0 0 2px var(--glow-color, #ffd54f), 0 0 15px 4px var(--glow-color, #ffd54f); animation: tileBuff .6s ease-out; }
+@keyframes tileBuff { 0% { box-shadow: 0 0 0 0 transparent; } 40% { box-shadow: 0 0 0 3px var(--glow-color, #ffd54f), 0 0 22px 7px var(--glow-color, #ffd54f); } 100% { box-shadow: 0 0 0 2px var(--glow-color, #ffd54f), 0 0 13px 3px var(--glow-color, #ffd54f); } }
+@keyframes tileImpact { 30% { box-shadow: 0 0 0 2px var(--fx-color, var(--accent)), 0 0 14px 2px var(--fx-color, var(--accent)); } }
+.roster-tile .rt-name { font-size: 10.5px; font-weight: 700; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roster-tile .rt-class { font-size: 9px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roster-tile .rt-bar { height: 5px; border-radius: 3px; background: #0b0d14; border: 1px solid var(--line); margin-top: 3px; overflow: hidden; }
+.roster-tile .rt-bar i { display: block; height: 100%; transition: width .35s ease; }
+.roster-tile .rt-bar.hp i { background: linear-gradient(90deg, #43a047, #7cb342); }
+.roster-tile .rt-bar.mp i { background: linear-gradient(90deg, #1e88e5, #42a5f5); }
+.roster-tile .rt-ward { font-size: 9px; color: #80cbc4; font-weight: 700; margin-top: 2px; }
+.roster-tile .status-row { justify-content: center; margin-top: 2px; }
+.roster-tile .status-chip { font-size: 11px; }
+.roster-tile .floats { position: absolute; left: 50%; top: -4px; width: 0; z-index: 3; }
+@keyframes tilePulse { 40% { transform: scale(1.08); } }
+.battle-summary { text-align: center; font-size: 16px; font-weight: 700; margin: 10px 0; }
+
+@media (max-width: 720px) { .townmap { grid-template-columns: 1fr; } }
+
+/* Round-robin results grid (Monster Rancher reference, user spec 2026-07-22):
+   rows/columns are the field, each off-diagonal cell is the row team's result
+   against the column team. Wide by nature (fieldSize+1 columns) — scrolls
+   inside its own wrapper rather than the page. */
+.bracket-grid-wrap { overflow-x: auto; margin-top: 4px; }
+.bracket-grid { border-collapse: collapse; font-size: 13px; }
+.bracket-grid th { color: var(--muted); font-weight: 700; padding: 4px 6px; text-align: center; min-width: 30px; }
+.bracket-grid td { border: 1px solid var(--line); text-align: center; }
+.bracket-row-head { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; white-space: nowrap; border: none !important; text-align: left; }
+.bracket-num { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; min-width: 18px; padding: 1px 4px; font-weight: 700; font-size: 11px; color: var(--muted); text-align: center; }
+.bracket-cell { width: 34px; height: 30px; font-weight: 800; font-size: 15px; }
+.bracket-cell.self { background: repeating-linear-gradient(135deg, var(--line), var(--line) 1px, transparent 1px, transparent 7px); }
+.bracket-cell.win { color: var(--dex); background: color-mix(in srgb, var(--dex) 14%, transparent); }
+.bracket-cell.loss { color: var(--str); background: color-mix(in srgb, var(--str) 14%, transparent); }
+.bracket-cell.draw { color: var(--muted); }
+
+/* Scouting report (user spec 2026-07-22): same profile shape as MonsterCard
+   whether or not a tier's been paid for — unpaid fields render "??"/a locked
+   bar instead of being omitted, so buying a tier never reflows the card. */
+.scout-report { display: flex; flex-direction: column; gap: 10px; }
+.scout-report .scoutcard + .scoutcard { padding-top: 10px; border-top: 1px solid var(--line); }
+.scoutcard .badge.locked { color: var(--muted); font-style: italic; }
+.scoutcard .stat .bar.locked { display: flex; align-items: center; justify-content: flex-start; padding-left: 6px; color: var(--muted); font-weight: 700; font-size: 11px; }
+
+/* Title screen + save-slot flow (2026-07-25): the gate every visit lands on
+   before any GameState exists — its own centered layout, not the .app shell. */
+.titlescreen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; position: relative; z-index: 1; }
+.titlecard { width: 100%; max-width: 460px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 32px 28px; text-align: center; }
+.titlelogo { font-size: 34px; margin: 0 0 4px; letter-spacing: .5px; }
+.titletag { color: var(--muted); margin: 0 0 26px; font-size: 14px; }
+.titlebtns { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+.titlebtn { width: 100%; padding: 14px 16px; font-size: 15px; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.titlebtn .btnsub { font-size: 12px; font-weight: 400; opacity: .7; }
+.titlebtn.primary { background: var(--accent); color: var(--btn-ink); border-color: var(--accent); }
+.titlebtn.back { background: transparent; color: var(--muted); border: 1px solid var(--line); margin-top: 18px; }
+.titlebtn:disabled { opacity: .45; cursor: not-allowed; }
+.titlever { color: var(--muted); font-size: 11px; margin: 22px 0 0; }
+
+.slotcard { max-width: 560px; text-align: left; }
+.slotcard h2 { text-align: center; margin: 0 0 20px; font-size: 19px; }
+.slotlist { display: flex; flex-direction: column; gap: 14px; }
+.slotnum { font-weight: 800; font-size: 13px; color: var(--accent); }
+.slotmeta { font-size: 13px; color: var(--muted); }
+.slotmeta b { color: var(--ink); }
+.slotoverwrite { color: var(--accent2); }
+
+.nameinput { width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 11px 12px; font-size: 15px; margin: 6px 0 16px; }
+.tutorialtoggle { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: var(--muted); margin-bottom: 6px; }
+
+.disclaimer p { text-align: left; color: var(--ink); font-size: 14px; line-height: 1.5; }
+.disclaimer h2 { margin-bottom: 16px; }
+
+.tutorial-banner { display: flex; gap: 14px; align-items: flex-start; justify-content: space-between; background: var(--panel2); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
+
+/* Guided first-run tutorial (v0.86) — Grandpa's message box + navigation cues. */
+.tut-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(6,8,12,.62); padding: 20px; animation: tutFade .2s ease-out; }
+@keyframes tutFade { from { opacity: 0; } to { opacity: 1; } }
+.tut-box { max-width: 460px; width: 100%; background: var(--panel); border: 2px solid #e0b23c; border-radius: 14px; padding: 20px 22px 18px; box-shadow: 0 12px 40px rgba(0,0,0,.5); text-align: center; }
+.tut-grandpa { font-size: 46px; line-height: 1; margin-bottom: 6px; }
+.tut-title { font-weight: 800; font-size: 16px; margin-bottom: 8px; }
+.tut-body { font-size: 14px; line-height: 1.55; color: var(--ink); white-space: pre-line; margin: 0 0 16px; text-align: left; }
+.tut-continue { background: #e0b23c; color: #201700; font-weight: 800; }
+/* Navigation cues: gold "go here" highlight + red "not yet" block. */
+.tut-go { box-shadow: 0 0 0 2px #e0b23c, 0 0 16px 2px rgba(224,178,60,.55); border-color: #e0b23c !important; animation: tutGoPulse 1.3s ease-in-out infinite; }
+@keyframes tutGoPulse { 0%,100% { box-shadow: 0 0 0 2px #e0b23c, 0 0 10px 1px rgba(224,178,60,.4); } 50% { box-shadow: 0 0 0 2px #e0b23c, 0 0 20px 4px rgba(224,178,60,.7); } }
+.townback.tut-block { color: #ff8a80; border-color: #e0554e !important; box-shadow: 0 0 0 1px #e0554e; opacity: .85; }
+.offer.tut-highlight { border-radius: 10px; box-shadow: 0 0 0 2px #e0b23c, 0 0 14px 2px rgba(224,178,60,.5); }
+/* Persistent warning note (e.g. the Lab fusion-stats caveat). */
+.warnnote { font-size: 13px; line-height: 1.5; background: color-mix(in srgb, #e0b23c 12%, var(--panel2)); border: 1px solid #e0b23c; border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+@media (prefers-reduced-motion: reduce) { .tut-go { animation: none; } }
+
+/* Contextual one-shot tips (2026-07-25): smaller sibling of the welcome banner. */
+.tipbanner { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; background: color-mix(in srgb, var(--accent) 8%, var(--panel2)); border: 1px dashed var(--accent); border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-size: 13px; line-height: 1.45; }
+
+/* Pre-signup field scouting (2026-07-25): collapsible, sits inside the entry panel. */
+.scout-field { margin: 8px 0; }
+.scout-field > summary { cursor: pointer; color: var(--accent); font-weight: 700; font-size: 13px; padding: 4px 0; }
+.scout-field .scout-report { margin: 10px 0 14px; padding-left: 10px; border-left: 2px solid var(--line); }
+
+/* Post-battle summary table (2026-07-25). */
+.battle-summary { margin-top: 10px; }
+.battle-summary table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.battle-summary th { text-align: left; color: var(--muted); font-weight: 700; padding: 3px 10px 3px 0; border-bottom: 1px solid var(--line); }
+.battle-summary td { padding: 3px 10px 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); font-variant-numeric: tabular-nums; }
+
+/* Slot rows became a div (main button + action buttons) for delete/export/import. */
+.slotrow { display: flex; flex-direction: row; align-items: stretch; gap: 6px; background: var(--panel2); border: 1px solid var(--line); padding: 0; border-radius: 10px; overflow: hidden; }
+.slotrow.empty { border-style: dashed; }
+.slotmain { flex: 1; text-align: left; display: flex; flex-direction: column; gap: 4px; background: transparent; border: 0; color: var(--ink); padding: 14px 16px; border-radius: 0; }
+.slotmain:disabled { opacity: .4; cursor: not-allowed; }
+.slotactions { display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: 6px; padding: 8px 10px; }
+.slotaction { background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.slotaction:hover { color: var(--ink); border-color: var(--muted); }
+.slotaction.danger:hover { color: var(--str); border-color: var(--str); }
+.tutorial-banner ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.tutorial-banner li { margin-bottom: 3px; }
+.tutorial-dismiss { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; font-weight: 700; flex-shrink: 0; }
+
+/* ===================== UI polish pass (2026-07-25) ===================== */
+
+/* In-app modal replacing native confirm()/prompt()/alert(). */
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(5, 6, 10, .72); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal-card { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.modal-title { font-weight: 800; font-size: 16px; margin-bottom: 8px; }
+.modal-body { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.modal-danger { background: transparent; color: var(--str); border: 1px solid var(--str); border-radius: 8px; padding: 7px 12px; font-weight: 700; }
+
+/* Weekly event modal: stacked full-width choice buttons, each showing its
+   trade-off underneath the label so the decision is legible at a glance. */
+.ev-body { margin: 0; }
+.ev-actions { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 8px; }
+/* color required: the global button rule uses --btn-ink (text-on-accent), invisible on this panel-tinted bg. */
+.ev-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--chip, rgba(255,255,255,.03)); color: var(--ink); }
+.ev-choice:not(:disabled):hover { border-color: var(--accent); }
+.ev-choice:disabled { opacity: .45; }
+.ev-label { font-weight: 700; font-size: 13px; display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ev-price { flex-shrink: 0; font-weight: 800; color: var(--gold, #e9b949); white-space: nowrap; }
+.ev-price.cant { color: var(--bad, #e06c6c); }
+.ev-note { font-size: 11px; color: var(--muted); }
+
+/* Rival gameplan reveal (LOOP_DESIGN Phase 3) in the scout panel. */
+.gameplan { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin: 6px 0; background: rgba(255,255,255,.03); }
+.gameplan.locked { background: transparent; }
+.gp-h { font-weight: 700; font-size: 13px; }
+.gp-counter { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+
+/* Causal battle report (LOOP_DESIGN Phase 4): the "you won because…" card. */
+.battle-report { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: rgba(255,255,255,.03); display: flex; flex-direction: column; gap: 4px; }
+.br-turn { font-weight: 700; font-size: 13px; }
+.br-counter { font-size: 12px; color: var(--muted); }
+.br-tactic { font-size: 12px; }
+.br-tactic.ok { color: var(--con, #5bd47a); }
+.br-tactic.no { color: var(--str, #e0685f); }
+.br-moment { font-size: 12px; color: var(--muted); }
+/* Battle Analyst advice block (v0.84) */
+.analyst-advice { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.analyst-h { font-weight: 700; font-size: 13px; }
+.br-advice { font-size: 12px; color: var(--ink); line-height: 1.45; }
+
+/* Trainer XP bar + bloodline potential badge (LOOP_DESIGN Phase 5). */
+.xpbar { height: 7px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+.xpfill { height: 100%; background: var(--accent, #6ad); border-radius: 4px; transition: width .3s ease; }
+.potential { color: var(--cha, #d9a94a); font-weight: 700; }
+
+/* Fusion spinning wheel (v0.7). */
+.wheel-overlay { position: fixed; inset: 0; background: rgba(6,8,14,.78); display: flex; align-items: center; justify-content: center; z-index: 200; }
+.wheel-card { background: var(--panel2); border: 1px solid var(--cha, #d9a94a); border-radius: 14px; padding: 22px 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 240px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.wheel-reel { display: flex; flex-direction: column; align-items: center; gap: 6px; filter: blur(.4px); transition: filter .2s; }
+.wheel-reel b { font-size: 18px; }
+.wheel-reel.landed { filter: none; animation: wheel-pop .35s ease-out; }
+@keyframes wheel-pop { 0% { transform: scale(.7); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+/* Rank-up trial panel + earned-license shop row (v0.5). */
+.trial-panel { border: 1px solid var(--cha, #d9a94a); border-radius: 10px; padding: 10px 12px; margin-top: 10px; display: flex; flex-direction: column; gap: 4px; background: rgba(217,169,74,.06); font-size: 13px; }
+.license-ready { outline: 1px solid var(--con, #5bd47a); border-radius: 8px; }
+
+/* Forage fallback (feeding screen, shown only when the player can't afford food). */
+.forage-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; margin-top: 8px; padding: 9px 12px; border: 1px dashed var(--con, #5bd47a); border-radius: 9px; background: rgba(91,212,122,.06); color: var(--ink); text-align: left; }
+.forage-option.selected { border-style: solid; background: rgba(91,212,122,.14); }
+.forage-top { font-weight: 700; font-size: 13px; }
+.forage-sub { font-size: 11px; color: var(--muted); }
+
+/* Winner banner: the fight's climax gets a real centered moment, not a
+   corner chip. */
+.winner-banner { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 4;
+  background: rgba(10, 12, 18, .88); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 12px 26px; font-size: 21px; color: var(--ink); white-space: nowrap;
+  animation: winnerIn .45s ease-out; }
+.winner-banner b { color: var(--accent); }
+@keyframes winnerIn { from { opacity: 0; transform: translate(-50%, -50%) scale(.75); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+/* KO stamp: a downed fighter reads instantly, not just "darker". */
+.combatant.ko::after, .roster-tile.ko::after { content: 'KO'; position: absolute; left: 50%; top: 42%;
+  transform: translate(-50%, -50%) rotate(-14deg); z-index: 3; color: #ff5252; border: 3px solid #ff5252;
+  border-radius: 8px; padding: 1px 9px; font-weight: 900; font-size: 20px; letter-spacing: 1px;
+  background: rgba(10, 12, 18, .55); }
+.roster-tile.ko::after { font-size: 13px; border-width: 2px; padding: 0 6px; }
+/* NOTE: .roster-tile is positioned ABSOLUTELY on the battlefield (see the
+   .battlefield block above) — it used to carry `position: relative` here purely
+   so the KO stamp could anchor to it. Absolute is also a containing block, so
+   the stamp still anchors correctly; re-adding `relative` here would silently
+   collapse every combatant back into document flow. */
+
+/* Mobile arena: 176px sprites overflowed the floor and clipped at the edges
+   on phones — step them down and pull the fighters in. */
+@media (max-width: 560px) {
+  .arena-floor { height: 250px; padding: 0 4%; }
+  .combatant img, .combatant svg { width: 112px !important; height: 112px !important; }
+  .ahn { font-size: 12px; }
+  .ahn .dim { display: none; } /* name only — species·class didn't fit */
+}
+
+/* Stable detail: aptitude tag now sits beside its stat's name (col 2), and
+   the battle-kit panel fills what used to be dead space under the bars. */
+.detailstat { grid-template-columns: 32px minmax(52px, auto) 1fr 34px; }
+.detailstat-tag { text-align: left; }
+.detail-kit { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.detail-kit-h { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.detail-kit-move, .detail-kit-innate { display: flex; align-items: baseline; gap: 7px; font-size: 12px; margin: 3px 0; }
+.detail-kit-move .lvl, .detail-kit-innate .lvl { font-size: 10px; font-weight: 700; color: var(--accent2); flex-shrink: 0; }
+.detail-kit-move .dim, .detail-kit-innate .dim { font-size: 11px; }
+.detail-kit-innate { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 6px; }
+
+/* Training tiles: selected state is a filled tint (was a thin outline that
+   was easy to lose among 20 tiles), and the text got a readability bump. */
+.trainblock.selected { background: color-mix(in srgb, var(--accent2) 16%, var(--panel2)); border-color: var(--accent2); box-shadow: inset 0 0 0 1px var(--accent2); }
+.trainblock-name { font-size: 10px; }
+.trainblock-sub { font-size: 9.5px; }
+
+/* Market offers: compact by default, full card behind a disclosure. */
+.offer-details > summary { list-style: none; cursor: pointer; }
+.offer-details > summary::-webkit-details-marker { display: none; }
+.offer-brief { display: flex; align-items: center; gap: 10px; }
+.offer-brief-text { flex: 1; min-width: 0; font-size: 13px; }
+.offer-brief-sub { display: block; font-size: 11.5px; margin-top: 2px; }
+.offer-brief-more { font-size: 11px; flex-shrink: 0; }
+.offer-details[open] .offer-brief-more { visibility: hidden; }
+.offer-details[open] > summary { margin-bottom: 10px; }
+.fuserow button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Ability editor slots: labeled so the click-slot-then-move interaction is
+   discoverable. */
+.slotlabel { font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.abilityslot.selected .slotlabel { color: var(--accent2); }
+
+/* Tactics panel (2026-07-25): Teamfight-Manager-style option groups — one
+   highlighted choice per group, description of the selected pair below. */
+.tacticgroups { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 8px 0; }
+@media (max-width: 560px) { .tacticgroups { grid-template-columns: 1fr; } }
+.tacticgroup { display: flex; flex-direction: column; gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.tacticgroup-h { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.tacticopt { width: 100%; text-align: center; background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; }
+.tacticopt:hover { color: var(--ink); border-color: var(--muted); }
+/* Unified "chosen option" language (2026-07-25 H4 fix): accent border + tint,
+   shared by tactic options and the innate-active card, so "selected" reads the
+   same everywhere the player picks one of several. */
+.tacticopt.on { background: color-mix(in srgb, var(--accent) 20%, var(--panel2)); border-color: var(--accent); color: var(--ink); font-weight: 800; }
+.tacticopt.small { width: auto; padding: 3px 10px; min-height: 24px; font-size: 12px; border-radius: 6px; }
+.tacticopt.lockedopt { opacity: .35; cursor: not-allowed; }
+.tactic-desc { font-size: 12px; line-height: 1.5; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 2px; }
+.protectrow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 12px; }
+
+/* Ability editor collapsible sections (2026-07-25 H8 fix): Moves / Innate /
+   Tactics each fold, so the editor is no longer one long scroll of every
+   decision at once. Moves opens by default; the rest are a click away. */
+.editor-section { border-top: 1px solid var(--line); }
+.editor-section > summary { cursor: pointer; font-weight: 800; font-size: 14px; padding: 11px 0 8px; list-style: none; display: flex; align-items: center; gap: 7px; }
+.editor-section > summary::-webkit-details-marker { display: none; }
+.editor-section > summary::before { content: '▸'; color: var(--muted); font-size: 11px; transition: transform .15s ease; }
+.editor-section[open] > summary::before { transform: rotate(90deg); }
+.editor-section[open] > summary { color: var(--accent); }
+.editor-section > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* Tactics summary (2026-07-25 H1/H6/H10 fix): every active order spelled out,
+   so no tactic's meaning lives only in a hover tooltip. */
+.tactic-summary { display: flex; flex-direction: column; gap: 5px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 8px; }
+.tactic-summary-row { display: flex; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.tactic-summary-row .tsr-icon { flex-shrink: 0; width: 16px; text-align: center; }
+.tactic-summary-row b { color: var(--ink); font-weight: 700; }
+
+/* Pre-fight formation row (v0.81): the team line-up, reorderable before a fight. */
+.formationrow { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.formationchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 13px; }
+.formationchip button.small { padding: 0 6px; line-height: 1.4; }
+
+/* Formation (wave 2): team-mode roster split into front/back lines; the back
+   line sits offset behind so the formation reads at a glance. */
+.roster { display: flex; flex-direction: column; gap: 8px; }
+.roster-line { display: flex; gap: 8px; justify-content: center; }
+.roster-a .roster-line.back { margin-right: 26px; }
+.roster-b .roster-line.back { margin-left: 26px; }
+.roster-line.back .roster-tile { opacity: .92; }
+
+/* Market Scout (v0.77) — species targeting inside the monster market. */
+.scoutbox { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 7px; }
+.scoutbox-h { font-size: 12.5px; font-weight: 700; }
+.scoutpair { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.scoutpair-l { font-size: 12px; color: var(--muted); min-width: 74px; }
+.scoutpair select { flex: 1; min-width: 110px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; font-size: 12.5px; }
+.scoutpair select:disabled { opacity: .5; }
+
+/* Area backdrops (v0.79) — a full-bleed painted scene per screen.
+   The image is FIXED behind everything and covered by a heavy theme-aware
+   scrim: these screens are dense admin UI (shop rows, dropdowns, lists), so the
+   art carries mood and location identity while the content stays fully legible.
+   Cards remain opaque; only the page gutters really show the painting. */
+.areabg {
+  /* z-index MUST be negative: at 0 a positioned element paints ABOVE all the
+     static content in the same stacking context — the scrim buried every card
+     and button under an 80-95% veil (pointer-events:none meant clicks still
+     worked, which is why hit-test audits passed while the page looked empty). */
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  /* Cross-fade when moving between areas. */
+  transition: background-image .25s ease-in-out;
+}
+.areabg::after {
+  content: ''; position: absolute; inset: 0;
+  /* Night: deep veil, slightly lighter at the top so the sky reads. */
+  background: linear-gradient(180deg, rgba(18,20,28,.80) 0%, rgba(18,20,28,.90) 55%, rgba(18,20,28,.95) 100%);
+}
+:root[data-theme="light"] .areabg::after {
+  background: linear-gradient(180deg, rgba(243,245,250,.82) 0%, rgba(243,245,250,.90) 55%, rgba(243,245,250,.95) 100%);
+}
+@media (prefers-reduced-motion: reduce) { .areabg { transition: none; } }
+
+/* ============================================================================
+   Per-move animation kit (v0.80) — bespoke base motions + composite overlays.
+   Anchored on the 1v1 stage; `left` comes from targetX1v1() inline, these
+   supply position/size/keyframes. z tiers: base 2-5, overlays 6, status puff 7.
+   ============================================================================ */
+
+/* slam — heavy overhead crash on the target, with a shock ring. */
+.slam-fx { position: absolute; top: 50%; width: 80px; height: 80px; margin: -40px 0 0 -40px; z-index: 5; pointer-events: none; }
+.slam-mark { position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,241,176,.95) 0%, rgba(239,83,80,.5) 45%, transparent 70%);
+  animation: slamHit .5s cubic-bezier(.2,.9,.3,1) forwards; }
+@keyframes slamHit { 0% { transform: scale(.2); opacity: 0; } 25% { opacity: 1; } 55% { transform: scale(1.25); } 100% { transform: scale(1.5); opacity: 0; } }
+
+/* guillotine — a blade drops decisively through the target. */
+.guillotine-fx { position: absolute; top: 50%; width: 60px; height: 96px; margin: -70px 0 0 -30px; z-index: 5; pointer-events: none; }
+.guillotine-blade { position: absolute; left: 50%; top: 0; width: 8px; height: 60px; margin-left: -4px;
+  background: linear-gradient(180deg, #eceff1, #90a4ae); box-shadow: 0 0 8px #fff, 0 0 3px #b0bec5;
+  clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%); transform-origin: top center; animation: guillotineDrop .45s cubic-bezier(.7,0,.9,.2) forwards; }
+@keyframes guillotineDrop { 0% { transform: translateY(-30px) scaleY(.6); opacity: 0; } 30% { opacity: 1; transform: translateY(-30px) scaleY(1); } 60% { transform: translateY(40px) scaleY(1.1); } 100% { transform: translateY(40px); opacity: 0; } }
+
+/* beam — an instant piercing line from caster to target. */
+.beam-fx { position: absolute; top: 50%; height: 4px; margin-top: -2px; z-index: 4; pointer-events: none; border-radius: 2px; box-shadow: 0 0 8px 2px currentColor; }
+.beam-fx.beamA { left: 17%; width: 61%; transform-origin: left center; animation: beamZap .4s ease-out forwards; }
+.beam-fx.beamB { right: 17%; width: 61%; transform-origin: right center; animation: beamZap .4s ease-out forwards; }
+@keyframes beamZap { 0% { transform: scaleX(0); opacity: .2; } 25% { transform: scaleX(1); opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* volley — a fan of arrows arcing down onto the target. */
+.volley-fx { position: absolute; top: 50%; width: 70px; height: 90px; margin: -80px 0 0 -35px; z-index: 4; pointer-events: none; }
+.volley-arrow { position: absolute; left: 50%; top: 0; width: 18px; height: 4px; border-radius: 2px 5px 5px 2px; background: #cfd8dc; box-shadow: 0 0 4px #eee; opacity: 0; animation: volleyDrop .5s ease-in forwards; }
+@keyframes volleyDrop { 0% { transform: translate(-16px,-10px) rotate(60deg); opacity: 0; } 20% { opacity: 1; } 100% { transform: translate(6px,84px) rotate(80deg); opacity: 0; } }
+
+/* chain — the bolt SVG, re-tinted blue; reuses .lightning keyframes. */
+.chain-fx .lightning-bolt { filter: drop-shadow(0 0 6px #4fc3f7) drop-shadow(0 0 16px #0288d1); }
+
+/* cage — bars slam down around the target, hold, then fade. */
+.cage-fx { position: absolute; top: 50%; width: 70px; height: 84px; margin: -42px 0 0 -35px; z-index: 4; pointer-events: none; }
+.cage-bar { position: absolute; top: 0; width: 5px; height: 100%; background: linear-gradient(180deg, #e1f5fe, #4fc3f7); box-shadow: 0 0 6px #81d4fa; transform: scaleY(0); transform-origin: top; animation: cageClose .6s cubic-bezier(.3,1.4,.5,1) forwards; }
+@keyframes cageClose { 0% { transform: scaleY(0); opacity: 0; } 40% { transform: scaleY(1.05); opacity: 1; } 75% { transform: scaleY(1); opacity: 1; } 100% { opacity: 0; } }
+
+/* firewall — a sheet of flame erupts across the target. */
+.firewall-fx { position: absolute; top: 50%; width: 90px; height: 84px; margin: -42px 0 0 -45px; z-index: 4; pointer-events: none; border-radius: 40% 40% 20% 20%;
+  background: radial-gradient(ellipse at 50% 90%, #fff3b0 0%, #ff7043 40%, #b71c1c 70%, transparent 85%); animation: fireRise .6s ease-out forwards; }
+@keyframes fireRise { 0% { transform: scaleY(.2) translateY(30px); opacity: 0; } 30% { opacity: 1; } 55% { transform: scaleY(1.1) translateY(0); } 100% { transform: scaleY(1) translateY(0); opacity: 0; } }
+
+/* notes — musical notes float up from the singer (song buffs). */
+.notes-fx { position: absolute; top: 50%; width: 60px; height: 70px; margin: -55px 0 0 -30px; z-index: 6; pointer-events: none; }
+.notes-fx .note { position: absolute; bottom: 0; left: 40%; font-size: 22px; color: #ffd54f; text-shadow: 0 0 6px #ffb300; opacity: 0; animation: noteFloat 1s ease-out forwards; }
+.notes-fx .note:nth-child(2) { left: 20%; }
+.notes-fx .note:nth-child(3) { left: 60%; }
+@keyframes noteFloat { 0% { transform: translateY(0) rotate(-8deg); opacity: 0; } 25% { opacity: 1; } 100% { transform: translateY(-48px) rotate(10deg); opacity: 0; } }
+
+/* flurry — the claw rake, faster and repeated (multi-hit melee/ranged). */
+.claw-flurry .claw-slash { animation-duration: .22s; animation-iteration-count: 2; }
+
+/* --- Composite overlays (ride on top of a base motion) -------------------- */
+.ov-crater { position: absolute; bottom: 22px; width: 70px; height: 20px; margin-left: -35px; z-index: 3; pointer-events: none; border: 2px solid rgba(255,224,130,.7); border-radius: 50%; transform: scale(.3); opacity: 0; animation: craterRing .5s ease-out forwards; }
+@keyframes craterRing { 0% { transform: scale(.3); opacity: 0; } 30% { opacity: .9; } 100% { transform: scale(1.4); opacity: 0; } }
+.ov-exec { position: absolute; top: 50%; width: 70px; height: 70px; margin: -35px 0 0 -35px; z-index: 6; pointer-events: none; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.95), transparent 65%); opacity: 0; animation: execFlash .4s ease-out forwards; }
+@keyframes execFlash { 0% { opacity: 0; transform: scale(.5); } 20% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.2); } }
+.ov-manaburn { position: absolute; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; z-index: 6; pointer-events: none; border-radius: 50%; background: radial-gradient(circle, rgba(66,165,245,.7), transparent 65%); animation: manaBurnPuff .5s ease forwards; }
+@keyframes manaBurnPuff { 0% { transform: scale(.4); opacity: 0; } 40% { opacity: 1; } 100% { transform: scale(1.3) translateY(-14px); opacity: 0; } }
+.ov-tether { position: absolute; top: 50%; height: 3px; margin-top: -1.5px; z-index: 6; pointer-events: none; border-radius: 2px; background: linear-gradient(90deg, #ef5350, #ff8a80); box-shadow: 0 0 6px #ef5350; opacity: 0; animation: tetherPull .5s ease-out forwards; }
+.ov-tether.tetherA { left: 22%; width: 56%; }
+.ov-tether.tetherB { right: 22%; width: 56%; }
+@keyframes tetherPull { 0% { opacity: 0; } 30% { opacity: .9; } 100% { opacity: 0; } }
+.ov-shield { position: absolute; top: 50%; width: 76px; height: 84px; margin: -42px 0 0 -38px; z-index: 6; pointer-events: none; background: radial-gradient(ellipse, rgba(100,181,246,.35), transparent 68%); border: 2px solid rgba(129,212,250,.8); border-radius: 46%; transform: scale(.6); opacity: 0; animation: shieldUp .6s ease-out forwards; }
+@keyframes shieldUp { 0% { transform: scale(.6); opacity: 0; } 35% { transform: scale(1.05); opacity: 1; } 70% { transform: scale(1); opacity: .9; } 100% { opacity: 0; } }
+.ov-thorns { position: absolute; top: 50%; width: 84px; height: 84px; margin: -42px 0 0 -42px; z-index: 6; pointer-events: none; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 8%, rgba(124,179,66,.8) 8% 10%, transparent 10% 18%, rgba(124,179,66,.8) 18% 20%, transparent 20%); transform: scale(.5); opacity: 0; animation: thornsOut .55s ease-out forwards; }
+@keyframes thornsOut { 0% { transform: scale(.5) rotate(0); opacity: 0; } 40% { opacity: 1; } 100% { transform: scale(1.2) rotate(30deg); opacity: 0; } }
+.ov-heal { position: absolute; top: 50%; width: 60px; height: 70px; margin: -50px 0 0 -30px; z-index: 6; pointer-events: none; background: radial-gradient(circle at 50% 80%, rgba(129,199,132,.7), transparent 60%); animation: healRise .7s ease-out forwards; }
+@keyframes healRise { 0% { transform: translateY(20px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(-14px); opacity: 0; } }
+.ov-cleanse { position: absolute; top: 50%; width: 80px; height: 80px; margin: -40px 0 0 -40px; z-index: 6; pointer-events: none; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); transform: scale(.3); opacity: 0; animation: cleanseRing .55s ease-out forwards; }
+@keyframes cleanseRing { 0% { transform: scale(.3); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1.4); opacity: 0; } }
+.ov-aura { position: absolute; top: 50%; width: 78px; height: 90px; margin: -48px 0 0 -39px; z-index: 3; pointer-events: none; border-radius: 46%; transform: scale(.7); opacity: 0; animation: auraPulse .65s ease-out forwards; }
+.ov-aura-atk { background: radial-gradient(ellipse, rgba(239,83,80,.4), transparent 66%); }
+.ov-aura-def { background: radial-gradient(ellipse, rgba(120,144,156,.4), transparent 66%); }
+.ov-aura-dodge { background: radial-gradient(ellipse, rgba(77,208,225,.4), transparent 66%); }
+.ov-aura-regen { background: radial-gradient(ellipse, rgba(129,199,132,.4), transparent 66%); }
+@keyframes auraPulse { 0% { transform: scale(.7); opacity: 0; } 40% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1.15); opacity: 0; } }
+
+/* status landing — a themed icon puff over the newly afflicted monster. */
+.status-puff { position: absolute; top: 38%; margin-left: -14px; z-index: 7; pointer-events: none; font-size: 26px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); transform: scale(.4); opacity: 0; animation: statusPuff .8s cubic-bezier(.2,1.4,.4,1) forwards; }
+@keyframes statusPuff { 0% { transform: scale(.4) translateY(6px); opacity: 0; } 30% { transform: scale(1.15) translateY(0); opacity: 1; } 70% { transform: scale(1) translateY(-4px); opacity: 1; } 100% { transform: scale(1) translateY(-16px); opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .slam-mark, .guillotine-blade, .beam-fx, .volley-arrow, .cage-bar, .firewall-fx, .notes-fx .note,
+  .ov-crater, .ov-exec, .ov-manaburn, .ov-tether, .ov-shield, .ov-thorns, .ov-heal, .ov-cleanse, .ov-aura, .status-puff,
+  .roster-tile.buffed, .field-shot { animation-duration: .01ms !important; }
+  /* Idle stances are ambient, not informational — stop them outright rather
+     than running them at 0.01ms, which reads as a jitter. Position transitions
+     stay (they carry real meaning: who moved, who was promoted). */
+  .roster-tile .rt-body { animation: none !important; }
+  .roster-tile { transition-duration: .01ms !important; }
+}
+
+/* Ranch "this week's plan" summary (v0.92). Training moved into the weekly
+   feed-and-train walkthrough, so the Ranch reports the plan rather than setting
+   it, and offers a way back into the window. */
+.plannedweek { margin-top: 12px; }
+.plannedweek-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 14px; }
+.plannedweek-act { font-weight: 800; color: var(--ink); }
+/* Inline text button. Sets its own background, so it MUST set its own color —
+   the v0.79 audit lesson. */
+.linkish { background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+  color: var(--accent); text-decoration: underline; min-height: 24px; }
+.linkish:hover { color: var(--ink); }
+
+/* Six combatants on a ~333px field collide at the desktop tile width, so the
+   card shrinks on small screens rather than the field scrolling. */
+@media (max-width: 720px) {
+  .team-floor { min-height: 300px; }
+  .roster-tile { --tile-w: 66px; padding: 4px 2px; }
+  .roster-tile .rt-name { font-size: 9px; }
+  .roster-tile .rt-class { display: none; }
+}

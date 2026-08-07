@@ -1,0 +1,1 @@
+- [Arena blueprint: GROUND scales 4x linear](project_arena_blueprint.md) — corrected by user after first pass wrongly shrank the ground; 5v5 ground=160x88, SPREAD/leash+aura formulas, Family A/B is load-bearing

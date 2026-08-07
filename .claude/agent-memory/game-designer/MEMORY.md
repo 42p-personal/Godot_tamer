@@ -1,0 +1,1 @@
+- [Tutorial stream collision risk](project_tutorial_stream_collision.md) — tutorial_ui.gd was named as an in-flight concurrent stream in theme.gd; check before implementing docs/TUTORIAL_DESIGN.md's spec

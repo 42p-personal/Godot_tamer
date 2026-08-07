@@ -1,0 +1,256 @@
+/* ⚠️ NOT `image-rendering: pixelated` — THAT WAS A LARGE PART OF "THE QUALITY LOOKS
+   VERY LOW". Every image on this screen is PAINTED art at high resolution: the ground
+   is a 1254px JPEG drawn at ~34% of the field height, the props are 256px PNGs drawn
+   at their footprint width, the portraits are 320px drawn at thumbnail size. All three
+   are DOWNSCALED, most of them by about 5x, and `pixelated` forces nearest-neighbour —
+   which at 5x keeps one pixel in twenty-five and discards the rest, so smooth painted
+   edges come back as sparkle and stair-stepping.
+   ⚠️ IT IS STILL CORRECT IN battleSprite.css. The rigged battle sheet is a genuine
+   48px pixel-art sheet scaled UP, where smoothing would destroy exactly the hard edges
+   `quantise()` exists to make. Same property, opposite art, opposite answer — which is
+   why it is set per element and never globally. */
+/* Deployment screen (tamerengine M5). */
+/* ⚠️ SAME PAIR AS tamerArena.css — change both together, or a team is one colour
+   while you place it and another while you watch it fight. */
+.dp-wrap { --teamA:#5ab0ff; --teamB:#ff4fa3; max-width:1160px; margin:0 auto; }
+.dp-stage {
+  position:relative; border-radius:12px; overflow:hidden;
+  border:1px solid rgba(0,0,0,.25); box-shadow:0 12px 44px rgba(0,0,0,.4);
+}
+/* ⚠️ `overflow:hidden` IS LOAD-BEARING. The hex board is generated PAST all four
+   edges so it reaches the arena wall with no margin of bare ground; the field crops
+   it. Remove this and the overhanging cells spill outside the arena. */
+/* ⚠️ NO aspect-ratio OR background-size HERE — both are per-ARENA and set inline,
+   exactly as in tamerArena.css. A 40/22 hardcoded here silently reshaped every
+   arena's deploy board back to the default.
+   ⚠️ `overflow:hidden` IS load-bearing: the hex board is generated past all four
+   edges so it meets the arena wall, and this is what crops it.
+
+   THE FRAME. It holds the camera and it crops; it draws nothing itself. The ground
+   moved off it onto `.dp-plane` when the board was tilted — a flat texture on the
+   frame would have stayed flat while everything on it turned, which is the exact
+   mismatch the tilt exists to remove.
+   ⚠️ `perspective` GOES HERE, ON THE PARENT, NOT IN THE PLANE'S OWN `transform`. A
+   `perspective()` inside a transform applies only to that element and NOT to its
+   descendants, so the board would tilt while every prop and monster standing on it
+   stayed in a flat projection — each correct on its own, none of them agreeing. */
+.dp-field {
+  position:relative; width:100%; overflow:hidden;
+  perspective-origin:50% 50%;
+  /* the world beyond the board's near corners, where the tilt tapers it in */
+  background:radial-gradient(ellipse 80% 60% at 50% 45%, #0d1017, #05070b);
+}
+
+/* THE GROUND. A full flat board, tilted away inside the frame.
+   ⚠️ `preserve-3d` IS WHAT MAKES THE BILLBOARDS WORK. Without it the plane flattens
+   its children into its own tilted surface, so a prop counter-rotated to stand up
+   gets squashed straight back down onto the floor — a lying-down barrel, which is
+   worse than the pasted one it replaced. */
+.dp-plane {
+  position:absolute; left:0; right:0; top:50%; width:100%;
+  transform-style:preserve-3d; transform-origin:50% 50%;
+  background-repeat:repeat;
+}
+
+/* ⚠️ EVERYTHING THAT STANDS ON THE GROUND COUNTER-ROTATES BY THE SAME ANGLE, ABOUT
+   ITS OWN FEET. That is the whole billboard trick and the answer to "the obstacles
+   look like they have just been stuck on": the sprites were always drawn side-on,
+   and the floor was drawn top-down, so the two disagreed about where the camera was.
+   Tilt the floor and stand the sprite up out of it and the side-on drawing becomes
+   the CORRECT one — a barrel seen from the side, standing on a floor seen at an
+   angle. `transform-origin:50% 100%` is load-bearing: rotate about the centre
+   instead and the sprite pivots through the floor and hangs half-buried. */
+.dp-rock, .dp-sprite {
+  transform:rotateX(calc(var(--cam-tilt, 26deg) * -1));
+  transform-origin:50% 100%;
+}
+
+/* A shadow the light casts on the FLOOR, so it is foreshortened with the floor.
+   It sits on the plane with no counter-rotation — that is what makes it lie down. */
+.dp-shadow {
+  position:absolute; z-index:1; pointer-events:none;
+  border-radius:50%;
+  background:radial-gradient(ellipse at 50% 50%, rgba(0,0,0,.5), rgba(0,0,0,.28) 55%, transparent 74%);
+}
+/* Cover, drawn exactly as the arena draws it: the box is the FOOTPRINT and the
+   sprite stands on it. See tamerArena.css for why this is not a picture frame. */
+.dp-rock { position:absolute; pointer-events:none; overflow:visible; }
+.dp-rock img {
+  position:absolute; left:0; bottom:0; width:100%; height:auto;
+  /* ⚠️ NO `drop-shadow` — `.dp-shadow` is the shadow now, and it lies on the ground.
+     Keeping both gave every prop two shadows pointing different ways. */
+}
+/* ⚠️ THE ARENA'S LIGHT ON THE FLOOR, AND ITS z-index IS EXACTLY 3. With no z-index
+   at all it painted UNDER the hex layer (z-index:2), so the board was lit dead evenly
+   from wall to wall — 200-odd cells at identical brightness, which is a large part of
+   why a tiled surface reads as printed paper rather than a floor in a room.
+   ⚠️ BUT IT MUST NOT GO ABOVE WHAT STANDS ON THE FLOOR. At 6 it cleared the hexes
+   (2) and the monsters (4) but NOT the cover, which is y-sorted from `5 + y + h` and
+   lands at 11–19 — so the light dimmed the units and left the crates untouched, and
+   dimmed them WORST at the left and right walls, which is precisely where both
+   deployment zones are. 3 is above the board and below everything on it. */
+.dp-plane::after {
+  content:""; position:absolute; inset:0; pointer-events:none; z-index:3;
+  transform:translateZ(0.3px);   /* off the ground, or it z-fights the texture */
+  background:
+    radial-gradient(ellipse 62% 52% at 50% 42%, rgba(255,246,225,.10), transparent 70%),
+    radial-gradient(ellipse 85% 70% at 50% 60%, transparent 52%, rgba(0,0,0,.44));
+}
+
+/* pointy-top hexagon slot marker */
+/* ── the deployment board ─────────────────────────────────────────────────
+   Regular pointy-top hexagons tiling edge to edge (hex.ts:hexTile). The clip is set
+   INLINE from that function so the drawn shape can never drift from the lattice.
+
+   ⚠️ EACH CELL IS TWO LAYERS, AND THAT IS WHAT STOPS IT LOOKING LIKE PAPER. A single
+   translucent polygon over a ground texture is a coloured cut-out — no thickness, no
+   light, nothing to say the board is a physical thing lying on the floor. So:
+
+     .dp-hex          the RECESS — a dark hexagon, read as the gap between tiles
+     .dp-hex::before  the FACE   — inset a few percent, lit from above, bevelled
+
+   The gap between the two IS the seam, so seams are a real dark line with the face
+   sitting proud of it, rather than a bright outline drawn on a flat fill. That one
+   change is the difference between "tinted stencil" and "tile set into a floor". */
+/* ⚠️ `--j` IS A PER-CELL BRIGHTNESS JITTER, AND IT IS NOT DECORATION. The ground
+   texture runs CONTINUOUSLY under the whole board, so with every cell rendered
+   identically the grain lined up across the seams and the eye read one big surface
+   with a hex pattern printed on it — the "made out of paper" complaint, still true
+   after the tiles had bevels. A deterministic ±6% per cell (from its q,r — same cell,
+   same value, every render) breaks that continuity, and the board becomes 200 tiles
+   cut from the same stock rather than one sheet.
+   ⚠️ IT IS A VARIABLE, NOT AN INLINE `filter`. An inline filter would beat the hover
+   rule in the cascade and kill the hover response on every cell. */
+.dp-hex {
+  position:absolute; z-index:2; --j:1;
+  background:rgba(8,11,16,.5);           /* the recess between tiles */
+  filter:brightness(var(--j));
+  transition:filter .13s ease;
+}
+.dp-hex::before {
+  content:''; position:absolute; inset:0;
+  /* ⚠️ INHERITS THE PARENT'S CLIP — set inline, so the face is the same hexagon and
+     cannot fall out of step with it. `scale` shrinks it about its own centre, which
+     leaves a uniform rim on all six sides; an `inset` in pixels would not, because a
+     hexagon's edges are not all axis-aligned. */
+  clip-path:inherit;
+  transform:scale(.93);
+  border-radius:2px;
+}
+
+/* The neutral middle band — the FLOOR of the board. Present so the surface runs the
+   whole field, never a target.
+   ⚠️ IT HAS TO BE VISIBLE OR THE BOARD IS NOT A BOARD: at .05 it disappeared against
+   every ground texture and the screen read as two coloured blocks with bare floor
+   between them, which is the dead space the full-coverage tiling exists to remove. */
+.dp-neutral { pointer-events:none; }
+.dp-neutral::before {
+  background:
+    linear-gradient(170deg, rgba(226,238,255,.18) 0%, rgba(146,166,194,.09) 46%, rgba(66,82,106,.12) 100%);
+  box-shadow:inset 0 1.5px 0 rgba(255,255,255,.20),
+             inset 0 -1.5px 0 rgba(0,0,0,.20);
+}
+
+/* Theirs — the magenta the team wears on the field, kept BELOW yours so the eye
+   lands on the half you can act in. */
+.dp-enemy { pointer-events:none; }
+.dp-enemy::before {
+  background:
+    linear-gradient(170deg, rgba(255,128,196,.59) 0%, rgba(214,44,132,.48) 46%, rgba(110,16,70,.45) 100%);
+  box-shadow:inset 0 1.5px 0 rgba(255,205,232,.44),
+             inset 0 -1.5px 0 rgba(48,4,26,.34);
+}
+
+/* ⚠️ YOURS IS THE ONLY LIT THIRD, and SATURATED rather than merely light. A pale
+   blue at low alpha averages against brown boards or grey gravel into the same grey
+   as the floor, so the one region the player acts in stopped reading as blue at all.
+   Colour has to survive the ground under it. */
+.dp-mine { cursor:pointer; }
+.dp-mine::before {
+  background:
+    linear-gradient(170deg, rgba(132,208,255,.53) 0%, rgba(34,130,224,.42) 46%, rgba(12,58,122,.42) 100%);
+  box-shadow:inset 0 1.5px 0 rgba(222,244,255,.42),
+             inset 0 -1.5px 0 rgba(3,22,52,.34);
+}
+/* Open = the actionable state, and it has to win against its own neighbours. */
+.dp-open::before {
+  background:
+    linear-gradient(170deg, rgba(132,208,255,.62) 0%, rgba(34,130,224,.51) 46%, rgba(12,58,122,.48) 100%);
+  box-shadow:inset 0 2px 0 rgba(222,244,255,.48),
+             inset 0 -2px 0 rgba(3,22,52,.36),
+             0 0 10px rgba(120,200,255,.22);
+}
+.dp-mine:hover { filter:brightness(calc(var(--j) * 1.24)) saturate(1.12); }
+/* Taken: recede, so the remaining open cells are what the eye goes to next. */
+.dp-filled::before {
+  background:
+    linear-gradient(170deg, rgba(120,170,215,.26) 0%, rgba(40,90,145,.19) 46%, rgba(12,40,75,.22) 100%);
+  box-shadow:inset 0 1px 0 rgba(190,220,255,.20),
+             inset 0 -1px 0 rgba(0,0,0,.24);
+}
+
+/* sprites live in their own layer above the slots — never clipped */
+.dp-sprite {
+  position:absolute; z-index:4; cursor:pointer;
+}
+
+.dp-tray {
+  display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:14px;
+}
+.dp-lbl { font:600 11px/1 ui-monospace, Consolas, monospace; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted,#8a93a7); margin-right:6px; }
+.dp-chip {
+  display:inline-flex; align-items:center; gap:6px; position:relative;
+  background:var(--panel,#1b1f2a); border:1px solid var(--line,#2c3342); border-radius:8px;
+  padding:6px 12px 6px 6px; cursor:pointer; color:var(--ink,#e9ecf3);
+  font:600 12px/1 ui-monospace, Consolas, monospace; letter-spacing:.04em;
+  transition:border-color .12s;
+}
+.dp-chip img { width:28px; height:28px; }
+.dp-chip:hover { border-color:#5ab0ff; }
+.dp-chip.dp-picked { border-color:#5ab0ff; box-shadow:0 0 0 2px rgba(90,176,255,.35); }
+.dp-chip.dp-done { opacity:.7; }
+.dp-tick { color:#5ab0ff; font-style:normal; margin-left:2px; }
+
+.dp-start {
+  margin-left:auto; font:700 12px/1 ui-monospace, Consolas, monospace; letter-spacing:.06em;
+  text-transform:uppercase; color:#12141b; background:#f0a23a; border:1px solid #f0a23a;
+  border-radius:8px; padding:11px 16px; cursor:pointer;
+}
+.dp-start:disabled { background:#2c3342; color:#6b7280; border-color:#2c3342; cursor:not-allowed; }
+.dp-hint { margin-top:10px; font-size:13px; color:var(--muted,#8a93a7); max-width:64ch; }
+.dp-hint b { color:var(--ink,#e9ecf3); font-weight:700; }
+
+/* hex layer — fades out when the fight launches; the grid is deployment-only */
+/* ⚠️ LIFTED OFF THE GROUND BY A HAIR. The layer is coplanar with the plane's own
+   ground texture, and two coplanar surfaces in a `preserve-3d` context z-fight — the
+   board flickers between texture and tile as the browser picks a winner per pixel.
+   0.2px is invisible and settles the argument. It is also `flat`, not preserve-3d:
+   the hexes genuinely DO lie on the floor, so flattening them into it is correct and
+   keeps a 200-cell board on one composited layer instead of two hundred. */
+.dp-hexlayer {
+  position:absolute; inset:0; z-index:2; transition:opacity .45s ease;
+  transform:translateZ(0.2px); transform-style:flat;
+}
+.dp-hexlayer.launching { opacity:0; pointer-events:none; }
+/* the selected monster on the field */
+.dp-sprite.dp-sel { filter:drop-shadow(0 0 5px #5ab0ff) drop-shadow(0 0 2px #5ab0ff); }
+
+/* ── pre-battle orders (TacticsPanel) ────────────────────────────────────── */
+.tac-panel { margin-top:14px; background:var(--panel,#1b1f2a); border:1px solid var(--line,#2c3342);
+  border-radius:10px; padding:12px 14px; }
+.tac-head { font:600 13px/1 ui-monospace, Consolas, monospace; color:var(--ink,#e9ecf3); margin-bottom:10px; }
+.tac-head b { color:#5ab0ff; }
+.tac-row { display:grid; grid-template-columns:84px 1fr; gap:8px; align-items:center; padding:5px 0; }
+.tac-row + .tac-row { border-top:1px solid rgba(255,255,255,.05); }
+.tac-label { font:600 11px/1.2 ui-monospace, Consolas, monospace; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted,#8a93a7); }
+.tac-opts { display:flex; flex-wrap:wrap; gap:6px; }
+.tac-opt { font:600 12px/1 ui-monospace, Consolas, monospace; color:var(--ink,#e9ecf3);
+  background:#12141b; border:1px solid var(--line,#2c3342); border-radius:7px;
+  padding:6px 9px; cursor:pointer; transition:border-color .12s, background-color .12s; }
+.tac-opt:hover { border-color:#5ab0ff; }
+.tac-opt.on { background:rgba(90,176,255,.16); border-color:#5ab0ff; color:#dbe9ff; }
+
+@media (prefers-reduced-motion: reduce) { .dp-hexlayer { transition:none; } }
+@media (max-width:560px) { .tac-row { grid-template-columns:1fr; gap:4px; } }

@@ -1,0 +1,262 @@
+/* ⚠️ NOT `image-rendering: pixelated` — THAT WAS A LARGE PART OF "THE QUALITY LOOKS
+   VERY LOW". Every image on this screen is PAINTED art at high resolution: the ground
+   is a 1254px JPEG drawn at ~34% of the field height, the props are 256px PNGs drawn
+   at their footprint width, the portraits are 320px drawn at thumbnail size. All three
+   are DOWNSCALED, most of them by about 5x, and `pixelated` forces nearest-neighbour —
+   which at 5x keeps one pixel in twenty-five and discards the rest, so smooth painted
+   edges come back as sparkle and stair-stepping.
+   ⚠️ IT IS STILL CORRECT IN battleSprite.css. The rigged battle sheet is a genuine
+   48px pixel-art sheet scaled UP, where smoothing would destroy exactly the hard edges
+   `quantise()` exists to make. Same property, opposite art, opposite answer — which is
+   why it is set per element and never globally. */
+/* ─────────────────────────────────────────────────────────────────────────────
+   TAMER ARENA (M4) — the mounted field renderer's presentation.
+
+   Player's roster left · battlefield · opponents' roster right. Every piece of
+   STATE (HP, MP, statuses) lives in the rosters; the field carries only sprites
+   and ability effects.
+   ───────────────────────────────────────────────────────────────────────────── */
+/* ⚠️ TEAM B MOVED OFF CORAL (#ff7259 → magenta), and the reason is the tile, not
+   taste. A roster tile already spends red twice: the crit HP fill (#e2523f) and the
+   hit flash. A coral team stripe made that three reds in one 38px-tall card, and the
+   two that matter — "this one is nearly dead" and "this one was just hit" — are the
+   ones that lost. Blue vs magenta also survives the common colour-vision
+   deficiencies, which blue vs coral does less well.
+   ⚠️ `deploy.css` carries the SAME pair. Change both or the same team is two
+   different colours between choosing a formation and watching it fight. */
+.ta-wrap {
+  --teamA:#5ab0ff; --teamB:#ff4fa3;
+  --hp:#49c06d; --hp-low:#e8b13a; --hp-crit:#e2523f; --mp:#9b7ce0;
+  max-width:1320px; margin:0 auto;
+}
+/* One knob per side, so nothing downstream has to know which team it is drawing. */
+.teamA { --team:var(--teamA); }
+.teamB { --team:var(--teamB); }
+
+/* ⚠️ `align-items:start` — WITHOUT IT the roster columns stretch to the field's
+   height and the tiles spread out to fill it, so a 2v2 and a 5v5 get different
+   tile spacing for no reason anyone chose. The rosters size to their contents. */
+.ta-stage {
+  position:relative; display:grid; align-items:start;
+  grid-template-columns:var(--roster,190px) minmax(0, 1fr) var(--roster,190px);
+  gap:10px;
+}
+/* ⚠️ NO aspect-ratio AND NO background-size HERE. Both are per-ARENA and set
+   inline by the renderer — a 30x18 paddock and a 64x34 massif are different shapes
+   with different ground. Re-adding either here would silently override the arena
+   for every map at once. */
+/* THE FRAME: it holds the camera and it crops. It draws no ground — the ground moved
+   onto `.ta-plane` when the battlefield was tilted, because a flat texture here would
+   have stayed flat while everything standing on it turned, which is the exact
+   ground-vs-props mismatch the tilt exists to remove. See camera.ts.
+   ⚠️ `perspective` IS SET IMPERATIVELY per resize (TamerArena.tsx), not here: it takes
+   a pixel length and the camera is specified in board heights, so a constant would
+   make the tilt stronger on a phone than on a desktop. */
+.ta-field {
+  position:relative; width:100%; isolation:isolate;
+  perspective-origin:50% 50%;
+  border-radius:12px; overflow:hidden;
+  border:1px solid rgba(0,0,0,.25); box-shadow:0 12px 44px rgba(0,0,0,.4);
+  background:radial-gradient(ellipse 80% 60% at 50% 45%, #0d1017, #05070b);
+}
+/* THE GROUND. `preserve-3d` is what lets the units and cover stand up out of it. */
+.ta-plane {
+  position:absolute; left:0; right:0; top:50%; width:100%;
+  transform-style:preserve-3d; transform-origin:50% 50%;
+  background-repeat:repeat;
+}
+/* ⚠️ WHAT STANDS UP AND WHAT LIES DOWN IS THE WHOLE POINT. The FACE counter-rotates,
+   so a side-on sprite faces the camera and reads as standing on the floor. The RING
+   and the SHADOW do NOT — they are marks on the ground, and counter-rotating them
+   would stand a monster's own shadow up on its edge like a card. */
+/* ⚠️ THE UNIT'S COUNTER-ROTATION IS NOT HERE — it is in TamerArena.tsx, folded into
+   the per-frame transform. That loop REPLACES `.ta-face`'s transform on every tick, so
+   a rule here would be wiped on the first frame and every monster would lie flat on
+   the floor. Cover is static, so it can live in the stylesheet. */
+.ta-rock { transform:rotateX(calc(var(--cam-tilt, 46deg) * -1)); transform-origin:50% 100%; }
+/* soft vignette so the edges read as an arena, not a tiled texture */
+/* ⚠️ ON THE PLANE AND AT z-index 3 — above the ground, below everything standing on
+   it. On the frame at 6 it lit the floor evenly and veiled the units, and the units
+   are what the player is watching. */
+.ta-plane::after {
+  content:""; position:absolute; inset:0; pointer-events:none; z-index:3;
+  transform:translateZ(0.3px);
+  background:
+    radial-gradient(ellipse 62% 52% at 50% 42%, rgba(255,246,225,.10), transparent 70%),
+    radial-gradient(ellipse 85% 70% at 50% 60%, transparent 52%, rgba(0,0,0,.42));
+}
+.ta-fx { position:absolute; inset:0; z-index:4; pointer-events:none; }
+.ta-hud {
+  position:absolute; top:10px; left:12px; z-index:8; color:#eef2f8;
+  font:11px/1 ui-monospace, Consolas, monospace; letter-spacing:.03em;
+  text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;
+}
+
+/* ⚠️ `overflow:visible` IS THE WHOLE TRICK. The div is the obstacle's FOOTPRINT —
+   the rectangle the engine actually collides against — and the sprite grows UPWARD
+   out of it at its own natural proportions, bottom edge pinned to the front of the
+   footprint. That is the same relationship a unit has to its position, which is why
+   the two now read as standing in the same world. */
+.ta-rock { position:absolute; pointer-events:none; overflow:visible; }
+.ta-rock img {
+  position:absolute; left:0; bottom:0; width:100%; height:auto;
+  filter:drop-shadow(0 4px 4px rgba(0,0,0,.45));
+}
+
+/* ── a unit ─────────────────────────────────────────────────────────────── */
+.ta-unit { position:absolute; left:0; top:0; z-index:5; will-change:transform; }
+.ta-shadow {
+  position:absolute; left:50%; bottom:0; width:52%; height:9px; transform:translateX(-50%);
+  border-radius:50%; pointer-events:none;
+  background:radial-gradient(ellipse, rgba(0,0,0,.5), transparent 72%);
+}
+/* The team ring: an ellipse on the GROUND, under the contact shadow, sized to sit
+   just outside it so the dark shadow still reads as contact rather than as fill. */
+.ta-ring {
+  position:absolute; left:50%; bottom:-2px; width:62%; height:12px;
+  transform:translateX(-50%); border-radius:50%; pointer-events:none;
+  border:2px solid var(--team);
+  background:radial-gradient(ellipse, color-mix(in srgb, var(--team) 26%, transparent), transparent 70%);
+  /* ⚠️ NO `filter: drop-shadow` here. This is one of ~10 elements moving every
+     frame; a filter forces its own compositing pass per unit per frame, which is
+     exactly the per-frame cost the imperative rAF design exists to avoid. A flat
+     box-shadow is free by comparison. */
+  box-shadow:0 0 7px color-mix(in srgb, var(--team) 55%, transparent);
+  opacity:.9;
+}
+.ta-face { transform-origin:50% 100%; }
+.ta-face img { display:block; transform-origin:50% 100%; }
+
+/* ── the rosters ─────────────────────────────────────────────────────────── */
+.ta-roster { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.ta-rhead {
+  font:700 11px/1 ui-monospace, Consolas, monospace; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted,#8a93a7);
+  padding:0 2px 2px; border-bottom:1px solid var(--line,#2c3342);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.side-a .ta-rhead { color:var(--teamA); }
+.side-b .ta-rhead { color:var(--teamB); }
+.ta-rlist { display:flex; flex-direction:column; gap:6px; }
+
+.ta-tile {
+  --hurt:0;
+  display:grid; grid-template-columns:auto minmax(0, 1fr); gap:7px; align-items:center;
+  padding:6px; border-radius:9px; min-width:0;
+  background:var(--panel,#1b1f2a); border:1px solid var(--line,#2c3342);
+  /* The hit flash. Driven by --hurt (1 → 0 over 0.45s) written by the rAF loop,
+     so it stays in step with the playback clock and with the speed toggles —
+     a CSS animation would run in wall-clock time and drift at 4x. */
+  /* Team stripe INSET on the left edge, so it shares the box-shadow property with
+     the hit flash rather than needing a border that would shift the layout. */
+  box-shadow:inset 3px 0 0 var(--team),
+             0 0 0 calc(var(--hurt) * 2px) rgba(226,82,63,calc(var(--hurt) * .85));
+  padding-left:9px;
+  transition:opacity .2s;
+}
+.ta-tile.ko { opacity:.4; }
+.ta-tile.ko .ta-thumb img { filter:grayscale(1); }
+/* ⚠️ The KO mark is a GLYPH, not just the fade — desaturation alone is invisible
+   to a red-green colourblind reader against a dark panel, and "is this one dead"
+   is the single most important thing this tile says. */
+.ta-tile.ko .ta-tname::after { content:" ✕"; color:var(--hp-crit); font-weight:800; }
+
+/* ⚠️ The portrait carries the team tint too — that is what ties a tile to the ring
+   under a monster on the field. Without it the two cues are unrelated decorations
+   and the player has to learn the mapping instead of just seeing it. */
+.ta-thumb {
+  width:38px; height:38px; border-radius:7px; overflow:hidden; flex:none;
+  background:color-mix(in srgb, var(--team) 14%, rgba(0,0,0,.3));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--team) 45%, transparent);
+  display:grid; place-items:center;
+}
+.ta-thumb img { width:100%; height:100%; object-fit:contain; }
+.ta-tmeta { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.ta-tname {
+  font:600 11px/1.2 ui-sans-serif, system-ui, sans-serif; color:var(--ink,#e9ecf3);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+/* ── bars, with the numbers inside them ──────────────────────────────────── */
+.ta-tbar {
+  position:relative; height:13px; border-radius:3px; overflow:hidden;
+  background:rgba(0,0,0,.55); outline:1px solid rgba(0,0,0,.45);
+}
+.ta-tbar i { display:block; height:100%; width:100%; transition:width .12s linear; }
+.ta-tbar span {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font:600 9px/1 ui-monospace, Consolas, monospace; font-variant-numeric:tabular-nums;
+  color:#fff; letter-spacing:.02em;
+  /* ⚠️ The number sits OVER the fill, so it crosses both the filled and the empty
+     half of the bar as HP drains. A plain colour is legible on one and not the
+     other; the outline keeps it readable on both without a background plate that
+     would hide the very fill it is labelling. */
+  text-shadow:0 0 2px #000, 0 0 3px #000, 0 1px 1px #000;
+  pointer-events:none;
+}
+/* HP is GREEN→AMBER→RED by remaining health, not by team. ⚠️ Team colour lives on
+   the roster header and the sprite; if the bar carried it too, "this monster is
+   nearly dead" would be unreadable on one of the two sides. */
+.ta-thp i { background:var(--hp); }
+.ta-tile.low  .ta-thp i { background:var(--hp-low); }
+.ta-tile.crit .ta-thp i { background:var(--hp-crit); }
+.ta-tmp { height:10px; }
+.ta-tmp i { background:var(--mp); }
+.ta-tmp span { font-size:8px; }
+
+.ta-tfx { display:flex; flex-wrap:wrap; gap:2px; font-size:11px; line-height:13px; min-height:0; }
+.ta-tfx:empty { display:none; }
+
+.ta-banner {
+  position:absolute; inset:0; z-index:9; display:flex; align-items:center; justify-content:center;
+  pointer-events:none; animation:ta-fade .4s ease both;
+}
+.ta-banner span {
+  font:800 clamp(26px,5vw,50px)/1 ui-sans-serif, system-ui, sans-serif; letter-spacing:-.02em;
+  padding:14px 30px; border-radius:12px; background:rgba(0,0,0,.6); color:#fff;
+  text-shadow:0 2px 8px rgba(0,0,0,.6);
+  /* ⚠️ The winner is stated in WORDS as well as colour — `--team` is undefined on a
+     draw, which is why the border falls back to transparent rather than to one of
+     the two teams. Colour confirms the name here; it never carries it alone. */
+  border:2px solid var(--team, transparent);
+  box-shadow:0 0 26px color-mix(in srgb, var(--team, transparent) 45%, transparent);
+}
+@keyframes ta-fade { from { opacity:0 } to { opacity:1 } }
+
+/* ── controls ───────────────────────────────────────────────────────────── */
+.ta-controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; align-items:center; }
+.ta-btn {
+  font:600 12px/1 ui-monospace, Consolas, monospace; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--ink,#e9ecf3); background:var(--panel,#1b1f2a); border:1px solid var(--line,#2c3342);
+  border-radius:6px; padding:10px 13px; cursor:pointer;
+  transition:border-color .14s, color .14s, background-color .14s;
+}
+.ta-btn:hover { border-color:#f0a23a; color:#f0a23a; }
+.ta-btn[aria-pressed="true"], .ta-primary { background:#f0a23a; color:#12141b; border-color:#f0a23a; }
+.ta-btn:focus-visible { outline:2px solid #f0a23a; outline-offset:2px; }
+.ta-speeds { display:inline-flex; gap:4px; margin-left:auto; align-items:center; }
+.ta-lbl { font:600 11px/1 ui-monospace, Consolas, monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--muted,#8a93a7); margin-right:2px; }
+
+/* ⚠️ NARROW: the rosters go ABOVE and BELOW the field, not into a scroller. On a
+   phone the field is the smallest it will ever be and the tiles are the only way
+   to read the fight at all — hiding them behind a scroll would make the screen
+   least usable exactly where it is already hardest to follow. */
+@media (max-width: 780px) {
+  .ta-stage { grid-template-columns:1fr; }
+  .ta-roster { order:0; }
+  .ta-field { order:1; }
+  .side-b { order:2; }
+  .ta-rlist { flex-direction:row; flex-wrap:wrap; }
+  .ta-rlist .ta-tile { flex:1 1 150px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ta-banner { animation:none; }
+  .ta-tbar i { transition:none; }
+  /* ⚠️ Keep the team stripe — only the FLASH is motion. Dropping the whole
+     box-shadow here would silently strip team identity for these users. */
+  .ta-tile { box-shadow:inset 3px 0 0 var(--team); }
+  /* The flash is the only cue that a unit was hit now that nothing is drawn over
+     the sprites, so it becomes a STATIC outline rather than disappearing. */
+  .ta-tile { outline:calc(var(--hurt) * 2px) solid rgba(226,82,63,.9); outline-offset:-1px; }
+}

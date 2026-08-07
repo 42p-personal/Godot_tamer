@@ -1,0 +1,31 @@
+# Godot 4 editor cache and imported-asset store. Regenerated on open; never committed.
+.godot/
+# Exported builds.
+build/
+
+# Raw generation dumps — multi-MB intermediates from the art pipeline. The processed
+# assets beside them are the deliverable; these are reproducible from tools/gen_*.sh.
+assets/*/_raw/
+# Quarantined pre-rework art, kept locally for reference only.
+assets/_old_sketch/
+# Injected at runtime by the Godot MCP bridge; not project code.
+mcp_interaction_server.gd
+
+# Pre-rework art copied in by agents and superseded by the generated set. Nothing in the
+# game loads these — art.gd reads only creatures/, arenas/, arena/ and ui/. Still present
+# in git history and in public/ if ever needed.
+assets/portraits/
+assets/ground/
+assets/props/
+assets/battle/
+assets/areas/
+# One-off probe/scaffolding scripts from the spatial build; superseded by the rewrite.
+scripts/_ai_probe.gd
+scripts/_layout_probe.gd
+scripts/_spatial_test.gd
+scripts/_selftest_career.gd
+scripts/_selftest_career.gd.uid
+scripts/_selftest_spatial.gd
+scripts/_tmp_probe.gd
+scripts/_tmp_probe.gd.uid
+scenes/_tmp_probe.tscn

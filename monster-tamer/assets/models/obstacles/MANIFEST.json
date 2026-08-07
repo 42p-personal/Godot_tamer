@@ -1,0 +1,150 @@
+{
+ "source": "poly.pizza",
+ "licence": "CC0 1.0 only",
+ "obstacles": [
+  {
+   "kind": "barrel",
+   "title": "Rock",
+   "creator": "Kenney",
+   "licence": "CC0 1.0",
+   "polyId": "cBqdRdLDDL",
+   "bytes": 8380
+  },
+  {
+   "kind": "crate",
+   "title": "Crate",
+   "creator": "Kay Lousberg",
+   "licence": "CC0 1.0",
+   "polyId": "yCBoU0iyOk",
+   "bytes": 32148
+  },
+  {
+   "kind": "planter",
+   "title": "Bush",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "ooG6CkLyE8",
+   "bytes": 131172
+  },
+  {
+   "kind": "planter_hedge",
+   "title": "Hedge",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "df8uCl1YpK",
+   "bytes": 160192
+  },
+  {
+   "kind": "low_wall",
+   "title": "Wall Low",
+   "creator": "Kenney",
+   "licence": "CC0 1.0",
+   "polyId": "srKpJQaMcU",
+   "bytes": 12412
+  },
+  {
+   "kind": "low_wall_border",
+   "title": "Border High",
+   "creator": "Kenney",
+   "licence": "CC0 1.0",
+   "polyId": "Y9cHZDVPvh",
+   "bytes": 12912
+  },
+  {
+   "kind": "pillar",
+   "title": "Column Wide",
+   "creator": "Kenney",
+   "licence": "CC0 1.0",
+   "polyId": "zl0GGJyeKt",
+   "bytes": 13804
+  },
+  {
+   "kind": "pillar_thin",
+   "title": "Column Thin",
+   "creator": "Kenney",
+   "licence": "CC0 1.0",
+   "polyId": "mLfz7vks6c",
+   "bytes": 13804
+  },
+  {
+   "kind": "crate_alt",
+   "title": "Crate",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "3VGWnZPXmG",
+   "bytes": 35812
+  },
+  {
+   "kind": "barrel_alt",
+   "title": "Rock Medium",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "s1OJ3bBzqc",
+   "bytes": 1064792
+  },
+  {
+   "kind": "boulder",
+   "title": "Rock Medium",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "KZdEP3uUpa",
+   "bytes": 1060940
+  },
+  {
+   "kind": "boulder_alt",
+   "title": "Rock Medium",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "JQxF95498B",
+   "bytes": 1071636
+  },
+  {
+   "kind": "shrine",
+   "title": "Shrine",
+   "creator": "Kay Lousberg",
+   "licence": "CC0 1.0",
+   "polyId": "tFxdxO5clk",
+   "bytes": 23392
+  },
+  {
+   "kind": "shrine_alt",
+   "title": "Shrine",
+   "creator": "Kay Lousberg",
+   "licence": "CC0 1.0",
+   "polyId": "Qq8M5LSXQ2",
+   "bytes": 36780
+  },
+  {
+   "kind": "bench",
+   "title": "Bench",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "7uSlZo3n9Y",
+   "bytes": 16452
+  },
+  {
+   "kind": "bench_alt",
+   "title": "Bench",
+   "creator": "Kay Lousberg",
+   "licence": "CC0 1.0",
+   "polyId": "UFhTqUnoUn",
+   "bytes": 28080
+  },
+  {
+   "kind": "fence",
+   "title": "Fence",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "e02PFKKhbr",
+   "bytes": 10616
+  },
+  {
+   "kind": "fence_alt",
+   "title": "Fence",
+   "creator": "Quaternius",
+   "licence": "CC0 1.0",
+   "polyId": "U7g0Wxpt63",
+   "bytes": 16812
+  }
+ ]
+}

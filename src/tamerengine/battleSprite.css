@@ -1,0 +1,155 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   BATTLE SPRITE MOTION (v0.93)
+
+   All motion here is SQUASH AND STRETCH with volume roughly preserved: when a
+   sprite compresses vertically it widens, and vice versa. Scaling one axis
+   alone reads as a rubber sheet; scaling both in opposition reads as weight.
+   That single rule is what makes a static portrait behave like a creature.
+
+   Every keyframe animates ONLY `transform` and `opacity`, so each one stays on
+   the compositor — 12 sprites animating at once cost no layout work.
+
+   ⚠️ Keyframes live on `.bs-anim` and nothing else. `.bs` owns position and
+   `.bs-face` owns the ±1 flip; a keyframe setting `transform` on either would
+   wipe the value it holds and the sprite would jump.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.bs {
+  position: relative;
+  display: inline-block;
+  /* The sprite's origin is its FEET, not its centre — the caller positions a
+     unit by where it stands, and every animation pivots from the ground. */
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.bs-abs { position: absolute; left: 0; top: 0; }
+
+.bs-face,
+.bs-anim { width: 100%; height: 100%; transform-origin: 50% 100%; }
+.bs-anim { display: block; }
+
+.bs-anim img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: 50% 100%;
+  display: block;
+  /* Portraits are painterly, not pixel art — smooth scaling is correct here.
+     A future pixel-art frame set would want `image-rendering: pixelated`. */
+  transition: filter .25s linear;
+}
+
+/* Grounding. A soft ellipse under the feet; it tightens as the sprite rises,
+   which is most of what sells a leap. */
+.bs-shadow {
+  position: absolute;
+  left: 18%; bottom: -2px;
+  width: 64%; height: 10%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,.42) 0%, rgba(0,0,0,.18) 55%, transparent 72%);
+  pointer-events: none;
+}
+
+/* ── IDLE — breathing ──────────────────────────────────────────────────────
+   Slow, small, and never fully still. A perfectly static sprite beside moving
+   ones reads as broken rather than calm. */
+@keyframes bs-breathe {
+  0%, 100% { transform: scale(1, 1) translateY(0); }
+  50%      { transform: scale(.985, 1.02) translateY(-1.5%); }
+}
+.bs-idle { animation: bs-breathe 2.6s ease-in-out infinite; }
+
+/* ── MOVE — a walk cycle ───────────────────────────────────────────────────
+   Two footfalls per cycle: the body rises between them and SQUASHES as each
+   foot lands, with a lean that alternates. The lean is what stops it reading
+   as a card hopping up and down. */
+@keyframes bs-walk {
+  0%   { transform: translateY(0)     scale(1.04, .96) rotate(-2.5deg); }
+  25%  { transform: translateY(-7%)   scale(.97, 1.03) rotate(0deg); }
+  50%  { transform: translateY(0)     scale(1.04, .96) rotate(2.5deg); }
+  75%  { transform: translateY(-7%)   scale(.97, 1.03) rotate(0deg); }
+  100% { transform: translateY(0)     scale(1.04, .96) rotate(-2.5deg); }
+}
+.bs-move { animation: bs-walk .46s ease-in-out infinite; }
+
+/* ── CAST — wind-up ────────────────────────────────────────────────────────
+   Leans BACK and gathers before anything happens. The anticipation is the
+   whole read: it is how a player knows a big move is coming in time to care,
+   and it is why the engine gives long moves a real cast time. */
+@keyframes bs-cast {
+  0%   { transform: scale(1, 1) rotate(0deg) translateX(0); }
+  35%  { transform: scale(.94, 1.08) rotate(-7deg) translateX(-6%); }
+  70%  { transform: scale(1.08, .96) rotate(3deg) translateX(3%); }
+  100% { transform: scale(1, 1) rotate(0deg) translateX(0); }
+}
+.bs-cast { animation: bs-cast .55s cubic-bezier(.3, .8, .3, 1) infinite; }
+
+/* ── ATTACK — the lunge ────────────────────────────────────────────────────
+   Coil, then snap forward hard and recover slowly. The asymmetric timing is
+   the point: fast out, slow back, or it reads as a wobble rather than a blow. */
+@keyframes bs-attack {
+  0%   { transform: translateX(0) scale(1, 1) rotate(0deg); }
+  22%  { transform: translateX(-9%) scale(1.06, .94) rotate(-6deg); }
+  38%  { transform: translateX(26%) scale(.9, 1.1) rotate(10deg); }
+  100% { transform: translateX(0) scale(1, 1) rotate(0deg); }
+}
+.bs-attack { animation: bs-attack .38s cubic-bezier(.2, .9, .35, 1); }
+
+/* ── HURT — recoil ─────────────────────────────────────────────────────────
+   Thrown backwards and flattened, with a brief bleach. Impact needs to be
+   legible in a crowd, so this is the loudest short animation in the set. */
+@keyframes bs-hurt {
+  0%   { transform: translateX(0) scale(1, 1) rotate(0deg); filter: brightness(1); }
+  18%  { transform: translateX(-16%) scale(1.12, .88) rotate(-9deg); filter: brightness(2.4) saturate(.4); }
+  55%  { transform: translateX(-5%) scale(.98, 1.02) rotate(3deg); filter: brightness(1); }
+  100% { transform: translateX(0) scale(1, 1) rotate(0deg); filter: brightness(1); }
+}
+.bs-hurt { animation: bs-hurt .34s ease-out; }
+
+/* ── DEAD — it falls ───────────────────────────────────────────────────────
+   Topples onto its side and stays down at low opacity. It does NOT vanish:
+   the field's own geometry matters, and a body is information about where the
+   fight has already been won. */
+@keyframes bs-die {
+  0%   { transform: rotate(0deg) translateY(0) scale(1, 1); opacity: 1; }
+  40%  { transform: rotate(-12deg) translateY(-6%) scale(1.04, .94); opacity: 1; }
+  100% { transform: rotate(-82deg) translateY(6%) scale(1.05, .9); opacity: .32; }
+}
+.bs-dead {
+  animation: bs-die .7s cubic-bezier(.4, .1, .7, 1) forwards;
+}
+.bs-dead ~ .bs-shadow,
+.bs:has(.bs-dead) .bs-shadow { opacity: .3; }
+
+/* Motion here is informational — it says what a monster is DOING — so it is
+   reduced to near-stillness rather than removed outright, and the sprite still
+   registers a hit and a death. */
+@media (prefers-reduced-motion: reduce) {
+  .bs-idle, .bs-move, .bs-cast { animation: none; }
+  .bs-attack, .bs-hurt { animation-duration: .01ms; }
+  .bs-dead { animation-duration: .01ms; }
+}
+
+/* ── The rigged pixel sprite ────────────────────────────────────────────────
+   A generated sheet stepped by `steps()`. `pixelated` is load-bearing: without
+   it the browser smooths a 48px sheet up to display size and destroys exactly
+   the hard edges `quantise()` exists to create. */
+.bs-px {
+  width: 100%; height: 100%;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  transform-origin: 50% 100%;
+}
+/* ⚠️ THE END VALUE IS NOT 100%. A percentage background-position maps 0–100%
+   across the image's OVERHANG — N−1 frame widths, not N — so `steps(8)` from
+   0% to 100% lands on 12.5% increments that fall between frames, and every
+   rendered frame is two half-frames spliced together. The end must be
+   100 × N/(N−1) so each step lands exactly on a frame boundary. `--bs-end` is
+   set from FRAMES_PER_ANIM in TSX so the two can never drift apart. */
+@keyframes bs-steps { from { background-position-x: 0%; } to { background-position-x: var(--bs-end, 114.2857%); } }
+@media (prefers-reduced-motion: reduce) {
+  .bs-px { animation: none !important; background-position-x: 0% !important; }
+}
+
+/* Generated battle frames scale up with hard pixel edges, never smoothed. */
+.bs-px-img { image-rendering: pixelated; }

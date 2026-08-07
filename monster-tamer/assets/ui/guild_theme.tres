@@ -1,0 +1,138 @@
+[gd_resource type="Theme" load_steps=9 format=3]
+
+; Guild Colours — hand-authored .tres mirror of UiTheme.base_theme() (scripts/ui/theme.gd).
+; Values here MUST match theme.gd's PALETTE section exactly — if you touch one, touch both.
+; Use this when a screen prefers assigning a Theme resource via the Inspector instead of calling
+; UiTheme.base_theme() from code; either path produces the same look. See docs/UI_THEME.md.
+;
+; ⚠️ Hand-authored, not exported from a running editor session (no Godot execution was available
+; when this file was written) — open it once in the editor and confirm it loads without error
+; before relying on it in a shipped scene.
+
+[sub_resource type="StyleBoxFlat" id="SBF_panel"]
+bg_color = Color(0.1098, 0.1098, 0.1412, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0.2, 0.2392, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+content_margin_left = 8.0
+content_margin_top = 8.0
+content_margin_right = 8.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="SBF_btn_normal"]
+bg_color = Color(0.1412, 0.1412, 0.1804, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0.2, 0.2392, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="SBF_btn_hover"]
+bg_color = Color(0.2271, 0.2271, 0.2624, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0.2, 0.2392, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="SBF_btn_pressed"]
+bg_color = Color(0.12, 0.12, 0.1533, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0.2, 0.2392, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="SBF_btn_disabled"]
+bg_color = Color(0.1098, 0.1098, 0.1412, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.149, 0.149, 0.1804, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="SBF_btn_focus"]
+bg_color = Color(0.1412, 0.1412, 0.1804, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.4, 0.85, 1.0, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="SBF_pb_fill"]
+bg_color = Color(0.85, 0.72, 0.35, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="SBF_pb_bg"]
+bg_color = Color(0.0784, 0.0784, 0.1059, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[resource]
+default_font_size = 16
+PanelContainer/styles/panel = SubResource("SBF_panel")
+Button/styles/normal = SubResource("SBF_btn_normal")
+Button/styles/hover = SubResource("SBF_btn_hover")
+Button/styles/pressed = SubResource("SBF_btn_pressed")
+Button/styles/disabled = SubResource("SBF_btn_disabled")
+Button/styles/focus = SubResource("SBF_btn_focus")
+Button/colors/font_color = Color(0.9412, 0.9412, 0.9569, 1)
+Button/colors/font_hover_color = Color(0.9412, 0.9412, 0.9569, 1)
+Button/colors/font_pressed_color = Color(0.9412, 0.9412, 0.9569, 1)
+Button/colors/font_disabled_color = Color(0.549, 0.549, 0.6, 1)
+Button/font_sizes/font_size = 16
+Label/colors/font_color = Color(0.9412, 0.9412, 0.9569, 1)
+Label/font_sizes/font_size = 16
+ProgressBar/styles/fill = SubResource("SBF_pb_fill")
+ProgressBar/styles/background = SubResource("SBF_pb_bg")

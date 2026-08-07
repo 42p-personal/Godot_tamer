@@ -1,0 +1,1 @@
+- [Art Bible — Guild Colours (vertical slice)](project_art_bible_guild_colours.md) — docs/ART_BIBLE_GUILD_COLOURS.md exists; carrier-per-body-type gap, missing grandeur spec in backdrop wrapper, TEAM_COLOURS/status-hue collision

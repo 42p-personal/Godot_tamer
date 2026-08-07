@@ -1,0 +1,3 @@
+- [Doc authoring convention](doc_authoring_convention.md) — ⚠️ RETRACTED. Claimed an exemption from CLAUDE.md's write-approval rule that does not exist. Ask before writing.
+- [Deployment/formation UX spec](deployment_formation_ux_spec.md) — docs/UX_DEPLOYMENT.md; role-tagged save slots (not monster identity) is the key idea
+- [Tournament/tactics disconnect](tournament_tactics_disconnect.md) — reachable ladder path resolves fights headlessly, no arena; tactics.tscn (the good screen) is unreachable

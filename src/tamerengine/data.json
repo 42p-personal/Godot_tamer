@@ -1,0 +1,5960 @@
+{
+  "schema": 1,
+  "note": "Game DATA for the Godot port — tables, not logic. Regenerate with `npx tsx tools/exportdata.ts`. Nothing here is hand-written on the Godot side.",
+  "moves": [
+    {
+      "name": "Scrap",
+      "learnLevel": 40,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 1.3,
+      "accuracy": 95,
+      "power": 13,
+      "mana": 4,
+      "variance": 0.15,
+      "range": 3,
+      "desc": "A cheap, scrappy swing — what you throw while the rage builds.",
+      "id": "STR-0",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Enrage",
+      "learnLevel": 120,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 14,
+      "effects": {
+        "atkBuff": 0.2,
+        "duration": 3
+      },
+      "range": 2.8,
+      "desc": "Works itself into a fury: +20% damage for 3 rounds.",
+      "id": "STR-1",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Blood Price",
+      "learnLevel": 240,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 90,
+      "power": 36,
+      "mana": 10,
+      "variance": 0.2,
+      "effects": {
+        "recoil": 0.1
+      },
+      "range": 2.8,
+      "desc": "Swung with everything, including what it costs you. Cheap in mana because it is paid for in blood.",
+      "id": "STR-2",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Reckless Slam",
+      "learnLevel": 380,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 85,
+      "power": 58,
+      "mana": 26,
+      "variance": 0.25,
+      "effects": {
+        "recoil": 0.1
+      },
+      "range": 2.6,
+      "desc": "A scorching, reckless haymaker; it burns the arm that throws it.",
+      "id": "STR-3",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Last Stand",
+      "learnLevel": 540,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 9.1,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 30,
+      "effects": {
+        "atkBuff": 0.3,
+        "defBuff": 10,
+        "duration": 3
+      },
+      "range": 2.8,
+      "desc": "Digs in and stops retreating: +30% damage and +10 mitigation for 3 rounds.",
+      "id": "STR-4",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Blood Fury",
+      "learnLevel": 700,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 88,
+      "power": 42,
+      "mana": 24,
+      "variance": 0.3,
+      "effects": {
+        "hpScale": {
+          "atFull": 0.5,
+          "atEmpty": 2.1
+        }
+      },
+      "range": 2.7,
+      "desc": "Feeble while it is still whole, and terrifying once it is not — this blow feeds on its own wounds.",
+      "id": "STR-5",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Titanfall",
+      "learnLevel": 920,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 7.8,
+      "accuracy": 80,
+      "power": 117,
+      "mana": 52,
+      "variance": 0.25,
+      "effects": {
+        "pierce": 0.3,
+        "recoil": 0.15
+      },
+      "range": 2.5,
+      "desc": "Colossal blow that partly ignores defence; 15% recoil.",
+      "id": "STR-6",
+      "stat": "STR",
+      "line": "Bloodrage"
+    },
+    {
+      "name": "Power Strike",
+      "learnLevel": 90,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 24,
+      "mana": 16,
+      "variance": 0.1,
+      "effects": {
+        "recoil": 0.05
+      },
+      "range": 3.5,
+      "desc": "A heavy, committed blow, thrown exactly where it was aimed.",
+      "id": "STR-7",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Sunder",
+      "learnLevel": 200,
+      "type": "debuff",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 90,
+      "power": 15,
+      "mana": 14,
+      "variance": 0.1,
+      "effects": {
+        "defDebuff": 12,
+        "duration": 3
+      },
+      "range": 3.6,
+      "desc": "Splits the guard rather than the body: −12 mitigation for 3 rounds. The setup STR never had.",
+      "id": "STR-8",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Riposte",
+      "learnLevel": 260,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 18,
+      "effects": {
+        "thorns": 10,
+        "defBuff": 4,
+        "duration": 2
+      },
+      "range": 3.4,
+      "desc": "Takes the blow to answer it: returns 10 damage on every hit for 2 rounds.",
+      "id": "STR-9",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Headbutt",
+      "learnLevel": 300,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 90,
+      "power": 30,
+      "mana": 16,
+      "variance": 0.15,
+      "status": {
+        "kind": "stun",
+        "chance": 30,
+        "duration": 1
+      },
+      "range": 3.4,
+      "desc": "Short, ugly, and it rings their bell.",
+      "id": "STR-10",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Bonebreaker",
+      "learnLevel": 330,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 85,
+      "power": 35,
+      "mana": 22,
+      "variance": 0.15,
+      "effects": {
+        "defDebuff": 8,
+        "duration": 3
+      },
+      "status": {
+        "kind": "vulnerable",
+        "chance": 45,
+        "duration": 2
+      },
+      "range": 3.3,
+      "desc": "Shatters defence and leaves them open — the opener Executioner is waiting on.",
+      "id": "STR-11",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Rend",
+      "learnLevel": 480,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 85,
+      "power": 31,
+      "mana": 18,
+      "variance": 0.15,
+      "status": {
+        "kind": "bleed",
+        "chance": 55,
+        "duration": 3
+      },
+      "range": 3.4,
+      "desc": "Opens a wound that keeps opening. Bleed here; Bonebreaker handles armour.",
+      "id": "STR-12",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Twist the Knife",
+      "learnLevel": 360,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 92,
+      "power": 35,
+      "mana": 16,
+      "variance": 0.2,
+      "effects": {
+        "bonusVsStatus": {
+          "kind": "bleed",
+          "mult": 1.5,
+          "consume": true
+        }
+      },
+      "range": 3.4,
+      "desc": "Finds the wound someone else already opened, and worsens it.",
+      "id": "STR-13",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Bloodletter",
+      "learnLevel": 780,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 17,
+      "mana": 30,
+      "variance": 0.35,
+      "effects": {
+        "hits": [
+          3,
+          5
+        ],
+        "bonusVsStatus": {
+          "kind": "bleed",
+          "mult": 2.5,
+          "consume": true
+        }
+      },
+      "range": 3.6,
+      "desc": "A weak flurry, 3–5 strikes — unless the target is Bleeding, and then it drinks the wound.",
+      "id": "STR-14",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Executioner",
+      "learnLevel": 850,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 59,
+      "mana": 28,
+      "variance": 0.1,
+      "effects": {
+        "execute": 0.35,
+        "bonusVsStatus": {
+          "kind": "vulnerable",
+          "mult": 1.8,
+          "consume": true
+        }
+      },
+      "range": 3,
+      "desc": "The closing blow: brutal against the weakened, and devastating against the Vulnerable.",
+      "id": "STR-15",
+      "stat": "STR",
+      "line": "Duelist"
+    },
+    {
+      "name": "Guard",
+      "learnLevel": 40,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 3.9,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 6,
+      "effects": {
+        "guard": 8
+      },
+      "range": 6.5,
+      "desc": "Brace against the next hits.",
+      "id": "STR-16",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Cleave",
+      "learnLevel": 160,
+      "type": "damage",
+      "channel": "melee",
+      "target": "allEnemies",
+      "cooldown": 3.9,
+      "accuracy": 85,
+      "power": 28,
+      "mana": 22,
+      "variance": 0.2,
+      "range": 4.9,
+      "desc": "A horizontal sweep through everything in front of it — weak into one body, brutal into three.",
+      "id": "STR-17",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Intimidate",
+      "learnLevel": 220,
+      "type": "debuff",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 20,
+      "effects": {
+        "atkDebuff": 0.1,
+        "duration": 2
+      },
+      "status": {
+        "kind": "fear",
+        "chance": 35,
+        "duration": 2
+      },
+      "range": 5.5,
+      "desc": "A roar with a body behind it: the nearest of them break and run.",
+      "id": "STR-18",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Challenge",
+      "learnLevel": 400,
+      "type": "debuff",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 16,
+      "effects": {
+        "tauntForce": true,
+        "atkDebuff": 0.12,
+        "duration": 3
+      },
+      "range": 6.5,
+      "desc": "Singles one out and dares it. It comes for you, and it swings softer for the insult.",
+      "id": "STR-19",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Bracer",
+      "learnLevel": 560,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 20,
+      "effects": {
+        "guard": 14
+      },
+      "range": 6.5,
+      "desc": "A hard defensive set — Guard is the cheap answer, this is the committed one.",
+      "id": "STR-20",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Whirlwind",
+      "learnLevel": 600,
+      "type": "damage",
+      "channel": "melee",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 88,
+      "power": 47,
+      "mana": 34,
+      "variance": 0.2,
+      "range": 4.9,
+      "desc": "Spins through everything within reach. Pure volume, no rider.",
+      "id": "STR-21",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Earthshaker",
+      "learnLevel": 650,
+      "type": "damage",
+      "channel": "melee",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 80,
+      "power": 61,
+      "mana": 40,
+      "variance": 0.25,
+      "status": {
+        "kind": "stun",
+        "chance": 30,
+        "duration": 1
+      },
+      "range": 4.9,
+      "desc": "A shockwave that fells whatever is standing near it.",
+      "id": "STR-22",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Warlord's Roar",
+      "learnLevel": 820,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 44,
+      "effects": {
+        "atkBuff": 0.18,
+        "accBuff": 6,
+        "duration": 3
+      },
+      "range": 6.5,
+      "desc": "STR's one team buff, and of course it is a shout: the whole line hits harder and truer for 3 rounds.",
+      "id": "STR-23",
+      "stat": "STR",
+      "line": "Warcry"
+    },
+    {
+      "name": "Shadowstep",
+      "learnLevel": 120,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 92,
+      "power": 42,
+      "mana": 16,
+      "variance": 0.15,
+      "range": 2.8,
+      "desc": "Steps through the shadow behind them. The only reliable way past a front line.",
+      "id": "DEX-0",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Ambush",
+      "learnLevel": 200,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 92,
+      "power": 39,
+      "mana": 18,
+      "variance": 0.2,
+      "effects": {
+        "firstStrikeMult": 1.5
+      },
+      "range": 2.8,
+      "desc": "Devastating on someone who has not swung yet — worthless once they have seen you.",
+      "id": "DEX-1",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Vanish",
+      "learnLevel": 300,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 22,
+      "effects": {
+        "dodgeBuff": 20,
+        "duration": 2
+      },
+      "range": 2.8,
+      "desc": "Gone. Attackers lose interest and swing at whoever is left.",
+      "id": "DEX-2",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Smoke Bomb",
+      "learnLevel": 340,
+      "type": "debuff",
+      "channel": "ranged",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 20,
+      "effects": {
+        "accDebuff": 14,
+        "duration": 2
+      },
+      "status": {
+        "kind": "blind",
+        "chance": 50,
+        "duration": 2
+      },
+      "range": 2.4,
+      "desc": "Blinds everything close and covers the exit — the setup Ambush wants.",
+      "id": "DEX-3",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Hamstring",
+      "learnLevel": 420,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 90,
+      "power": 47,
+      "mana": 16,
+      "variance": 0.15,
+      "range": 2.7,
+      "desc": "Cuts the leg out from under them. They keep fighting; they stop leaving.",
+      "id": "DEX-4",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Throat Cut",
+      "learnLevel": 600,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 90,
+      "power": 74,
+      "mana": 30,
+      "variance": 0.1,
+      "status": {
+        "kind": "silence",
+        "chance": 55,
+        "duration": 2
+      },
+      "range": 2.5,
+      "desc": "Quiet, precise, and it ends the casting. What the Assassin line exists to do.",
+      "id": "DEX-5",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Heartseeker",
+      "learnLevel": 850,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 92,
+      "power": 36,
+      "mana": 26,
+      "variance": 0.3,
+      "effects": {
+        "hits": [
+          2,
+          3
+        ],
+        "execute": 0.35
+      },
+      "range": 2.8,
+      "desc": "Two or three finding strikes, lethal against anything already failing.",
+      "id": "DEX-6",
+      "stat": "DEX",
+      "line": "Assassin"
+    },
+    {
+      "name": "Piercing Shot",
+      "learnLevel": 90,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 17,
+      "mana": 14,
+      "variance": 0.2,
+      "effects": {
+        "hits": [
+          1,
+          2
+        ],
+        "spreadStatus": {
+          "kind": "poison",
+          "targets": 1,
+          "chance": 20
+        }
+      },
+      "status": {
+        "kind": "poison",
+        "chance": 45,
+        "duration": 3
+      },
+      "range": 9,
+      "desc": "One or two venom-tipped shots, and the venom may pass to a neighbour.",
+      "id": "DEX-7",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Toxin Stack",
+      "learnLevel": 180,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 92,
+      "power": 27,
+      "mana": 10,
+      "variance": 0.15,
+      "status": {
+        "kind": "poison",
+        "chance": 70,
+        "duration": 4
+      },
+      "range": 8.9,
+      "desc": "A cheap second dose. Poison is the point; the dart barely matters.",
+      "id": "DEX-8",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Fester",
+      "learnLevel": 220,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 92,
+      "power": 28,
+      "mana": 8,
+      "variance": 0.2,
+      "effects": {
+        "bonusVsStatus": {
+          "kind": "poison",
+          "mult": 1.5,
+          "consume": true
+        }
+      },
+      "range": 9.2,
+      "desc": "Digs at a poisoned wound until the venom does the rest.",
+      "id": "DEX-9",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Twin Fangs",
+      "learnLevel": 280,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 17,
+      "mana": 14,
+      "variance": 0.25,
+      "effects": {
+        "hits": [
+          2,
+          2
+        ]
+      },
+      "status": {
+        "kind": "bleed",
+        "chance": 35,
+        "duration": 3
+      },
+      "range": 9,
+      "desc": "Two quick shots that open a wound — bleed here, poison everywhere else in the line.",
+      "id": "DEX-10",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Paralytic Dart",
+      "learnLevel": 400,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 53,
+      "mana": 22,
+      "variance": 0.15,
+      "status": {
+        "kind": "stun",
+        "chance": 35,
+        "duration": 1
+      },
+      "range": 8.3,
+      "desc": "DEX's one hard control: a neurotoxin that drops them where they stand.",
+      "id": "DEX-11",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Virulence",
+      "learnLevel": 560,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 90,
+      "power": 52,
+      "mana": 20,
+      "variance": 0.2,
+      "effects": {
+        "bonusVsStatus": {
+          "kind": "poison",
+          "mult": 2.6,
+          "consume": true
+        }
+      },
+      "range": 8.4,
+      "desc": "Feeble on clean blood, ruinous on poisoned — the payoff the whole line builds toward.",
+      "id": "DEX-12",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Plague Shot",
+      "learnLevel": 740,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 45,
+      "mana": 34,
+      "variance": 0.2,
+      "effects": {
+        "spreadStatus": {
+          "kind": "poison",
+          "targets": 2,
+          "chance": 40
+        }
+      },
+      "status": {
+        "kind": "poison",
+        "chance": 55,
+        "duration": 4
+      },
+      "range": 7.2,
+      "desc": "Poison that jumps between bodies. It rewards an enemy that stands together.",
+      "id": "DEX-13",
+      "stat": "DEX",
+      "line": "Venomcraft"
+    },
+    {
+      "name": "Sling",
+      "learnLevel": 40,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 1.3,
+      "accuracy": 95,
+      "power": 13,
+      "mana": 5,
+      "variance": 0.3,
+      "effects": {
+        "hits": [
+          1,
+          2
+        ]
+      },
+      "range": 11,
+      "desc": "One or two quick shots. Cheap enough to throw all day.",
+      "id": "DEX-14",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Sidestep",
+      "learnLevel": 40,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 8,
+      "effects": {
+        "dodgeBuff": 14,
+        "duration": 2
+      },
+      "range": 10.5,
+      "desc": "Footwork. Small, cheap, and always available.",
+      "id": "DEX-15",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Acrobatics",
+      "learnLevel": 160,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 12,
+      "effects": {
+        "dodgeBuff": 30,
+        "duration": 1
+      },
+      "range": 10.5,
+      "desc": "A tumbling, weaving burst — almost untouchable, but only for a moment.",
+      "id": "DEX-16",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Focus Aim",
+      "learnLevel": 240,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 14,
+      "effects": {
+        "accBuff": 18,
+        "duration": 3
+      },
+      "range": 10.5,
+      "desc": "Steadies the breathing. The gambler choosing, briefly, not to gamble.",
+      "id": "DEX-17",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Pin Down",
+      "learnLevel": 330,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 88,
+      "power": 40,
+      "mana": 18,
+      "variance": 0.15,
+      "range": 10,
+      "desc": "Suppressing fire that drags them out of position and holds them there.",
+      "id": "DEX-18",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Gambler's Volley",
+      "learnLevel": 470,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 85,
+      "power": 10,
+      "mana": 20,
+      "variance": 0.5,
+      "effects": {
+        "hits": [
+          1,
+          6
+        ]
+      },
+      "range": 11,
+      "desc": "Everything in the quiver, all at once, aimed roughly. Anywhere from a scratch to a slaughter.",
+      "id": "DEX-19",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Ricochet",
+      "learnLevel": 500,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 88,
+      "power": 34,
+      "mana": 26,
+      "variance": 0.3,
+      "effects": {
+        "hits": [
+          1,
+          2
+        ]
+      },
+      "range": 8.9,
+      "desc": "One shot, several bodies. It bounces, and it does not much care whose.",
+      "id": "DEX-20",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Rain of Arrows",
+      "learnLevel": 650,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 52,
+      "mana": 34,
+      "variance": 0.25,
+      "range": 8.4,
+      "desc": "A bombardment onto a chosen patch of ground — it punishes standing together.",
+      "id": "DEX-21",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Pinning Volley",
+      "learnLevel": 680,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 88,
+      "power": 48,
+      "mana": 32,
+      "variance": 0.2,
+      "range": 8.5,
+      "desc": "Nails several of them to the spot at once.",
+      "id": "DEX-22",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Deadeye",
+      "learnLevel": 920,
+      "type": "damage",
+      "channel": "ranged",
+      "target": "enemy",
+      "cooldown": 7.8,
+      "accuracy": 95,
+      "power": 131,
+      "mana": 44,
+      "variance": 0.05,
+      "range": 9.2,
+      "desc": "One shot. It goes exactly where it was sent.",
+      "id": "DEX-23",
+      "stat": "DEX",
+      "line": "Volley"
+    },
+    {
+      "name": "Body Slam",
+      "learnLevel": 140,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 17,
+      "mana": 14,
+      "variance": 0.2,
+      "status": {
+        "kind": "knockback",
+        "chance": 45,
+        "duration": 2
+      },
+      "range": 3,
+      "desc": "Throws its bulk into them and sends them reeling.",
+      "id": "CON-0",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Seize",
+      "learnLevel": 160,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 90,
+      "power": 26,
+      "mana": 14,
+      "variance": 0.15,
+      "range": 3,
+      "desc": "Clamps on and hauls them in. They can still fight; they cannot leave.",
+      "id": "CON-1",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Shield Wall",
+      "learnLevel": 240,
+      "type": "control",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 30,
+      "effects": {
+        "guard": 14
+      },
+      "range": 3,
+      "desc": "Plants a wall and holds it: +14 mitigation, and the ground around it becomes a slog.",
+      "id": "CON-2",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Quagmire Stomp",
+      "learnLevel": 300,
+      "type": "damage",
+      "channel": "melee",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 21,
+      "mana": 30,
+      "variance": 0.2,
+      "status": {
+        "kind": "knockback",
+        "chance": 45,
+        "duration": 2
+      },
+      "range": 2.5,
+      "desc": "Churns the footing out from under the whole line.",
+      "id": "CON-3",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Barricade",
+      "learnLevel": 380,
+      "type": "control",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 26,
+      "effects": {
+        "defBuff": 8,
+        "duration": 3
+      },
+      "range": 3,
+      "desc": "Throws up cover and settles in behind it — the crossing in front becomes slow and costly.",
+      "id": "CON-4",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Tremor",
+      "learnLevel": 460,
+      "type": "damage",
+      "channel": "melee",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 88,
+      "power": 17,
+      "mana": 28,
+      "variance": 0.2,
+      "range": 2.5,
+      "desc": "The ground shudders. Everything nearby is slowed and staggered.",
+      "id": "CON-5",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Zone of Control",
+      "learnLevel": 520,
+      "type": "control",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 28,
+      "effects": {
+        "thorns": 6,
+        "duration": 4
+      },
+      "range": 3,
+      "desc": "Nothing moves well beside it, and everything that tries gets clipped.",
+      "id": "CON-6",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Crushing Grip",
+      "learnLevel": 620,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 31,
+      "mana": 26,
+      "variance": 0.15,
+      "range": 2.7,
+      "desc": "Takes hold and squeezes. It is not going anywhere while this lasts.",
+      "id": "CON-7",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Earthen Grasp",
+      "learnLevel": 700,
+      "type": "damage",
+      "channel": "melee",
+      "target": "allEnemies",
+      "cooldown": 7.8,
+      "accuracy": 85,
+      "power": 23,
+      "mana": 36,
+      "variance": 0.15,
+      "range": 2.5,
+      "desc": "Stone closes on every ankle in reach. The Warden capstone: nobody leaves.",
+      "id": "CON-8",
+      "stat": "CON",
+      "line": "Warden"
+    },
+    {
+      "name": "Taunt",
+      "learnLevel": 90,
+      "type": "debuff",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 10,
+      "effects": {
+        "atkDebuff": 0.1,
+        "duration": 3,
+        "tauntForce": true
+      },
+      "range": 4.5,
+      "desc": "Enrages one of them into coming for you, and swinging softer for it.",
+      "id": "CON-9",
+      "stat": "CON",
+      "line": "Guardian"
+    },
+    {
+      "name": "Barbed Carapace",
+      "learnLevel": 120,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 24,
+      "effects": {
+        "defBuff": 4,
+        "thorns": 6,
+        "duration": 3
+      },
+      "range": 6,
+      "desc": "The whole line bristles: +4 mitigation and 6 damage returned on every hit.",
+      "id": "CON-10",
+      "stat": "CON",
+      "line": "Guardian"
+    },
+    {
+      "name": "Steady Vigil",
+      "learnLevel": 200,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 18,
+      "mana": 18,
+      "effects": {
+        "hpRegenBuff": 7,
+        "duration": 3
+      },
+      "range": 6,
+      "desc": "Stands over a wounded ally: heals, then keeps healing.",
+      "id": "CON-11",
+      "stat": "CON",
+      "line": "Guardian"
+    },
+    {
+      "name": "Interpose",
+      "learnLevel": 340,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 24,
+      "effects": {
+        "ward": 34,
+        "defBuff": 8,
+        "duration": 3
+      },
+      "range": 6,
+      "desc": "Steps in front of an ally: a 34 HP shield and +8 mitigation, put where it is needed rather than kept.",
+      "id": "CON-12",
+      "stat": "CON",
+      "line": "Guardian"
+    },
+    {
+      "name": "Bulwark's Challenge",
+      "learnLevel": 650,
+      "type": "debuff",
+      "channel": "support",
+      "target": "allEnemies",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 40,
+      "effects": {
+        "guard": 20,
+        "tauntForce": true,
+        "duration": 2
+      },
+      "range": 3.8,
+      "desc": "Plants its feet and roars: massive guard, and the WHOLE enemy team comes for it.",
+      "id": "CON-13",
+      "stat": "CON",
+      "line": "Guardian"
+    },
+    {
+      "name": "Aegis of the Fallen",
+      "learnLevel": 760,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 9.1,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 48,
+      "effects": {
+        "ward": 45,
+        "defBuff": 6,
+        "duration": 3
+      },
+      "range": 6,
+      "desc": "A shield over every ally at once — 45 HP of absorb each, and armour under it.",
+      "id": "CON-14",
+      "stat": "CON",
+      "line": "Guardian"
+    },
+    {
+      "name": "Brace",
+      "learnLevel": 40,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 2.6,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 5,
+      "effects": {
+        "guard": 6
+      },
+      "range": 3,
+      "desc": "Small, cheap, always there.",
+      "id": "CON-15",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Bastion",
+      "learnLevel": 240,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 16,
+      "effects": {
+        "ward": 25
+      },
+      "range": 3,
+      "desc": "Raise a 25 HP absorb shield. Fortify is the version for everyone else.",
+      "id": "CON-16",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Overrun",
+      "learnLevel": 280,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 88,
+      "power": 22,
+      "mana": 18,
+      "variance": 0.2,
+      "status": {
+        "kind": "knockback",
+        "chance": 40,
+        "duration": 2
+      },
+      "range": 3,
+      "desc": "Charges straight through: damage and a shove, paid for with momentum.",
+      "id": "CON-17",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Shell Slam",
+      "learnLevel": 380,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 85,
+      "power": 26,
+      "mana": 22,
+      "variance": 0.2,
+      "effects": {
+        "recoil": 0.1,
+        "hpScale": {
+          "atFull": 1.4,
+          "atEmpty": 0.8
+        }
+      },
+      "range": 2.9,
+      "desc": "Hits hardest while the shell is whole, and fades as its own health fails.",
+      "id": "CON-18",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Fortify",
+      "learnLevel": 430,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 44,
+      "effects": {
+        "ward": 40
+      },
+      "range": 4.1,
+      "desc": "A 40 HP absorb shield on every ally. Uncapped reach, priced in mana.",
+      "id": "CON-19",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Retaliate",
+      "learnLevel": 600,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 22,
+      "effects": {
+        "thorns": 16,
+        "defBuff": 6,
+        "duration": 2
+      },
+      "range": 3,
+      "desc": "Answers everything: 16 damage returned per hit for 2 rounds.",
+      "id": "CON-20",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Vital Surge",
+      "learnLevel": 780,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 46,
+      "mana": 34,
+      "effects": {
+        "cleanse": true
+      },
+      "range": 2.6,
+      "desc": "Shrugs it all off and knits shut. CON heals ITSELF; healing others is WIS.",
+      "id": "CON-21",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Colossus Crash",
+      "learnLevel": 850,
+      "type": "damage",
+      "channel": "melee",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 26,
+      "mana": 32,
+      "variance": 0.2,
+      "effects": {
+        "guard": 10,
+        "maxHpDmg": 0.03,
+        "consumeWard": 0.015
+      },
+      "range": 2.7,
+      "desc": "A crushing advance that braces after the blow; the bigger they are, the more it takes.",
+      "id": "CON-22",
+      "stat": "CON",
+      "line": "Bulwark"
+    },
+    {
+      "name": "Silencing Spike",
+      "learnLevel": 200,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 17,
+      "mana": 18,
+      "variance": 0.15,
+      "effects": {
+        "manaBurn": 13
+      },
+      "status": {
+        "kind": "silence",
+        "chance": 30,
+        "duration": 2
+      },
+      "range": 6.2,
+      "desc": "A psychic jab that drinks 13 MP and can close the throat entirely.",
+      "id": "WIS-0",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Wither",
+      "learnLevel": 300,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 21,
+      "mana": 20,
+      "variance": 0.15,
+      "effects": {
+        "lifesteal": 0.25,
+        "manaBurn": 10
+      },
+      "range": 6.2,
+      "desc": "Saps them round on round and feeds you what it takes.",
+      "id": "WIS-1",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Null Field",
+      "learnLevel": 320,
+      "type": "control",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 34,
+      "effects": {
+        "regenBuff": 3,
+        "duration": 4
+      },
+      "range": 7,
+      "desc": "A patch of dead air. Nothing casts well inside it, including what walks in.",
+      "id": "WIS-2",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Enfeeble",
+      "learnLevel": 330,
+      "type": "debuff",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 22,
+      "effects": {
+        "atkDebuff": 0.2,
+        "accDebuff": 12,
+        "duration": 3
+      },
+      "range": 7,
+      "desc": "They hit softer and they miss more. The Disruptor pressure debuff.",
+      "id": "WIS-3",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Hush",
+      "learnLevel": 420,
+      "type": "control",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 18,
+      "status": {
+        "kind": "silence",
+        "chance": 75,
+        "duration": 3
+      },
+      "range": 7,
+      "desc": "No damage, no flourish — just silence, reliably, for three rounds.",
+      "id": "WIS-4",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Field of Doom",
+      "learnLevel": 540,
+      "type": "debuff",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 26,
+      "effects": {
+        "atkDebuff": 0.15,
+        "duration": 3
+      },
+      "status": {
+        "kind": "doom",
+        "chance": 32,
+        "duration": 4
+      },
+      "range": 7,
+      "desc": "A dampening field, and a clock. Mind Crush knows what to do with the clock.",
+      "id": "WIS-5",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Dread Whisper",
+      "learnLevel": 700,
+      "type": "debuff",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 28,
+      "status": {
+        "kind": "fear",
+        "chance": 60,
+        "duration": 2
+      },
+      "range": 7,
+      "desc": "WIS's one hard control: a word in the ear, and they run.",
+      "id": "WIS-6",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Mind Crush",
+      "learnLevel": 780,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 46,
+      "mana": 34,
+      "variance": 0.15,
+      "effects": {
+        "manaBurn": 25,
+        "bonusVsStatus": {
+          "kind": "doom",
+          "mult": 1.8,
+          "consume": true
+        }
+      },
+      "range": 6.2,
+      "desc": "A heavy psychic blow that detonates their Doom early. The payoff.",
+      "id": "WIS-7",
+      "stat": "WIS",
+      "line": "Disruptor"
+    },
+    {
+      "name": "Mend",
+      "learnLevel": 40,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 3.9,
+      "accuracy": 100,
+      "power": 15,
+      "mana": 8,
+      "range": 8.2,
+      "desc": "Soothing focus, given to somebody else. WIS is the only stat that can.",
+      "id": "WIS-8",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Clarity",
+      "learnLevel": 120,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 3.9,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 12,
+      "effects": {
+        "cleanse": true
+      },
+      "range": 8,
+      "desc": "Clears an ally's head — confusion, charm, fear, all of it.",
+      "id": "WIS-9",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Renewal",
+      "learnLevel": 260,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 11,
+      "mana": 18,
+      "effects": {
+        "hpRegenBuff": 10,
+        "duration": 4
+      },
+      "range": 8.5,
+      "desc": "Not a burst but a tide: 8 HP a round for four rounds.",
+      "id": "WIS-10",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Tranquility",
+      "learnLevel": 320,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 74,
+      "mana": 26,
+      "range": 7.3,
+      "desc": "Deep restorative calm channelled into one ally.",
+      "id": "WIS-11",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Rebuke",
+      "learnLevel": 560,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 34,
+      "mana": 24,
+      "variance": 0.2,
+      "range": 7.2,
+      "desc": "The healer answers back. A mender is not the same thing as a bystander.",
+      "id": "WIS-12",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Ward Against Ruin",
+      "learnLevel": 650,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 9.1,
+      "accuracy": 100,
+      "power": 24,
+      "mana": 34,
+      "effects": {
+        "defBuff": 8,
+        "regenBuff": 3,
+        "duration": 3
+      },
+      "range": 8,
+      "desc": "Hardens the whole team against what is coming — 8% less damage taken, and a little mending with it.",
+      "id": "WIS-13",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Mana Sap",
+      "learnLevel": 90,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 92,
+      "power": 15,
+      "mana": 8,
+      "variance": 0.15,
+      "effects": {
+        "manaBurn": 14
+      },
+      "range": 6.6,
+      "desc": "Drinks 14 MP straight out of them. Once the worst move in the game; now a real theft.",
+      "id": "WIS-14",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Mind Spike",
+      "learnLevel": 140,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 92,
+      "power": 17,
+      "mana": 8,
+      "variance": 0.15,
+      "range": 6.5,
+      "desc": "A cheap psychic jab — the filler WIS never had and could never afford.",
+      "id": "WIS-15",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Serenity",
+      "learnLevel": 160,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 12,
+      "effects": {
+        "regenBuff": 4,
+        "dodgeBuff": 8,
+        "duration": 3
+      },
+      "range": 6.5,
+      "desc": "Calm flow. The one self-regen — the other three were the same move wearing hats.",
+      "id": "WIS-16",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Attunement",
+      "learnLevel": 240,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 30,
+      "effects": {
+        "regenBuff": 4,
+        "duration": 3
+      },
+      "range": 6.5,
+      "desc": "Links the team's focus: everyone regains mana faster. Distinct from Serenity by REACH.",
+      "id": "WIS-17",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Drain Spirit",
+      "learnLevel": 380,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 88,
+      "power": 27,
+      "mana": 20,
+      "variance": 0.15,
+      "effects": {
+        "manaBurn": 15,
+        "lifesteal": 0.35
+      },
+      "range": 6.1,
+      "desc": "Takes both at once — their mana, and a share of their blood.",
+      "id": "WIS-18",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Spirit Siphon",
+      "learnLevel": 600,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 88,
+      "power": 40,
+      "mana": 30,
+      "variance": 0.2,
+      "effects": {
+        "manaBurn": 20,
+        "lifesteal": 0.4
+      },
+      "range": 5.7,
+      "desc": "Holds on and drains, HP and MP together, for as long as it lasts.",
+      "id": "WIS-19",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Judgement",
+      "learnLevel": 820,
+      "type": "damage",
+      "channel": "support",
+      "target": "enemy",
+      "cooldown": 7.8,
+      "accuracy": 88,
+      "power": 60,
+      "mana": 38,
+      "variance": 0.2,
+      "range": 5.7,
+      "desc": "A real capstone HIT rather than one more aura. WIS can end things too.",
+      "id": "WIS-20",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Mending Surge",
+      "learnLevel": 300,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 97,
+      "mana": 34,
+      "range": 8,
+      "desc": "A flood of restoration into one body — the burst answer to burst.",
+      "id": "WIS-21",
+      "stat": "WIS",
+      "line": "Mender"
+    },
+    {
+      "name": "Providence",
+      "learnLevel": 850,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 9.1,
+      "accuracy": 100,
+      "power": 18,
+      "mana": 40,
+      "effects": {
+        "cleanse": true,
+        "hpRegenBuff": 10,
+        "duration": 3
+      },
+      "range": 6.8,
+      "desc": "Sees what is coming: clears the team and steadies it. Restoration — empowerment is CHA.",
+      "id": "WIS-22",
+      "stat": "WIS",
+      "line": "Siphon"
+    },
+    {
+      "name": "Ember",
+      "learnLevel": 40,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 14,
+      "mana": 6,
+      "variance": 0.2,
+      "status": {
+        "kind": "burn",
+        "chance": 45,
+        "duration": 3
+      },
+      "range": 7.9,
+      "desc": "Minor fire, and it catches. The cheapest way to start a stack.",
+      "id": "INT-0",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Fracturing Stones",
+      "learnLevel": 120,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 24,
+      "mana": 14,
+      "variance": 0.2,
+      "status": {
+        "kind": "vulnerable",
+        "chance": 40,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "A stinging barrage that cracks the guard. The second stack type.",
+      "id": "INT-1",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Cinderburst",
+      "learnLevel": 200,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 88,
+      "power": 37,
+      "mana": 20,
+      "variance": 0.15,
+      "effects": {
+        "bonusVsStatus": {
+          "kind": "burn",
+          "mult": 1.6,
+          "consume": true
+        }
+      },
+      "range": 7,
+      "desc": "Solid on its own, and it snuffs a Burn for far more. The first detonator.",
+      "id": "INT-2",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Sap Will",
+      "learnLevel": 280,
+      "type": "debuff",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 18,
+      "effects": {
+        "atkDebuff": 0.22,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Drains the will to strike: −22% damage for 3 rounds. INT could not do this at all before.",
+      "id": "INT-3",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Arcane Bomb",
+      "learnLevel": 340,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 88,
+      "power": 37,
+      "mana": 26,
+      "variance": 0.2,
+      "effects": {
+        "bonusVsStatus": {
+          "kind": "vulnerable",
+          "mult": 1.7,
+          "consume": true
+        }
+      },
+      "range": 6.6,
+      "desc": "A charge left ticking on them — devastating on anything already cracked open.",
+      "id": "INT-4",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Curse of Ruin",
+      "learnLevel": 480,
+      "type": "debuff",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 24,
+      "effects": {
+        "defDebuff": 14,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Unpicks whatever is holding them together: −14 mitigation from EVERY source of damage.",
+      "id": "INT-5",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Detonate",
+      "learnLevel": 700,
+      "type": "damage",
+      "channel": "magic",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 51,
+      "mana": 38,
+      "variance": 0.25,
+      "effects": {
+        "bonusVsStatus": {
+          "kind": "burn",
+          "mult": 2,
+          "consume": true
+        }
+      },
+      "range": 5.6,
+      "desc": "Sets off everything still burning, on everyone at once. The Hexer capstone.",
+      "id": "INT-6",
+      "stat": "INT",
+      "line": "Hexer"
+    },
+    {
+      "name": "Frost Shard",
+      "learnLevel": 90,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 23,
+      "mana": 12,
+      "variance": 0.2,
+      "range": 8.3,
+      "desc": "An icy dart. The frost line opens here.",
+      "id": "INT-7",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "Rime Bind",
+      "learnLevel": 160,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 90,
+      "power": 34,
+      "mana": 16,
+      "variance": 0.15,
+      "range": 8,
+      "desc": "Ice climbs the legs and sets. It can still cast; it is going nowhere.",
+      "id": "INT-8",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "Frost Nova",
+      "learnLevel": 280,
+      "type": "damage",
+      "channel": "magic",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 85,
+      "power": 31,
+      "mana": 26,
+      "variance": 0.2,
+      "range": 6.9,
+      "desc": "A ring of hoarfrost bursts outward — the anti-melee tool casters never had.",
+      "id": "INT-9",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "Firewall",
+      "learnLevel": 400,
+      "type": "control",
+      "channel": "magic",
+      "target": "self",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 30,
+      "range": 8,
+      "desc": "A burning line laid across the ground. Not a hit — a place they should not walk.",
+      "id": "INT-10",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "Inferno",
+      "learnLevel": 430,
+      "type": "damage",
+      "channel": "magic",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 82,
+      "power": 44,
+      "mana": 32,
+      "variance": 0.25,
+      "status": {
+        "kind": "burn",
+        "chance": 30,
+        "duration": 3
+      },
+      "range": 6.6,
+      "desc": "Fire across the whole position, and much of it keeps burning.",
+      "id": "INT-11",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "Seismic Crush",
+      "learnLevel": 560,
+      "type": "damage",
+      "channel": "magic",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 82,
+      "power": 53,
+      "mana": 38,
+      "variance": 0.25,
+      "status": {
+        "kind": "stun",
+        "chance": 30,
+        "duration": 1
+      },
+      "range": 6.3,
+      "desc": "The ground itself comes up. Damage AND a stun on everything standing on it.",
+      "id": "INT-12",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "World Ender",
+      "learnLevel": 920,
+      "type": "damage",
+      "channel": "magic",
+      "target": "allEnemies",
+      "cooldown": 9.1,
+      "accuracy": 78,
+      "power": 87,
+      "mana": 56,
+      "variance": 0.3,
+      "effects": {
+        "maxHpDmg": 0.02
+      },
+      "range": 6,
+      "desc": "The largest thing in the game, and it hurts the biggest of them most.",
+      "id": "INT-13",
+      "stat": "INT",
+      "line": "Elementalist"
+    },
+    {
+      "name": "Spark",
+      "learnLevel": 40,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 1.3,
+      "accuracy": 95,
+      "power": 16,
+      "mana": 5,
+      "variance": 0.15,
+      "range": 7.4,
+      "desc": "A small air bolt, cheap enough to throw between everything else.",
+      "id": "INT-14",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Phase Step",
+      "learnLevel": 180,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 14,
+      "effects": {
+        "dodgeBuff": 12,
+        "duration": 1
+      },
+      "range": 7,
+      "desc": "Steps out of the world and back a few paces away — through cover, if need be.",
+      "id": "INT-15",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Mirror Image",
+      "learnLevel": 250,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 20,
+      "effects": {
+        "dodgeBuff": 16,
+        "duration": 3
+      },
+      "range": 7,
+      "desc": "Shimmering duplicates. Attacks keep finding the wrong one.",
+      "id": "INT-16",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Static Chain",
+      "learnLevel": 330,
+      "type": "damage",
+      "channel": "magic",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 85,
+      "power": 39,
+      "mana": 28,
+      "variance": 0.2,
+      "status": {
+        "kind": "vulnerable",
+        "chance": 25,
+        "duration": 2
+      },
+      "range": 6,
+      "desc": "A bolt that leaps body to body along a line, weakening as it goes.",
+      "id": "INT-17",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Mana Leech",
+      "learnLevel": 335,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 88,
+      "power": 34,
+      "mana": 22,
+      "variance": 0.15,
+      "effects": {
+        "manaBurn": 14,
+        "lifesteal": 0.25
+      },
+      "range": 6.9,
+      "desc": "Siphons and steps away in the same motion. WIS steals better; this one escapes.",
+      "id": "INT-18",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Unmake",
+      "learnLevel": 560,
+      "type": "debuff",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 26,
+      "effects": {
+        "consumeWard": 1,
+        "accDebuff": 12,
+        "duration": 3
+      },
+      "range": 7,
+      "desc": "Strips the shield off them and leaves their aim shaking.",
+      "id": "INT-19",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Displace",
+      "learnLevel": 640,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 50,
+      "mana": 26,
+      "variance": 0.15,
+      "range": 6.8,
+      "desc": "Teleports the TARGET — rips a diver out of your back line and pins it where it lands.",
+      "id": "INT-20",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Void Lance",
+      "learnLevel": 780,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 89,
+      "mana": 38,
+      "variance": 0.1,
+      "effects": {
+        "pierce": 0.5
+      },
+      "range": 6.2,
+      "desc": "Pure void. Half of everything they are wearing simply does not apply.",
+      "id": "INT-21",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Arcane Overload",
+      "learnLevel": 850,
+      "type": "damage",
+      "channel": "magic",
+      "target": "enemy",
+      "cooldown": 7.8,
+      "accuracy": 85,
+      "power": 168,
+      "mana": 44,
+      "variance": 0.3,
+      "effects": {
+        "recoil": 0.15
+      },
+      "range": 6.2,
+      "desc": "Overchannelled past what the caster can hold. It burns them too.",
+      "id": "INT-22",
+      "stat": "INT",
+      "line": "Arcanist"
+    },
+    {
+      "name": "Discord",
+      "learnLevel": 40,
+      "type": "damage",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 2.6,
+      "accuracy": 90,
+      "power": 14,
+      "mana": 8,
+      "variance": 0.2,
+      "status": {
+        "kind": "blind",
+        "chance": 50,
+        "duration": 3
+      },
+      "range": 6.5,
+      "desc": "A jarring note that leaves them swinging at afterimages.",
+      "id": "CHA-0",
+      "stat": "CHA",
+      "line": "Enchanter"
+    },
+    {
+      "name": "Screech",
+      "learnLevel": 160,
+      "type": "damage",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 3.9,
+      "accuracy": 85,
+      "power": 12,
+      "mana": 22,
+      "variance": 0.2,
+      "status": {
+        "kind": "fear",
+        "chance": 30,
+        "duration": 2
+      },
+      "range": 5.5,
+      "desc": "A sound that routs. Hard control across a whole line.",
+      "id": "CHA-1",
+      "stat": "CHA",
+      "line": "Enchanter"
+    },
+    {
+      "name": "Sonic Boom",
+      "learnLevel": 380,
+      "type": "damage",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 5.2,
+      "accuracy": 85,
+      "power": 28,
+      "mana": 26,
+      "variance": 0.2,
+      "status": {
+        "kind": "confusion",
+        "chance": 40,
+        "duration": 2
+      },
+      "effects": {
+        "spreadStatus": {
+          "kind": "confusion",
+          "targets": 1,
+          "chance": 30
+        }
+      },
+      "range": 5.7,
+      "desc": "A heavy burst, and the disorientation carries to whoever stood too close.",
+      "id": "CHA-2",
+      "stat": "CHA",
+      "line": "Enchanter"
+    },
+    {
+      "name": "Lullaby",
+      "learnLevel": 385,
+      "type": "control",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 0,
+      "mana": 24,
+      "status": {
+        "kind": "sleep",
+        "chance": 60,
+        "duration": 3
+      },
+      "effects": {
+        "spreadStatus": {
+          "kind": "sleep",
+          "targets": 1,
+          "chance": 30
+        }
+      },
+      "range": 6.5,
+      "desc": "Sings them to actual sleep — a free hit, but any damage wakes them. Drowsiness is catching.",
+      "id": "CHA-3",
+      "stat": "CHA",
+      "line": "Enchanter"
+    },
+    {
+      "name": "Cacophony",
+      "learnLevel": 650,
+      "type": "damage",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 82,
+      "power": 28,
+      "mana": 36,
+      "variance": 0.25,
+      "status": {
+        "kind": "charm",
+        "chance": 22,
+        "duration": 2
+      },
+      "range": 4.9,
+      "desc": "A charmed foe turns on its own team. The best status in the game, and the rarest.",
+      "id": "CHA-4",
+      "stat": "CHA",
+      "line": "Enchanter"
+    },
+    {
+      "name": "Mass Hysteria",
+      "learnLevel": 820,
+      "type": "control",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 9.1,
+      "accuracy": 88,
+      "power": 0,
+      "mana": 52,
+      "status": {
+        "kind": "fear",
+        "chance": 55,
+        "duration": 2
+      },
+      "effects": {
+        "spreadStatus": {
+          "kind": "confusion",
+          "targets": 2,
+          "chance": 40
+        }
+      },
+      "range": 5.5,
+      "desc": "The whole enemy line breaks at once. The Enchanter capstone: nobody gets a turn.",
+      "id": "CHA-5",
+      "stat": "CHA",
+      "line": "Enchanter"
+    },
+    {
+      "name": "Rallying Song",
+      "learnLevel": 90,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 18,
+      "effects": {
+        "atkBuff": 0.12,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "A stirring tune: the whole team hits harder for 3 rounds.",
+      "id": "CHA-6",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Bravura",
+      "learnLevel": 140,
+      "type": "buff",
+      "channel": "support",
+      "target": "self",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 16,
+      "effects": {
+        "ward": 20,
+        "dodgeBuff": 10,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Performs straight through the danger. The bard can look after itself.",
+      "id": "CHA-7",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Anthem of Iron",
+      "learnLevel": 180,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 24,
+      "effects": {
+        "atkBuff": 0.1,
+        "defBuff": 6,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Hit harder and hold together — attack and armour in one song.",
+      "id": "CHA-8",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Inspire",
+      "learnLevel": 260,
+      "type": "buff",
+      "channel": "support",
+      "target": "ally",
+      "cooldown": 5.2,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 16,
+      "effects": {
+        "atkBuff": 0.28,
+        "accBuff": 10,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Everything poured into ONE ally. Focused, and cheaper than lifting everyone.",
+      "id": "CHA-9",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Battle Hymn",
+      "learnLevel": 300,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 26,
+      "effects": {
+        "dodgeBuff": 8,
+        "regenBuff": 2,
+        "duration": 3
+      },
+      "status": {
+        "kind": "haste",
+        "chance": 100,
+        "duration": 2
+      },
+      "range": 7.5,
+      "desc": "A steadying anthem — and the whole team moves first.",
+      "id": "CHA-10",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Fanfare",
+      "learnLevel": 420,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 6.5,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 32,
+      "effects": {
+        "accBuff": 16,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Team accuracy, sharply. Nothing else in the game hands out aim like this.",
+      "id": "CHA-11",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Hymn of Shields",
+      "learnLevel": 470,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 38,
+      "effects": {
+        "ward": 26,
+        "guard": 5,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "A hymn that armours everyone who can hear it, the singer included.",
+      "id": "CHA-12",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Second Wind",
+      "learnLevel": 340,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 11.7,
+      "accuracy": 100,
+      "power": 44,
+      "mana": 42,
+      "range": 7.5,
+      "desc": "A cry that puts the whole line back on its feet — none of them fully.",
+      "id": "CHA-13",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Standing Ovation",
+      "learnLevel": 380,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 7.8,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 42,
+      "effects": {
+        "atkBuff": 0.2,
+        "accBuff": 10,
+        "hpRegenBuff": 6,
+        "duration": 3
+      },
+      "range": 7.5,
+      "desc": "Feeds on applause and hands it straight back to the team.",
+      "id": "CHA-14",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Triumph",
+      "learnLevel": 880,
+      "type": "buff",
+      "channel": "support",
+      "target": "team",
+      "cooldown": 10.4,
+      "accuracy": 100,
+      "power": 0,
+      "mana": 56,
+      "effects": {
+        "atkBuff": 0.32,
+        "accBuff": 14,
+        "dodgeBuff": 10,
+        "duration": 2
+      },
+      "range": 7.5,
+      "desc": "The empowerment capstone: everything at once, for two rounds only.",
+      "id": "CHA-15",
+      "stat": "CHA",
+      "line": "Captain"
+    },
+    {
+      "name": "Grand Mockery",
+      "learnLevel": 120,
+      "type": "debuff",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 22,
+      "effects": {
+        "atkDebuff": 0.14,
+        "duration": 3
+      },
+      "status": {
+        "kind": "healblock",
+        "chance": 25,
+        "duration": 2
+      },
+      "range": 5.1,
+      "desc": "A cutting jeer: they hit softer, and some of them stop closing.",
+      "id": "CHA-16",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Captivate",
+      "learnLevel": 200,
+      "type": "damage",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 3.9,
+      "accuracy": 88,
+      "power": 17,
+      "mana": 14,
+      "variance": 0.2,
+      "effects": {
+        "lifesteal": 0.45
+      },
+      "range": 6,
+      "desc": "Feeds on adoration and gives nothing back.",
+      "id": "CHA-17",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Demoralize",
+      "learnLevel": 330,
+      "type": "debuff",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 6.5,
+      "accuracy": 90,
+      "power": 0,
+      "mana": 30,
+      "effects": {
+        "atkDebuff": 0.24,
+        "duration": 3
+      },
+      "range": 5.1,
+      "desc": "Breaks the spirit outright. Deeper than Mockery, and that is the whole difference.",
+      "id": "CHA-18",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Crowd Surge",
+      "learnLevel": 320,
+      "type": "debuff",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 5.2,
+      "accuracy": 90,
+      "power": 13,
+      "mana": 24,
+      "variance": 0.2,
+      "effects": {
+        "accDebuff": 10,
+        "duration": 2
+      },
+      "range": 5.2,
+      "desc": "Shoves the whole enemy line backwards. A DEFENSIVE use of a debuff stat.",
+      "id": "CHA-19",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Dirge",
+      "learnLevel": 520,
+      "type": "debuff",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 7.8,
+      "accuracy": 95,
+      "power": 0,
+      "mana": 34,
+      "status": {
+        "kind": "healblock",
+        "chance": 70,
+        "duration": 3
+      },
+      "range": 5.1,
+      "desc": "While it plays, nothing on that side closes a wound.",
+      "id": "CHA-20",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Siren's Call",
+      "learnLevel": 780,
+      "type": "damage",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 85,
+      "power": 26,
+      "mana": 32,
+      "variance": 0.2,
+      "effects": {
+        "manaBurn": 16,
+        "bonusVsStatus": {
+          "kind": "fear",
+          "mult": 1.6,
+          "consume": true
+        }
+      },
+      "range": 5.6,
+      "desc": "An irresistible song that scatters focus — and shatters the courage of the Afraid.",
+      "id": "CHA-21",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Showstopper",
+      "learnLevel": 850,
+      "type": "damage",
+      "channel": "voice",
+      "target": "enemy",
+      "cooldown": 6.5,
+      "accuracy": 88,
+      "power": 43,
+      "mana": 36,
+      "variance": 0.15,
+      "effects": {
+        "execute": 0.35
+      },
+      "range": 5.3,
+      "desc": "The closing number, and it closes them.",
+      "id": "CHA-22",
+      "stat": "CHA",
+      "line": "Demagogue"
+    },
+    {
+      "name": "Crescendo",
+      "learnLevel": 920,
+      "type": "damage",
+      "channel": "voice",
+      "target": "allEnemies",
+      "cooldown": 9.1,
+      "accuracy": 80,
+      "power": 52,
+      "mana": 50,
+      "variance": 0.25,
+      "range": 4.5,
+      "desc": "A voice AoE finisher. CHA damage exists — it is just rare, and it is late.",
+      "id": "CHA-23",
+      "stat": "CHA",
+      "line": "Demagogue"
+    }
+  ],
+  "species": [
+    {
+      "id": "kongrath",
+      "name": "Gruulk",
+      "body": "Mammal",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 42,
+        "DEX": 20,
+        "CON": 34,
+        "WIS": 12,
+        "INT": 10,
+        "CHA": 16
+      },
+      "lifespan": 4,
+      "flavour": "A green-hided, blue-crested colossus, quiet until the first hit lands; his opening blow is a landslide.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Chest Beat",
+          "desc": "+50% damage on its first hit."
+        },
+        {
+          "name": "Rising Fury",
+          "desc": "+5% damage."
+        }
+      ]
+    },
+    {
+      "id": "aegisox",
+      "name": "Terrock",
+      "body": "Mammal",
+      "naturalClass": "Tank",
+      "base": {
+        "STR": 30,
+        "DEX": 14,
+        "CON": 44,
+        "WIS": 16,
+        "INT": 10,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A squared boulder of a giant, tan as quarry stone. It stands where it plants itself, and nothing moves it.",
+      "trainingProfile": {
+        "major": "CON",
+        "flaw": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Ironclad",
+          "desc": "Reduces damage taken by 2 per hit."
+        },
+        {
+          "name": "Immovable",
+          "desc": "Incoming debuffs are 25% weaker."
+        }
+      ]
+    },
+    {
+      "id": "maneleo",
+      "name": "Manegold",
+      "body": "Mammal",
+      "naturalClass": "Captain",
+      "base": {
+        "STR": 40,
+        "DEX": 22,
+        "CON": 26,
+        "WIS": 12,
+        "INT": 12,
+        "CHA": 30
+      },
+      "lifespan": 4,
+      "flavour": "A tawny-gold shag-beast whose hood of fur falls like a mane; leads from the front and roars like it.",
+      "trainingProfile": {
+        "major": "CHA",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Rallying Roar",
+          "desc": "Team: +5% damage."
+        },
+        {
+          "name": "Pride",
+          "desc": "+8% damage."
+        }
+      ]
+    },
+    {
+      "id": "grivvel",
+      "name": "Grynt",
+      "body": "Mammal",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 34,
+        "DEX": 40,
+        "CON": 22,
+        "WIS": 12,
+        "INT": 10,
+        "CHA": 14
+      },
+      "lifespan": 4,
+      "flavour": "A wiry green scrapper, short-tempered and shorter; already picking the next fight.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "CHA"
+      },
+      "innate": [
+        {
+          "name": "Rend",
+          "desc": "+8% critical hit chance."
+        },
+        {
+          "name": "Frenzy",
+          "desc": "+25% damage while below 30% HP."
+        }
+      ]
+    },
+    {
+      "id": "ursath",
+      "name": "Frostmaul",
+      "body": "Mammal",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 40,
+        "DEX": 14,
+        "CON": 38,
+        "WIS": 14,
+        "INT": 10,
+        "CHA": 12
+      },
+      "lifespan": 5,
+      "flavour": "A blue-white shag-armed mauler woken from a long sleep; honest work, honestly enjoyed.",
+      "trainingProfile": {
+        "major": "WIS",
+        "flaw": "INT"
+      },
+      "innate": [
+        {
+          "name": "Thick Hide",
+          "desc": "Reduces damage taken by 3 per hit."
+        },
+        {
+          "name": "Maul",
+          "desc": "Ignores 15% of enemy mitigation."
+        }
+      ]
+    },
+    {
+      "id": "pinguox",
+      "name": "Capling",
+      "body": "Avian",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 20,
+        "DEX": 44,
+        "CON": 18,
+        "WIS": 24,
+        "INT": 28,
+        "CHA": 12
+      },
+      "lifespan": 4,
+      "flavour": "A small teal cap-headed diver, cheerfully unbothered by anything above its weight class.",
+      "trainingProfile": {
+        "major": "CON"
+      },
+      "innate": [
+        {
+          "name": "Dive Bomb",
+          "desc": "+60% damage on its first hit."
+        },
+        {
+          "name": "Keen Eye",
+          "desc": "+8% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "strixil",
+      "name": "Aeristra",
+      "body": "Avian",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 10,
+        "DEX": 22,
+        "CON": 16,
+        "WIS": 42,
+        "INT": 32,
+        "CHA": 14
+      },
+      "lifespan": 5,
+      "flavour": "A pale-blue floater that keeps the old roost's memory; it drifts, watches, remembers.",
+      "trainingProfile": {
+        "major": "INT",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Wellspring",
+          "desc": "10% chance to cast a skill twice."
+        },
+        {
+          "name": "Silent Wisdom",
+          "desc": "+4 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "balaenix",
+      "name": "Azurefin",
+      "body": "Avian",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 28,
+        "DEX": 44,
+        "CON": 18,
+        "WIS": 20,
+        "INT": 16,
+        "CHA": 14
+      },
+      "lifespan": 4,
+      "flavour": "A deep-blue drifter with pale fins like sails; patient, silent, and sudden.",
+      "trainingProfile": {
+        "major": "STR",
+        "flaw": "CHA"
+      },
+      "innate": [
+        {
+          "name": "Ambush Strike",
+          "desc": "+40% damage on its first hit. +4% accuracy."
+        },
+        {
+          "name": "Statue Stance",
+          "desc": "+10% damage while above 70% HP."
+        }
+      ]
+    },
+    {
+      "id": "corvaan",
+      "name": "Cobalon",
+      "body": "Avian",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 12,
+        "DEX": 26,
+        "CON": 16,
+        "WIS": 30,
+        "INT": 40,
+        "CHA": 16
+      },
+      "lifespan": 4,
+      "flavour": "A cobalt bird-thing with scholarly brows and a stolen spellbook of tricks.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Arcane Bolt",
+          "desc": "+10% magic damage."
+        },
+        {
+          "name": "Hex",
+          "desc": "Enemies: -4% accuracy. Enemies: -1 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "larkessa",
+      "name": "Rosewing",
+      "body": "Avian",
+      "naturalClass": "Bard",
+      "base": {
+        "STR": 12,
+        "DEX": 34,
+        "CON": 14,
+        "WIS": 22,
+        "INT": 16,
+        "CHA": 42
+      },
+      "lifespan": 4,
+      "flavour": "A rose-tinted songwing whose voice once guided the lost home; now it fills stadiums.",
+      "trainingProfile": {
+        "major": "CHA",
+        "flaw": "INT"
+      },
+      "innate": [
+        {
+          "name": "Song of Valor",
+          "desc": "Team: +4% damage."
+        },
+        {
+          "name": "Encore",
+          "desc": "25% chance its buffs last an extra round."
+        }
+      ]
+    },
+    {
+      "id": "bruxaroo",
+      "name": "Mosshorn",
+      "body": "Marsupial",
+      "naturalClass": "Captain",
+      "base": {
+        "STR": 40,
+        "DEX": 28,
+        "CON": 26,
+        "WIS": 12,
+        "INT": 10,
+        "CHA": 34
+      },
+      "lifespan": 4,
+      "flavour": "A green, long-limbed brawler crowned with mossy horns; swings first and grins after.",
+      "trainingProfile": {
+        "major": "STR",
+        "flaw": "INT"
+      },
+      "innate": [
+        {
+          "name": "Haymaker",
+          "desc": "+35% damage on its first hit."
+        },
+        {
+          "name": "Southpaw",
+          "desc": "Ignores 12% of enemy mitigation."
+        }
+      ]
+    },
+    {
+      "id": "koalio",
+      "name": "Slumbra",
+      "body": "Marsupial",
+      "naturalClass": "Orator",
+      "base": {
+        "STR": 12,
+        "DEX": 20,
+        "CON": 18,
+        "WIS": 30,
+        "INT": 14,
+        "CHA": 44
+      },
+      "lifespan": 5,
+      "flavour": "A grey-blue climber, calm to the point of sleep; it would rather lull you than strike you.",
+      "trainingProfile": {
+        "major": "CON",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Drowsy Aura",
+          "desc": "Enemies: -3% accuracy."
+        },
+        {
+          "name": "Soothing Words",
+          "desc": "Team: +3 HP regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "quokkade",
+      "name": "Tannik",
+      "body": "Marsupial",
+      "naturalClass": "Bard",
+      "base": {
+        "STR": 12,
+        "DEX": 36,
+        "CON": 14,
+        "WIS": 22,
+        "INT": 14,
+        "CHA": 40
+      },
+      "lifespan": 4,
+      "flavour": "A small warm-tan critter, relentlessly cheerful; fights for the crowd and the picnic after.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Cheer",
+          "desc": "Team: +4% dodge chance."
+        },
+        {
+          "name": "Quickstep",
+          "desc": "+6% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "sylvaglide",
+      "name": "Leafwisp",
+      "body": "Marsupial",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 12,
+        "DEX": 42,
+        "CON": 12,
+        "WIS": 24,
+        "INT": 28,
+        "CHA": 26
+      },
+      "lifespan": 4,
+      "flavour": "A leaf-green wisp that rides draughts nobody else can feel; ambush by understatement.",
+      "trainingProfile": {
+        "major": "WIS"
+      },
+      "innate": [
+        {
+          "name": "Glide Strike",
+          "desc": "+30% damage on its first hit."
+        },
+        {
+          "name": "Aerial",
+          "desc": "+7% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "tazzik",
+      "name": "Razzhorn",
+      "body": "Marsupial",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 34,
+        "DEX": 40,
+        "CON": 24,
+        "WIS": 12,
+        "INT": 12,
+        "CHA": 20
+      },
+      "lifespan": 4,
+      "flavour": "A small dark-red demon of pure appetite; every venue it visits learns to pack early.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Devour",
+          "desc": "Heals 30% of damage dealt as HP."
+        },
+        {
+          "name": "Whirlwind",
+          "desc": "+7% critical hit chance."
+        }
+      ]
+    },
+    {
+      "id": "maelurk",
+      "name": "Oozehorn",
+      "body": "Aquatic",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 12,
+        "DEX": 22,
+        "CON": 18,
+        "WIS": 32,
+        "INT": 44,
+        "CHA": 14
+      },
+      "lifespan": 4,
+      "flavour": "A horned green ooze that waits in its own puddle; curiosity with an undertow.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Ink Cloud",
+          "desc": "Enemies: -5% accuracy."
+        },
+        {
+          "name": "Tentacle Barrage",
+          "desc": "8% chance to cast a skill twice."
+        }
+      ]
+    },
+    {
+      "id": "nautilux",
+      "name": "Coralux",
+      "body": "Aquatic",
+      "naturalClass": "Spellshield",
+      "base": {
+        "STR": 14,
+        "DEX": 12,
+        "CON": 42,
+        "WIS": 32,
+        "INT": 20,
+        "CHA": 12
+      },
+      "lifespan": 5,
+      "flavour": "A shell-orange drifter of a thousand tides; slow, deep pride and an unbroken guard.",
+      "trainingProfile": {
+        "major": "CON",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Ward",
+          "desc": "Starts battle with a 25 HP shield."
+        },
+        {
+          "name": "Spiral Shell",
+          "desc": "Reduces damage taken by 2 per hit. +2% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "carcharun",
+      "name": "Gravemaw",
+      "body": "Aquatic",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 12,
+        "DEX": 16,
+        "CON": 24,
+        "WIS": 44,
+        "INT": 30,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A slab-shouldered slate beast whose jaw opens wider than it should. The oldest bruiser on the Circuit.",
+      "trainingProfile": {
+        "major": "STR",
+        "flaw": "CHA"
+      },
+      "innate": [
+        {
+          "name": "Tidal Wisdom",
+          "desc": "+2 mana regen/turn. +2 HP regen/turn."
+        },
+        {
+          "name": "Weathered Hide",
+          "desc": "Reduces damage taken by 2 per hit. Incoming debuffs are 10% weaker."
+        }
+      ]
+    },
+    {
+      "id": "mantaris",
+      "name": "Veilfin",
+      "body": "Aquatic",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 14,
+        "DEX": 42,
+        "CON": 18,
+        "WIS": 22,
+        "INT": 32,
+        "CHA": 12
+      },
+      "lifespan": 4,
+      "flavour": "A soft-violet glider of the open water; a showman hooked on the hush before the sweep.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Wing Current",
+          "desc": "+10% dodge chance."
+        },
+        {
+          "name": "Current Rider",
+          "desc": "+6% critical hit chance. +2% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "lanterix",
+      "name": "Lumigel",
+      "body": "Aquatic",
+      "naturalClass": "Spellsword",
+      "base": {
+        "STR": 20,
+        "DEX": 14,
+        "CON": 36,
+        "WIS": 24,
+        "INT": 40,
+        "CHA": 12
+      },
+      "lifespan": 5,
+      "flavour": "A soft pink glow-blob from true darkness; it carries its own light into the ring.",
+      "trainingProfile": {
+        "major": "WIS",
+        "flaw": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Spellblade",
+          "desc": "+12% magic damage."
+        },
+        {
+          "name": "Abyssal Glow",
+          "desc": "+3 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "scarabrute",
+      "name": "Scarabron",
+      "body": "Insectoid",
+      "naturalClass": "Tank",
+      "base": {
+        "STR": 36,
+        "DEX": 16,
+        "CON": 44,
+        "WIS": 8,
+        "INT": 14,
+        "CHA": 12
+      },
+      "lifespan": 5,
+      "flavour": "A bronze-shelled juggernaut; a dam-keeper's patience in an armoured scuttle.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Chitin Plate",
+          "desc": "Reduces damage taken by 1 per hit. Starts battle with a 12 HP shield."
+        },
+        {
+          "name": "Burrow",
+          "desc": "+4% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "mantevoke",
+      "name": "Bristleye",
+      "body": "Insectoid",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 34,
+        "DEX": 42,
+        "CON": 18,
+        "WIS": 8,
+        "INT": 20,
+        "CHA": 12
+      },
+      "lifespan": 4,
+      "flavour": "A green orb bristling with white thorns around one unblinking eye; a temple guardian's patience.",
+      "trainingProfile": {
+        "major": "STR",
+        "flaw": "INT"
+      },
+      "innate": [
+        {
+          "name": "Ambush",
+          "desc": "+70% damage on its first hit."
+        },
+        {
+          "name": "Serrated Claws",
+          "desc": "Ignores 18% of enemy mitigation."
+        }
+      ]
+    },
+    {
+      "id": "arachnyx",
+      "name": "Pincerax",
+      "body": "Insectoid",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 14,
+        "DEX": 8,
+        "CON": 16,
+        "WIS": 32,
+        "INT": 40,
+        "CHA": 20
+      },
+      "lifespan": 4,
+      "flavour": "A scarlet-shelled scuttler, all claws and armour plate, that boxes with both pincers at once.",
+      "trainingProfile": {
+        "major": "WIS",
+        "flaw": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Web Trap",
+          "desc": "+5% dodge chance. Enemies: -3% dodge chance."
+        },
+        {
+          "name": "Venom Fang",
+          "desc": "12% chance to Poison on every hit."
+        }
+      ]
+    },
+    {
+      "id": "vespera",
+      "name": "Vesperon",
+      "body": "Insectoid",
+      "naturalClass": "Orator",
+      "base": {
+        "STR": 12,
+        "DEX": 8,
+        "CON": 26,
+        "WIS": 34,
+        "INT": 18,
+        "CHA": 44
+      },
+      "lifespan": 5,
+      "flavour": "A yellow-and-black songwing with a sting in the chorus.",
+      "trainingProfile": {
+        "major": "CHA",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Hive Command",
+          "desc": "30% chance its debuffs last an extra round."
+        },
+        {
+          "name": "Royal Jelly",
+          "desc": "Team: +2 HP regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "odonatra",
+      "name": "Duskdart",
+      "body": "Insectoid",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 14,
+        "DEX": 44,
+        "CON": 16,
+        "WIS": 22,
+        "INT": 30,
+        "CHA": 8
+      },
+      "lifespan": 4,
+      "flavour": "A dusk-cyan skimmer, all speed and shimmer, that strikes between wingbeats.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "WIS"
+      },
+      "innate": [
+        {
+          "name": "Skim Dart",
+          "desc": "+25% damage on its first hit."
+        },
+        {
+          "name": "Compound Eyes",
+          "desc": "+11% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "crocmaw",
+      "name": "Mirejaw",
+      "body": "Reptilian",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 44,
+        "DEX": 10,
+        "CON": 38,
+        "WIS": 20,
+        "INT": 12,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "An olive-drab saurian, low and patient as a bog, with a bite that ends arguments.",
+      "trainingProfile": {
+        "major": "STR",
+        "flaw": "WIS"
+      },
+      "innate": [
+        {
+          "name": "Death Roll",
+          "desc": "+25% damage to enemies below 30% HP."
+        },
+        {
+          "name": "Armored Scales",
+          "desc": "Reduces damage taken by 1 per hit. +1 HP regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "iguanor",
+      "name": "Regalor",
+      "body": "Reptilian",
+      "naturalClass": "Captain",
+      "base": {
+        "STR": 42,
+        "DEX": 10,
+        "CON": 26,
+        "WIS": 14,
+        "INT": 12,
+        "CHA": 34
+      },
+      "lifespan": 4,
+      "flavour": "A gold-and-ivory grandee with a collar of ceremonial fur; fights like etiquette with claws.",
+      "trainingProfile": {
+        "major": "INT",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Sun Basking",
+          "desc": "+3 HP regen/turn."
+        },
+        {
+          "name": "Crest Display",
+          "desc": "10% chance to Blind on every hit."
+        }
+      ]
+    },
+    {
+      "id": "serpwyn",
+      "name": "Sandsaur",
+      "body": "Reptilian",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 16,
+        "DEX": 22,
+        "CON": 14,
+        "WIS": 42,
+        "INT": 30,
+        "CHA": 8
+      },
+      "lifespan": 5,
+      "flavour": "A sand-yellow saurian, long and low; it moves like heat-haze.",
+      "trainingProfile": {
+        "major": "WIS",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Cold Blood",
+          "desc": "Incoming debuffs are 20% weaker."
+        },
+        {
+          "name": "Hypnotic Gaze",
+          "desc": "+7% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "geckari",
+      "name": "Emberimp",
+      "body": "Reptilian",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 30,
+        "DEX": 40,
+        "CON": 18,
+        "WIS": 8,
+        "INT": 16,
+        "CHA": 20
+      },
+      "lifespan": 4,
+      "flavour": "A small ember-orange clinger that scales sheer walls and tests patience alike.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Wall Runner",
+          "desc": "+6% dodge chance. +2% accuracy."
+        },
+        {
+          "name": "Tail Drop",
+          "desc": "+10% critical hit chance."
+        }
+      ]
+    },
+    {
+      "id": "tortavos",
+      "name": "Mosscap",
+      "body": "Reptilian",
+      "naturalClass": "Spellshield",
+      "base": {
+        "STR": 8,
+        "DEX": 12,
+        "CON": 44,
+        "WIS": 36,
+        "INT": 22,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A moss-green domed elder; it carries its house, its history and its patience in one shell.",
+      "trainingProfile": {
+        "major": "CON",
+        "flaw": "INT"
+      },
+      "innate": [
+        {
+          "name": "Shell Ward",
+          "desc": "Starts battle with an 18 HP shield."
+        },
+        {
+          "name": "Inner Calm",
+          "desc": "+2 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "pyraxon",
+      "name": "Pyrodrake",
+      "body": "Draconic",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 42,
+        "DEX": 20,
+        "CON": 36,
+        "WIS": 20,
+        "INT": 16,
+        "CHA": 10
+      },
+      "lifespan": 8,
+      "flavour": "An ember-red dragon that banks the arena in heat; the first row learns to lean back.",
+      "trainingProfile": {
+        "major": "STR",
+        "flaw": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Flame Aura",
+          "desc": "8% chance to Burn on every hit."
+        },
+        {
+          "name": "Draconic Pride",
+          "desc": "+6% damage."
+        }
+      ]
+    },
+    {
+      "id": "frostwyren",
+      "name": "Glacidrake",
+      "body": "Draconic",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 22,
+        "DEX": 22,
+        "CON": 20,
+        "WIS": 30,
+        "INT": 44,
+        "CHA": 6
+      },
+      "lifespan": 8,
+      "flavour": "A drake glazed in glacier-blue; frost gathers on the rails when it enters.",
+      "trainingProfile": {
+        "major": "INT",
+        "flaw": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Blizzard",
+          "desc": "6% chance to Stun on every hit."
+        },
+        {
+          "name": "Glacial Wisdom",
+          "desc": "+2 mana regen/turn. Reduces damage taken by 1 per hit."
+        }
+      ]
+    },
+    {
+      "id": "stormlerath",
+      "name": "Voltdrake",
+      "body": "Draconic",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 26,
+        "DEX": 38,
+        "CON": 20,
+        "WIS": 22,
+        "INT": 32,
+        "CHA": 6
+      },
+      "lifespan": 7,
+      "flavour": "A storm-violet dragon; thunder arrives a heartbeat after every wingbeat.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Overload",
+          "desc": "+7% damage."
+        },
+        {
+          "name": "Dodge Storm",
+          "desc": "+6% dodge chance. +3% critical hit chance."
+        }
+      ]
+    },
+    {
+      "id": "verdantdrake",
+      "name": "Verdrake",
+      "body": "Draconic",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 20,
+        "DEX": 18,
+        "CON": 26,
+        "WIS": 40,
+        "INT": 32,
+        "CHA": 8
+      },
+      "lifespan": 9,
+      "flavour": "A verdant-green dragon; the forest's answer to a siege.",
+      "trainingProfile": {
+        "major": "CON",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Life Bloom",
+          "desc": "Team: +2 HP regen/turn. Team: +1 mana regen/turn."
+        },
+        {
+          "name": "Root Grasp",
+          "desc": "Enemies: -3% dodge chance. Enemies: -2% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "voidmaw",
+      "name": "Voidfiend",
+      "body": "Draconic",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 22,
+        "DEX": 26,
+        "CON": 20,
+        "WIS": 32,
+        "INT": 38,
+        "CHA": 6
+      },
+      "lifespan": 7,
+      "flavour": "A blue-black horned devourer; the mouth is a promise.",
+      "trainingProfile": {
+        "major": "INT",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Void Pulse",
+          "desc": "Heals 10% of damage dealt as HP."
+        },
+        {
+          "name": "Entropy",
+          "desc": "Enemies: -5% damage dealt."
+        }
+      ]
+    },
+    {
+      "id": "tenebrae",
+      "name": "Duskgeist",
+      "body": "Abyssal",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 32,
+        "DEX": 42,
+        "CON": 14,
+        "WIS": 22,
+        "INT": 24,
+        "CHA": 10
+      },
+      "lifespan": 7,
+      "flavour": "A bat-eared shade in deep violet; the light around it gives up early.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Cloak of Shadow",
+          "desc": "+8% dodge chance."
+        },
+        {
+          "name": "Silent Strike",
+          "desc": "+40% damage on its first hit. +5% critical hit chance."
+        }
+      ]
+    },
+    {
+      "id": "abyssomancer",
+      "name": "Skulgeist",
+      "body": "Abyssal",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 16,
+        "DEX": 30,
+        "CON": 12,
+        "WIS": 34,
+        "INT": 40,
+        "CHA": 12
+      },
+      "lifespan": 8,
+      "flavour": "A drifting night-purple shroud with a bone-white skull for a face; the abyss looks out through its sockets.",
+      "trainingProfile": {
+        "major": "INT",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Rift Magic",
+          "desc": "6% chance to cast a skill twice."
+        },
+        {
+          "name": "Mana Theft",
+          "desc": "Steals mana equal to 20% of damage dealt."
+        }
+      ]
+    },
+    {
+      "id": "lurkerss",
+      "name": "Morgrel",
+      "body": "Abyssal",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 14,
+        "DEX": 30,
+        "CON": 14,
+        "WIS": 38,
+        "INT": 34,
+        "CHA": 14
+      },
+      "lifespan": 8,
+      "flavour": "A green shambler that should not still be moving, and moves anyway; patiently, endlessly.",
+      "trainingProfile": {
+        "major": "WIS",
+        "flaw": "STR"
+      },
+      "innate": [
+        {
+          "name": "Psychic Aura",
+          "desc": "Team: +3% dodge chance. Team: +1 mana regen/turn."
+        },
+        {
+          "name": "Ancient Knowing",
+          "desc": "+5% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "chrono-leviathan",
+      "name": "Chronotide",
+      "body": "Abyssal",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 16,
+        "DEX": 30,
+        "CON": 12,
+        "WIS": 40,
+        "INT": 38,
+        "CHA": 8
+      },
+      "lifespan": 10,
+      "flavour": "An aged-teal titan of the deep whose tentacles move a half-second out of time.",
+      "trainingProfile": {
+        "major": "WIS",
+        "flaw": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Temporal Distortion",
+          "desc": "Team: +1 mana regen/turn. Enemies: -4% dodge chance."
+        },
+        {
+          "name": "Age Reversal",
+          "desc": "Heals 15% of damage dealt as HP."
+        }
+      ]
+    },
+    {
+      "id": "cephalumbra",
+      "name": "Umbratide",
+      "body": "Abyssal",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 32,
+        "DEX": 46,
+        "CON": 12,
+        "WIS": 20,
+        "INT": 24,
+        "CHA": 10
+      },
+      "lifespan": 7,
+      "flavour": "A shadow-violet tentacled thing that pools like ink and strikes from its own darkness.",
+      "trainingProfile": {
+        "major": "DEX",
+        "flaw": "CON"
+      },
+      "innate": [
+        {
+          "name": "Phase Shift",
+          "desc": "+9% dodge chance."
+        },
+        {
+          "name": "Whip Strike",
+          "desc": "Ignores 10% of enemy mitigation."
+        }
+      ]
+    },
+    {
+      "id": "titanrex",
+      "name": "Titanus",
+      "body": "Mythical",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 60,
+        "DEX": 16,
+        "CON": 50,
+        "WIS": 12,
+        "INT": 12,
+        "CHA": 8
+      },
+      "lifespan": 9,
+      "flavour": "The apex bulk of the old world in grey-green plate; the ground files a complaint.",
+      "trainingProfile": {
+        "major": "STR"
+      },
+      "innate": [
+        {
+          "name": "Prehistoric Roar",
+          "desc": "+20% damage on its first hit."
+        },
+        {
+          "name": "Unstoppable",
+          "desc": "Reduces damage taken by 1 per hit. Incoming debuffs are 15% weaker."
+        }
+      ]
+    },
+    {
+      "id": "stellarion",
+      "name": "Stellith",
+      "body": "Mythical",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 10,
+        "DEX": 52,
+        "CON": 10,
+        "WIS": 32,
+        "INT": 44,
+        "CHA": 10
+      },
+      "lifespan": 8,
+      "flavour": "A star-pale visitor with a crown of horns; it watches the way the night sky watches.",
+      "trainingProfile": {
+        "major": "DEX"
+      },
+      "innate": [
+        {
+          "name": "Stellar Shot",
+          "desc": "+9% critical hit chance."
+        },
+        {
+          "name": "Cosmic Precision",
+          "desc": "+10% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "wisdomkeeper",
+      "name": "Maskelder",
+      "body": "Mythical",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 12,
+        "DEX": 18,
+        "CON": 20,
+        "WIS": 56,
+        "INT": 44,
+        "CHA": 8
+      },
+      "lifespan": 10,
+      "flavour": "A masked elder in ritual paint; the mask is older than the league it fights in.",
+      "trainingProfile": {
+        "major": "WIS"
+      },
+      "innate": [
+        {
+          "name": "Foresight",
+          "desc": "Team: +5% dodge chance."
+        },
+        {
+          "name": "Truth's Word",
+          "desc": "Reduces damage taken by 1 per hit. Every 3rd round, automatically shrugs off one debuff on itself."
+        }
+      ]
+    },
+    {
+      "id": "archmage-aleph",
+      "name": "Magivex",
+      "body": "Mythical",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 8,
+        "DEX": 20,
+        "CON": 14,
+        "WIS": 40,
+        "INT": 58,
+        "CHA": 18
+      },
+      "lifespan": 8,
+      "flavour": "A green-skinned conjurer under a crooked violet hat, first of the old order of arena mages.",
+      "trainingProfile": {
+        "major": "INT"
+      },
+      "innate": [
+        {
+          "name": "Spell Echo",
+          "desc": "12% chance to cast a skill twice."
+        },
+        {
+          "name": "Arcane Mastery",
+          "desc": "+5 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "harmonybringer",
+      "name": "Aurelith",
+      "body": "Mythical",
+      "naturalClass": "Bard",
+      "base": {
+        "STR": 10,
+        "DEX": 40,
+        "CON": 28,
+        "WIS": 16,
+        "INT": 10,
+        "CHA": 54
+      },
+      "lifespan": 9,
+      "flavour": "A radiant gold floater trailing light like a hymn; the crowd hushes when it rises.",
+      "trainingProfile": {
+        "major": "CHA"
+      },
+      "innate": [
+        {
+          "name": "Unison",
+          "desc": "Team: reduces damage taken by 2 per hit."
+        },
+        {
+          "name": "Aegis Bond",
+          "desc": "Reduces damage taken by 2 per hit. +2 HP regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "grendscale",
+      "name": "Gillbrute",
+      "body": "Saurian",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 40,
+        "DEX": 18,
+        "CON": 36,
+        "WIS": 12,
+        "INT": 10,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A heavy green bruiser with a gilled, sea-cold stare; half the ocean's menace on two legs.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Scaled Hide",
+          "desc": "Reduces damage taken by 2 per hit."
+        },
+        {
+          "name": "Primal Roar",
+          "desc": "Enemies: -4% damage dealt."
+        }
+      ]
+    },
+    {
+      "id": "vipramane",
+      "name": "Venimp",
+      "body": "Saurian",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 30,
+        "DEX": 38,
+        "CON": 20,
+        "WIS": 12,
+        "INT": 14,
+        "CHA": 12
+      },
+      "lifespan": 6,
+      "flavour": "A venom-green sprite; small, quick, and deeply unfair.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Serpent's Strike",
+          "desc": "+35% damage on its first hit. +4% critical hit chance."
+        },
+        {
+          "name": "Mane Bristle",
+          "desc": "+7% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "thornhide",
+      "name": "Mossbrist",
+      "body": "Saurian",
+      "naturalClass": "Tank",
+      "base": {
+        "STR": 28,
+        "DEX": 12,
+        "CON": 44,
+        "WIS": 18,
+        "INT": 10,
+        "CHA": 12
+      },
+      "lifespan": 6,
+      "flavour": "A moss-brown bristle-orb; walking into it is the whole argument.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Thornplate",
+          "desc": "Enters battle with a 16-point protective ward."
+        },
+        {
+          "name": "Ironscale",
+          "desc": "Reduces damage taken by 3 per hit."
+        }
+      ]
+    },
+    {
+      "id": "runewyrm",
+      "name": "Runeflight",
+      "body": "Saurian",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 16,
+        "DEX": 16,
+        "CON": 20,
+        "WIS": 36,
+        "INT": 32,
+        "CHA": 12
+      },
+      "lifespan": 6,
+      "flavour": "A rune-violet flier; sigils flicker along its wings when it casts.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Runic Wisdom",
+          "desc": "+2 mana regen/turn."
+        },
+        {
+          "name": "Petrifying Gaze",
+          "desc": "8% chance to Stun on every hit."
+        }
+      ]
+    },
+    {
+      "id": "basilroar",
+      "name": "Embersaur",
+      "body": "Saurian",
+      "naturalClass": "Orator",
+      "base": {
+        "STR": 22,
+        "DEX": 18,
+        "CON": 20,
+        "WIS": 26,
+        "INT": 12,
+        "CHA": 34
+      },
+      "lifespan": 6,
+      "flavour": "A rust-red saurian whose bellow shakes dust from the stands.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Dread Bellow",
+          "desc": "Enemies: -5% accuracy."
+        },
+        {
+          "name": "Rally Cry",
+          "desc": "Team: +5% damage."
+        }
+      ]
+    },
+    {
+      "id": "thunderoc",
+      "name": "Stormtalon",
+      "body": "Tempestine",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 24,
+        "DEX": 38,
+        "CON": 16,
+        "WIS": 12,
+        "INT": 26,
+        "CHA": 10
+      },
+      "lifespan": 6,
+      "flavour": "A storm-gold terror of the high thermals; the sky's opinion, delivered.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Chain Lightning",
+          "desc": "8% chance to Stun on every hit."
+        },
+        {
+          "name": "Storm Dive",
+          "desc": "+35% damage on its first hit."
+        }
+      ]
+    },
+    {
+      "id": "galewing",
+      "name": "Galecrest",
+      "body": "Tempestine",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 30,
+        "DEX": 36,
+        "CON": 18,
+        "WIS": 14,
+        "INT": 14,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A storm-cyan flier that rides its own gusts; the crest snaps like a banner in wind.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Wind Veil",
+          "desc": "+8% dodge chance."
+        },
+        {
+          "name": "Squall",
+          "desc": "Enemies: -3% accuracy."
+        }
+      ]
+    },
+    {
+      "id": "tidecaller",
+      "name": "Tidegale",
+      "body": "Tempestine",
+      "naturalClass": "Spellshield",
+      "base": {
+        "STR": 16,
+        "DEX": 16,
+        "CON": 34,
+        "WIS": 30,
+        "INT": 18,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A sea-green caller of currents; the tide listens, eventually.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Tidal Grace",
+          "desc": "Team: +2 HP regen/turn."
+        },
+        {
+          "name": "Deluge",
+          "desc": "Team: +1 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "maelstrom",
+      "name": "Vortiqua",
+      "body": "Tempestine",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 14,
+        "DEX": 20,
+        "CON": 16,
+        "WIS": 30,
+        "INT": 38,
+        "CHA": 10
+      },
+      "lifespan": 6,
+      "flavour": "A deep-blue tentacled spiral; the water remembers everywhere it has been.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Overcharge",
+          "desc": "+7% damage."
+        },
+        {
+          "name": "Static Field",
+          "desc": "6% chance to cast a skill twice."
+        }
+      ]
+    },
+    {
+      "id": "brinehowl",
+      "name": "Brinefiend",
+      "body": "Tempestine",
+      "naturalClass": "Orator",
+      "base": {
+        "STR": 22,
+        "DEX": 16,
+        "CON": 20,
+        "WIS": 26,
+        "INT": 12,
+        "CHA": 32
+      },
+      "lifespan": 6,
+      "flavour": "A teal-skinned horror from the deep trenches; its howl carries the cold of the sea floor.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Gale Cry",
+          "desc": "Enemies: -5% accuracy."
+        },
+        {
+          "name": "Rally Squall",
+          "desc": "Team: +5% damage."
+        }
+      ]
+    },
+    {
+      "id": "chitinhop",
+      "name": "Jadewing",
+      "body": "Broodkin",
+      "naturalClass": "Tank",
+      "base": {
+        "STR": 30,
+        "DEX": 14,
+        "CON": 42,
+        "WIS": 12,
+        "INT": 14,
+        "CHA": 12
+      },
+      "lifespan": 6,
+      "flavour": "A jade-shelled skipper that bounces between blows on quick glassy wings.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Carapace",
+          "desc": "Reduces damage taken by 3 per hit."
+        },
+        {
+          "name": "Dig In",
+          "desc": "Enters battle with a 14-point protective ward."
+        }
+      ]
+    },
+    {
+      "id": "broodmother",
+      "name": "Broodclaw",
+      "body": "Broodkin",
+      "naturalClass": "Sage",
+      "base": {
+        "STR": 14,
+        "DEX": 14,
+        "CON": 22,
+        "WIS": 34,
+        "INT": 32,
+        "CHA": 14
+      },
+      "lifespan": 6,
+      "flavour": "A plum-shelled matriarch, claws raised over the swarm she carries with her.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Brood Tend",
+          "desc": "Team: +2 HP regen/turn."
+        },
+        {
+          "name": "Hive Mind",
+          "desc": "Team: +1 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "mantiskin",
+      "name": "Huskthorn",
+      "body": "Broodkin",
+      "naturalClass": "Rogue",
+      "base": {
+        "STR": 32,
+        "DEX": 36,
+        "CON": 18,
+        "WIS": 12,
+        "INT": 16,
+        "CHA": 10
+      },
+      "lifespan": 6,
+      "flavour": "A burnt-orange husk bristling with dried thorns; what it lost in colour it kept in edge.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Ambush Fold",
+          "desc": "+40% damage on its first hit."
+        },
+        {
+          "name": "Blade Arms",
+          "desc": "+5% critical hit chance."
+        }
+      ]
+    },
+    {
+      "id": "resinback",
+      "name": "Amberling",
+      "body": "Broodkin",
+      "naturalClass": "Spellshield",
+      "base": {
+        "STR": 24,
+        "DEX": 12,
+        "CON": 38,
+        "WIS": 26,
+        "INT": 14,
+        "CHA": 12
+      },
+      "lifespan": 6,
+      "flavour": "A stone-jointed golem sealed in old amber resin; the carapace remembers the river it held.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Resin Plate",
+          "desc": "Reduces damage taken by 2 per hit."
+        },
+        {
+          "name": "Amber Set",
+          "desc": "Incoming debuffs are 15% weaker."
+        }
+      ]
+    },
+    {
+      "id": "swarmherd",
+      "name": "Swarmel",
+      "body": "Broodkin",
+      "naturalClass": "Bard",
+      "base": {
+        "STR": 18,
+        "DEX": 26,
+        "CON": 20,
+        "WIS": 14,
+        "INT": 22,
+        "CHA": 28
+      },
+      "lifespan": 6,
+      "flavour": "A green mass that is many things agreeing to be one thing, most of the time.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Command Swarm",
+          "desc": "Team: +4% damage."
+        },
+        {
+          "name": "Disorient",
+          "desc": "Enemies: -4% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "aeonrex",
+      "name": "Magnos",
+      "body": "Primeval",
+      "naturalClass": "Warrior",
+      "base": {
+        "STR": 48,
+        "DEX": 16,
+        "CON": 38,
+        "WIS": 12,
+        "INT": 10,
+        "CHA": 14
+      },
+      "lifespan": 8,
+      "flavour": "The elder giant, amber-bright and slow as geology. Every step lands like a verdict.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Dawn Fury",
+          "desc": "+8% damage."
+        },
+        {
+          "name": "Unbroken Age",
+          "desc": "Reduces damage taken by 2 per hit. Incoming debuffs are 20% weaker."
+        }
+      ]
+    },
+    {
+      "id": "stellavore",
+      "name": "Vorastra",
+      "body": "Primeval",
+      "naturalClass": "Ranger",
+      "base": {
+        "STR": 12,
+        "DEX": 46,
+        "CON": 10,
+        "WIS": 24,
+        "INT": 38,
+        "CHA": 12
+      },
+      "lifespan": 8,
+      "flavour": "A devourer in magenta and olive; the horns curl like galaxies going wrong.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Starving Aim",
+          "desc": "+10% critical hit chance."
+        },
+        {
+          "name": "Light Drinker",
+          "desc": "Heals 12% of damage dealt as HP."
+        }
+      ]
+    },
+    {
+      "id": "chronoshell",
+      "name": "Bronzecap",
+      "body": "Primeval",
+      "naturalClass": "Spellshield",
+      "base": {
+        "STR": 24,
+        "DEX": 10,
+        "CON": 46,
+        "WIS": 34,
+        "INT": 16,
+        "CHA": 12
+      },
+      "lifespan": 8,
+      "flavour": "A bronze-domed elder, crowned and unhurried; it has outlasted every clock it was measured against.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Era Shell",
+          "desc": "Enters battle with a 20-point protective ward."
+        },
+        {
+          "name": "Time Dilation",
+          "desc": "Team: +1 mana regen/turn. Enemies: -4% dodge chance."
+        }
+      ]
+    },
+    {
+      "id": "originmage",
+      "name": "Ossari",
+      "body": "Primeval",
+      "naturalClass": "Wizard",
+      "base": {
+        "STR": 8,
+        "DEX": 18,
+        "CON": 12,
+        "WIS": 38,
+        "INT": 50,
+        "CHA": 18
+      },
+      "lifespan": 8,
+      "flavour": "The first mage, reduced to bone and unwilling to stop; the robes went, the craft stayed.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "First Spell",
+          "desc": "10% chance to cast a skill twice."
+        },
+        {
+          "name": "Wellspring Eternal",
+          "desc": "+4 mana regen/turn."
+        }
+      ]
+    },
+    {
+      "id": "worldsong",
+      "name": "Songlume",
+      "body": "Primeval",
+      "naturalClass": "Bard",
+      "base": {
+        "STR": 10,
+        "DEX": 38,
+        "CON": 26,
+        "WIS": 14,
+        "INT": 12,
+        "CHA": 48
+      },
+      "lifespan": 8,
+      "flavour": "An ivory radiance in the shape of a spirit; the song given shape, glowing from within.",
+      "trainingProfile": {},
+      "innate": [
+        {
+          "name": "Genesis Chord",
+          "desc": "Team: +5% damage."
+        },
+        {
+          "name": "Ending Verse",
+          "desc": "Team: reduces damage taken by 2 per hit."
+        }
+      ]
+    }
+  ],
+  "bios": {
+    "kongrath": "Gruulk grew up the biggest, quietest member of a wandering troupe of smaller, mismatched creatures who banded together for safety on the road. Nothing approached the green-hided colossus twice, and he never asked to be their protector — he was simply the one standing in front. When the troupe finally scattered, he found he missed having something worth standing between, and joined the Circuit looking for it all over again. The first Chest Beat of a match is him announcing he has found it.",
+    "aegisox": "Terrock stood a mountain pass for a working lifetime — a squared, quarry-tan wall the caravans planned their routes around. When the caravans traded living guardians for engines, the pass no longer needed a wall, and a wall is all Terrock ever wanted to be. The arena still needs one. She fights to shield her teammates more than to win, and Immovable is not a boast, it is a job description.",
+    "maneleo": "Manegold led a company of prize-fighters until a younger rival talked it out from under him, and refusing exile, he walked onto the Circuit to rebuild his name from nothing. The tawny hood of fur falls around his face like a mane and he leads from the front, first into the line, loudest at the Rallying Roar — gathering a new company one teammate at a time.",
+    "grivvel": "Grynt's scrubland territory shrank a little more every season — hungrier rivals, a road through his old range — until the wild simply left the wiry green scrapper behind. The Circuit is the first place in years with honest, deliberate boundaries, and he treats every one of them as negotiable. He is already picking the next fight before the last one has cooled.",
+    "ursath": "Frostmaul woke from a long mountain sleep to find his high forest felled and paved. The blue-white mauler wanders the Circuit half in search of a new home, half for the honest satisfaction of a Maul landing true — and the crowd has learned to love the unhurried way he winds one up.",
+    "pinguox": "Capling was born mid-trek, in a generation that never saw the colony her parents fled. Word has finally come back that the old grounds are safe again, and the little teal diver is testing every plunge of the long journey home on the Circuit — Dive Bomb lands a little truer with each attempt, and she is cheerfully unbothered that everything she fights is bigger than she is.",
+    "strixil": "Aeristra stayed behind when the scattering emptied her roost, drifting the old thermals alone and keeping its knowledge alive for whoever eventually found their way back. Now the drifters trickle home in twos and threes, and the pale-blue floater has become the archivist they all quietly rely on — Silent Wisdom is not a technique, it is a habit that never broke.",
+    "balaenix": "Azurefin was born in backwaters the others abandoned mid-scattering, and stayed rather than follow — the stillness suited her. A deep-blue drifter with pale fins like sails, she hangs motionless until the moment stops being one. Statue Stance for an hour; Ambush Strike once. The crowd never sees it coming, which is the point of the crowd, as far as she is concerned.",
+    "corvaan": "Cobalon learned to make a home out of nowhere in particular during the long scattering, picking up trinkets and a stolen spellbook from every territory the wind blew him through. Now that the old roosts call everyone back, the cobalt scholar finds he would rather collect reputation than a nest — every Arcane Bolt is a page of that book, cast at somebody.",
+    "larkessa": "Rosewing's voice became more than talent during the scattering — flung far enough on the wind, it helped the separated find each other across a continent of empty sky. The roosts are full again, and when the rose-tinted songwing opens a match with the Song of Valor, the applause still reminds her that every one of those voices made it home.",
+    "bruxaroo": "Mosshorn made his name in staged fairground exhibition bouts and grew tired of the choreography. The green, moss-crowned brawler came to the Circuit hungry for real competition and the honest thud of an unrehearsed Haymaker — and the grin after it lands is the only part of the old act he kept.",
+    "koalio": "Slumbra has traveled with more fairground troupes than he can name, a familiar grey-blue stranger wherever the fair sets up next. He competes to prove gentleness can win — he would genuinely rather ease an opponent to the floor inside his Drowsy Aura than strike them, and his record says the floor is patient enough for both.",
+    "quokkade": "Tannik is the fair circuit's most relentlessly cheerful competitor — a small warm-tan creature who fights for the crowds, the friendships, and the picnic afterwards, in roughly that order. Every arena gets the same Cheer, because every arena, as far as Tannik is concerned, is the same wonderful place.",
+    "sylvaglide": "Leafwisp grew up the smallest member of a fair too used to moving fast to wait for stragglers, and learned early to ride draughts nobody else could feel. She has spent her whole career turning being underestimated into an ambush — the Glide Strike arrives from an angle that was empty a moment ago.",
+    "tazzik": "Every fair Razzhorn has traveled with learns to read the signs and start packing a little early. The arena is the only place that can absorb the little red demon's full appetite — Devour is not a metaphor — and he is fiercely, secretly loyal to anyone who can weather it and grin back.",
+    "maelurk": "Oozehorn was one of the first to feel the old trenches stir, and unlike most of what lives down there, the horned green ooze moved toward the strangeness instead of away from it. He surfaced out of pure curiosity, and treats every Tentacle Barrage as an experiment he is enjoying immensely.",
+    "nautilux": "Coralux is a thousand-tide drifter who has weathered every storm, including whatever is moving in the deep dark now. The shell-orange elder competes not to conquer but to endure, taking slow, deep pride in a Ward no storm has ever broken.",
+    "carcharun": "Gravemaw surfaced long before anyone spoke of the trenches stirring, and the slab-shouldered slate beast has watched entire leagues rise and crumble since. He returns each season to mentor the young monsters now following him up from the dark, and to remind an impatient Circuit that Weathered Hide beats fresh fury — patience outlasts power.",
+    "mantaris": "Veilfin was one of the first in the deep to feel the stirring, and unlike his kin he glided up toward it. A soft-violet showman of the open water, curious and unbothered by a crowd — hooked on the hush right before the Wing Current sweeps a whole line off balance.",
+    "lanterix": "Lumigel was born in true darkness, far below where the stirring first began, with nothing but his own soft pink glow for company. He carries that deep light to the surface now, drawn up by the same restlessness moving through the trenches — the Abyssal Glow is a small piece of the abyss that followed him into the ring.",
+    "scarabrute": "Scarabron spent a century as the keystone of a dam his colony built, holding back a river with his own bronze shell. When the colony finished their work and moved on, he found the Circuit — the only place left where something is allowed to hit him as hard as the river did, and where Chitin Plate is still a calling rather than a curiosity.",
+    "mantevoke": "Bristleye guarded a temple garden fewer visitors bother to find anymore — a green, thorn-crowned orb holding one unblinking watch, perhaps the last of his line still keeping the old discipline. He competes to test whether that discipline still means anything in a world that has stopped watching. The Ambush says it does.",
+    "arachnyx": "Pincerax has never once left her lair to fight — opponents are escorted in past the scarlet armour plate stacked like trophies. Reports of new nests appearing in territories long empty have left the old duellist, for the first time, curious about the wider world instead of dismissive of it.",
+    "vespera": "Vesperon is a queen whose hive grew so vast and self-sufficient it no longer needed her orders — exactly the kind of new order the old colonies are quietly giving way to. She entered the Circuit to feel needed again, and Hive Command still carries: ten thousand loyal wings follow the yellow-and-black songwing into every arena anyway.",
+    "odonatra": "Duskdart hatched in one of the new nests quietly appearing where the old territories fell empty — young, fast, and utterly unbothered by whatever came before her. The dusk-cyan skimmer flew through a tournament grounds by accident, dodged everything thrown at her on the way out, and came back the next season to do it on purpose.",
+    "crocmaw": "Mirejaw waited motionless in his bog for so long that maps marked the olive ridge of his back as terrain. The Circuit is the first thing in decades that made him move — and when the Death Roll finally turns, the arena floor files the same complaint the bog used to.",
+    "iguanor": "Regalor deposed no one and conquered nothing — a retinue simply formed around the gold-and-ivory grandee because he looks magnificent at rest, and then it waited, for years, doing nothing in particular. He competes to finally prove the crown he never asked for was deserved, and the Crest Display suggests he has stopped doubting it himself.",
+    "serpwyn": "Sandsaur read the futures of champions for forty seasons before deciding to test whether prophecy is easier from inside the arena. The sand-yellow saurian moves like heat-haze and has never been surprised by an opponent. Not once — ask anyone caught in the Hypnotic Gaze.",
+    "geckari": "Emberimp grew up scaling the arena's outer walls to watch matches for free, long before he had a way in. The little ember-orange clinger fights the way he watched — from angles nobody thinks to defend, which is what Wall Runner has always really meant.",
+    "tortavos": "Mosscap signed up for the Circuit two hundred years ago and arrived last spring, entirely unbothered. Time moves differently under the moss-green dome, and opponents who rush the old king tend to find that out the hard way — Inner Calm is not a state of mind, it is a climate.",
+    "pyraxon": "The Old Flights kept their own courts in the high wastes for centuries and considered the Circuit beneath them — until the crowds grew too large to ignore. Pyrodrake attends as the ember court's emissary, banks the arena in heat, and treats every match as a diplomatic incident he intends to win. Draconic Pride is not an innate so much as a condition of his attendance.",
+    "frostwyren": "Glacidrake is the glacier court's scholar, glazed in blue, older than the licence system that permits her to fight and unimpressed by it. Frost gathers on the rails when she enters. She competes the way she studies: patiently, thoroughly, and with a Blizzard held in reserve for anyone who mistakes patience for hesitation.",
+    "stormlerath": "The storm court sent its fastest — a violet drake who arrives a heartbeat before his own thunder and leaves before the echo settles. Voltdrake finds the Circuit's rules quaint and its crowds intoxicating, and the Dodge Storm is him showing off to both at once.",
+    "verdantdrake": "The green court alone voted against attending, and Verdrake came anyway — the forest's answer to a siege, sent to make sure the other flights behave. She fights rooted, Life Bloom mending whatever the match tears, and has quietly become the reason the draconic licence has never been revoked.",
+    "voidmaw": "The courts do not speak of a fifth flight, which is exactly the kind of silence Voidfiend enjoys occupying. The blue-black devourer holds a legal licence, files immaculate paperwork, and radiates Entropy — and nobody at the licensing guild can remember who signed the approval.",
+    "tenebrae": "When the trenches began to stir, the guilds faced a choice: bar the abyss from the sport, or give it a stage and keep it where the stewards can see it. Duskgeist was the first through the door — a bat-eared shade in deep violet who fights from the Cloak of Shadow and signs autographs afterwards, which unsettles people more than the fighting does.",
+    "abyssomancer": "Skulgeist drifts in a shroud of night-purple, a bone-white skull where a face should be, and casts through a Rift the licensing inspectors have politely declined to look inside. The Mana Theft is legal. The guild checked. Twice.",
+    "lurkerss": "Morgrel should not still be moving, and moves anyway — a green shambler that walked out of the deepest trench carrying an Ancient Knowing no one taught it. It is patient, endless, and unfailingly courteous, which the Circuit has decided to find charming rather than think about.",
+    "chrono-leviathan": "Chronotide rose from the deep with its tentacles moving a half-second out of time, and the stirring rose with it. The aged-teal titan does not fight so much as arrive at the version of the match where it has already won — Temporal Distortion is the polite word the stewards settled on.",
+    "cephalumbra": "Umbratide pools like spilled ink and strikes from its own darkness — a shadow-violet thing the deep sent up, the stewards suspect, as a scout. It Phase Shifts through blows that have already landed, and its match footage is the most rewatched and least understood on the Circuit.",
+    "titanrex": "The stories said something apex once walked the old world, and the stories undersold it. Titanus is grey-green plate over the patience of extinct ages, holder of an Elite Licence and the Circuit's only standing ground-repair invoice. Unstoppable is not marketing.",
+    "stellarion": "Stellith watches the way the night sky watches — star-pale, horn-crowned, and precise past the point of comfort. The legends say it came down to see the arenas the stories kept mentioning; the Stellar Shot suggests it intends to be worth the stories written next.",
+    "wisdomkeeper": "The mask is older than the league it fights in, and Maskelder has never once removed it. The elder walks the Circuit reading matches three moves before they happen — Foresight as a courtesy, Truth's Word as a verdict — and every champion eventually makes the pilgrimage to lose to it on purpose.",
+    "archmage-aleph": "The first of the old order of arena mages, Magivex wrote the duelling forms every caster on the Circuit still unknowingly uses. The green conjurer under the crooked violet hat has outlived the order, the forms, and most of the record books — and the Spell Echo means every casting is also a small history lesson.",
+    "harmonybringer": "The stories promised something radiant would come when the sport mattered enough, and Aurelith took that as an invitation. A gold light that trails like a hymn, it fights by making its whole team briefly legendary — Unison is the story, retold with the audience inside it.",
+    "grendscale": "The Lab's first stable cross paired mammalian fire with reptilian armour, and Gillbrute is what took: a heavy green bruiser with a sea-cold, gilled stare and a Primal Roar from the warm half of his ancestry. He runs on two calendars at once and has stopped apologising for either.",
+    "vipramane": "Venimp got the serpent's strike and the mammal's restlessness, and no patience from anywhere. The venom-green sprite is small, quick, and deeply unfair — the Mane Bristle is the only warning anyone gets, and it is not much of one.",
+    "thornhide": "Mossbrist inherited hide from one line and thorns from the other, and grew both until walking into him became the whole argument. The moss-brown bristle-orb is the Lab's proof that a defensive cross compounds: Thornplate over Ironscale, patience over patience.",
+    "runewyrm": "Something in the cross woke an older script — sigils flicker along Runeflight's wings that neither parent line carries. The rune-violet flier reads them mid-cast the way an heir reads a will: carefully, and with growing interest in the Petrifying Gaze clause.",
+    "basilroar": "Embersaur took the bellow from the warm line and the audience from nowhere — a rust-red saurian whose Dread Bellow empties the front rows and whose Rally Cry refills them. The Lab bred a bruiser and got an orator; the Circuit has decided not to correct the mistake.",
+    "thunderoc": "The Lab crossed the scattering's fliers with the stirring's swimmers and got weather with opinions. Stormtalon is the storm-gold proof — a terror of the high thermals who dives with the Chain Lightning already committed, the sky's verdict delivered before the defence convenes.",
+    "galewing": "Galecrest rides gusts of its own making, storm-cyan and never quite where the last gust left it. The Wind Veil is not evasion, strictly — it is the weather agreeing to stand between Galecrest and the consequences.",
+    "tidecaller": "Tidegale speaks to currents in a sea-green murmur, and the tide listens — eventually, reluctantly, completely. The Deluge arrives the way weather does: forecast by everyone, prevented by no one.",
+    "maelstrom": "Vortiqua is the cross at its most literal — a deep-blue spiral of sky-charge and sea-pull, Overcharge wrapped around an undertow. The water remembers everywhere it has been; the Static Field makes sure the opponents do too.",
+    "brinehowl": "Brinefiend carries the cold of the sea floor in a teal-skinned frame and a Gale Cry that tastes of salt at the back row. The deep half mourns, the sky half rallies, and the Rally Squall is both at once — the Circuit's only battle-hymn with an undertow.",
+    "chitinhop": "The Lab crossed the fair's showmanship with the hive's numbers, and Jadewing is the opening act: a jade-shelled skipper who bounces between blows on quick glassy wings and Digs In the moment the act needs a finale. The Carapace is real; the delight is realer.",
+    "broodmother": "Broodclaw travels with her nest, and her nest travels with the fair — a plum-shelled matriarch whose swarm strikes the tents, raises the ring, and fills the cheap seats. Brood Tend runs the family; Hive Mind runs the match.",
+    "mantiskin": "Huskthorn is the fair's knife-act gone feral — a burnt-orange husk of dried thorns that folds flat as a poster until the Ambush Fold opens, all Blade Arms and no warning. What it lost in colour it kept in edge.",
+    "resinback": "Amberling was the colony's mason once, stone joints sealed in the amber of old work. The fair found the golem holding up a collapsed pavilion out of habit and hired it on the spot — Resin Plate for the crowd-surge, Amber Set for the headliner who needs a wall.",
+    "swarmherd": "Swarmel is many things agreeing to be one thing, and the fair bills it as exactly that. The green mass performs in the ring and mingles in the stands simultaneously, which the stewards have ruled is one entrant, and the Command Swarm keeps the vote unanimous — most of the time.",
+    "aeonrex": "When a Mythical frame is fused with dragon-blood, what wakes up remembers the dawn age — and resents having missed the ages since. Magnos, the amber elder giant, treats every arena he enters as territory reclaimed, and Dawn Fury as the paperwork.",
+    "stellavore": "The old stories say the gaps between constellations are bite marks. Vorastra — magenta, olive, horns curling like galaxies going wrong — neither confirms nor denies, but opponents report the arena lights dimming when the Light Drinker draws.",
+    "chronoshell": "An era is sealed inside Bronzecap's aged dome — tamers who press an ear to it swear they hear weather. The crowned elder does not dodge; inside the Era Shell, the moment simply hasn't arrived where the blow lands.",
+    "originmage": "The first spell ever cast never actually ended — it has just been looking for a caster sturdy enough to keep casting it. The Lab finally built one out of what remains when everything else about a mage burns away: Ossari, bone and craft and nothing else, still working.",
+    "worldsong": "The song that shaped the world lost its singer eons ago. Songlume — an ivory radiance in the shape of a spirit, glowing from within — picks up the melody mid-verse with the Genesis Chord, and arenas fall silent to let her finish."
+  },
+  "innateEffects": {
+    "Thick Hide": {
+      "flatDR": 3
+    },
+    "Weathered Hide": {
+      "flatDR": 2,
+      "debuffResist": 10
+    },
+    "Spiral Shell": {
+      "flatDR": 2,
+      "dodge": 2
+    },
+    "Statue Stance": {
+      "braceDmg": 1.15
+    },
+    "Ironclad": {
+      "flatDR": 2
+    },
+    "Unstoppable": {
+      "kbResist": 0.25,
+      "flatDR": 1
+    },
+    "Chitin Plate": {
+      "flatDR": 1,
+      "startWard": 12
+    },
+    "Armored Scales": {
+      "flatDR": 1,
+      "hpRegen": 1
+    },
+    "Shell Ward": {
+      "startWard": 18
+    },
+    "Aegis Bond": {
+      "flatDR": 2,
+      "hpRegen": 2
+    },
+    "Quickstep": {
+      "dodge": 6
+    },
+    "Aerial": {
+      "dodge": 7
+    },
+    "Phase Shift": {
+      "dodge": 9
+    },
+    "Wing Current": {
+      "dodge": 10
+    },
+    "Dodge Storm": {
+      "dodge": 6,
+      "crit": 3
+    },
+    "Cloak of Shadow": {
+      "dodge": 8
+    },
+    "Ancient Knowing": {
+      "dodge": 5
+    },
+    "Burrow": {
+      "homeGroundDR": 2,
+      "homeGroundAcc": 8
+    },
+    "Wall Runner": {
+      "dodge": 6,
+      "acc": 2
+    },
+    "Web Trap": {
+      "homeGroundDR": 2,
+      "homeGroundAcc": 8,
+      "dodge": 2
+    },
+    "Keen Eye": {
+      "coverPierce": 0.6
+    },
+    "Cosmic Precision": {
+      "coverPierce": 0.6,
+      "acc": 3
+    },
+    "Compound Eyes": {
+      "rearArcDeg": 75
+    },
+    "Hypnotic Gaze": {
+      "acc": 7
+    },
+    "Silent Wisdom": {
+      "castSteady": 50,
+      "regen": 2
+    },
+    "Glacial Wisdom": {
+      "regen": 2,
+      "flatDR": 1
+    },
+    "Arcane Mastery": {
+      "regen": 5
+    },
+    "Inner Calm": {
+      "castSteady": 50
+    },
+    "Abyssal Glow": {
+      "regen": 3
+    },
+    "Sun Basking": {
+      "hpRegen": 3
+    },
+    "Rising Fury": {
+      "dmgMult": 1.05
+    },
+    "Draconic Pride": {
+      "dmgMult": 1.06
+    },
+    "Overload": {
+      "dmgMult": 1.07
+    },
+    "Pride": {
+      "dmgMult": 1.08
+    },
+    "Flame Aura": {
+      "statusOnHit": {
+        "kind": "burn",
+        "chance": 8,
+        "duration": 2
+      }
+    },
+    "Blizzard": {
+      "statusOnHit": {
+        "kind": "stun",
+        "chance": 6,
+        "duration": 1
+      }
+    },
+    "Whip Strike": {
+      "pierce": 0.1
+    },
+    "Void Pulse": {
+      "lifesteal": 0.1
+    },
+    "Rift Magic": {
+      "echo": 6
+    },
+    "Stellar Shot": {
+      "openFieldDmg": 1.15,
+      "crit": 3
+    },
+    "Rend": {
+      "crit": 8
+    },
+    "Whirlwind": {
+      "crit": 7
+    },
+    "Current Rider": {
+      "fleetfoot": 0.85,
+      "acc": 2
+    },
+    "Tail Drop": {
+      "crit": 10
+    },
+    "Serrated Claws": {
+      "pierce": 0.18
+    },
+    "Southpaw": {
+      "duelDmg": 1.15
+    },
+    "Maul": {
+      "pierce": 0.15
+    },
+    "Arcane Bolt": {
+      "magicDmgMult": 1.1
+    },
+    "Spellblade": {
+      "magicDmgMult": 1.12
+    },
+    "Wellspring": {
+      "echo": 10
+    },
+    "Tentacle Barrage": {
+      "echo": 8
+    },
+    "Spell Echo": {
+      "echo": 12
+    },
+    "Chest Beat": {
+      "duelDmg": 1.15,
+      "firstHitMult": 1.2
+    },
+    "Dive Bomb": {
+      "chargeDmg": 1.18
+    },
+    "Glide Strike": {
+      "predatorDmg": 1.12
+    },
+    "Haymaker": {
+      "firstHitMult": 1.35
+    },
+    "Silent Strike": {
+      "rearArcBonus": 0.1,
+      "crit": 5
+    },
+    "Prehistoric Roar": {
+      "firstHitMult": 1.2
+    },
+    "Ambush Strike": {
+      "rearArcBonus": 0.1,
+      "acc": 4
+    },
+    "Ambush": {
+      "rearArcBonus": 0.1,
+      "firstHitMult": 1.25
+    },
+    "Skim Dart": {
+      "openFieldDmg": 1.15
+    },
+    "Devour": {
+      "lifesteal": 0.3
+    },
+    "Age Reversal": {
+      "lifesteal": 0.15
+    },
+    "Mana Theft": {
+      "manaSteal": 0.2
+    },
+    "Frenzy": {
+      "lowHpDmgMult": 1.25
+    },
+    "Death Roll": {
+      "chargeDmg": 1.18,
+      "executeMult": 1.1
+    },
+    "Venom Fang": {
+      "statusOnHit": {
+        "kind": "poison",
+        "chance": 12,
+        "duration": 3
+      }
+    },
+    "Crest Display": {
+      "statusOnHit": {
+        "kind": "blind",
+        "chance": 10,
+        "duration": 2
+      }
+    },
+    "Encore": {
+      "buffExtend": 25
+    },
+    "Hive Command": {
+      "debuffExtend": 30
+    },
+    "Immovable": {
+      "kbResist": 0.25,
+      "debuffResist": 10
+    },
+    "Cold Blood": {
+      "debuffResist": 20
+    },
+    "Ward": {
+      "startWard": 25
+    },
+    "Tidal Wisdom": {
+      "regen": 2,
+      "hpRegen": 2
+    },
+    "Rallying Roar": {
+      "auraDmgMult": 1.05
+    },
+    "Cheer": {
+      "auraDodge": 4
+    },
+    "Unison": {
+      "packDmg": 1.1,
+      "auraFlatDR": 1
+    },
+    "Song of Valor": {
+      "auraDmgMult": 1.04
+    },
+    "Psychic Aura": {
+      "auraDodge": 3,
+      "auraRegen": 1
+    },
+    "Foresight": {
+      "auraDodge": 5
+    },
+    "Soothing Words": {
+      "auraHpRegen": 3
+    },
+    "Life Bloom": {
+      "auraHpRegen": 2,
+      "auraRegen": 1
+    },
+    "Royal Jelly": {
+      "auraHpRegen": 2
+    },
+    "Ink Cloud": {
+      "enemyAccDebuff": 5
+    },
+    "Hex": {
+      "enemyAccDebuff": 4,
+      "enemyRegenDebuff": 1
+    },
+    "Drowsy Aura": {
+      "auraEnemySlow": 0.85
+    },
+    "Root Grasp": {
+      "auraEnemySlow": 0.85,
+      "enemyAccDebuff": 2
+    },
+    "Entropy": {
+      "enemyDmgDebuff": 0.05
+    },
+    "Temporal Distortion": {
+      "enemyDodgeDebuff": 4,
+      "auraRegen": 1
+    },
+    "Truth's Word": {
+      "flatDR": 1
+    },
+    "Scaled Hide": {
+      "flatDR": 2
+    },
+    "Primal Roar": {
+      "enemyDmgDebuff": 0.04
+    },
+    "Serpent's Strike": {
+      "predatorDmg": 1.12,
+      "crit": 4
+    },
+    "Mane Bristle": {
+      "rearArcDeg": 75,
+      "dodge": 3
+    },
+    "Thornplate": {
+      "startWard": 16
+    },
+    "Ironscale": {
+      "flatDR": 3
+    },
+    "Runic Wisdom": {
+      "regen": 2
+    },
+    "Petrifying Gaze": {
+      "statusOnHit": {
+        "kind": "stun",
+        "chance": 8,
+        "duration": 1
+      }
+    },
+    "Dread Bellow": {
+      "enemyAccDebuff": 5
+    },
+    "Rally Cry": {
+      "auraDmgMult": 1.05
+    },
+    "Chain Lightning": {
+      "statusOnHit": {
+        "kind": "stun",
+        "chance": 8,
+        "duration": 1
+      }
+    },
+    "Storm Dive": {
+      "chargeDmg": 1.18,
+      "acc": 3
+    },
+    "Wind Veil": {
+      "fleetfoot": 0.85
+    },
+    "Squall": {
+      "enemyAccDebuff": 3
+    },
+    "Tidal Grace": {
+      "auraHpRegen": 2
+    },
+    "Deluge": {
+      "auraRegen": 1
+    },
+    "Overcharge": {
+      "windupMult": 0.8,
+      "dmgMult": 1.03
+    },
+    "Static Field": {
+      "echo": 6
+    },
+    "Gale Cry": {
+      "enemyAccDebuff": 5
+    },
+    "Rally Squall": {
+      "auraDmgMult": 1.05
+    },
+    "Carapace": {
+      "flatDR": 3
+    },
+    "Dig In": {
+      "braceDmg": 1.15,
+      "flatDR": 1
+    },
+    "Brood Tend": {
+      "auraHpRegen": 2
+    },
+    "Hive Mind": {
+      "packDmg": 1.1
+    },
+    "Ambush Fold": {
+      "firstHitMult": 1.4
+    },
+    "Blade Arms": {
+      "crit": 5
+    },
+    "Resin Plate": {
+      "flatDR": 2
+    },
+    "Amber Set": {
+      "debuffResist": 15
+    },
+    "Command Swarm": {
+      "packDmg": 1.1,
+      "auraDmgMult": 1.02
+    },
+    "Disorient": {
+      "enemyDodgeDebuff": 4
+    },
+    "Dawn Fury": {
+      "dmgMult": 1.08
+    },
+    "Unbroken Age": {
+      "flatDR": 2,
+      "debuffResist": 20
+    },
+    "Starving Aim": {
+      "crit": 10
+    },
+    "Light Drinker": {
+      "lifesteal": 0.12
+    },
+    "Era Shell": {
+      "startWard": 20
+    },
+    "Time Dilation": {
+      "windupMult": 0.8
+    },
+    "First Spell": {
+      "echo": 10
+    },
+    "Wellspring Eternal": {
+      "regen": 4
+    },
+    "Genesis Chord": {
+      "auraDmgMult": 1.05
+    },
+    "Ending Verse": {
+      "auraFlatDR": 2
+    }
+  },
+  "classes": [
+    {
+      "name": "Tank",
+      "primary": "CON",
+      "secondary": "STR"
+    },
+    {
+      "name": "Warrior",
+      "primary": "STR",
+      "secondary": "CON"
+    },
+    {
+      "name": "Rogue",
+      "primary": "DEX",
+      "secondary": "STR"
+    },
+    {
+      "name": "Ranger",
+      "primary": "DEX",
+      "secondary": "INT"
+    },
+    {
+      "name": "Sage",
+      "primary": "WIS",
+      "secondary": "INT"
+    },
+    {
+      "name": "Wizard",
+      "primary": "INT",
+      "secondary": "WIS"
+    },
+    {
+      "name": "Spellsword",
+      "primary": "INT",
+      "secondary": "CON"
+    },
+    {
+      "name": "Spellshield",
+      "primary": "CON",
+      "secondary": "WIS"
+    },
+    {
+      "name": "Captain",
+      "primary": "STR",
+      "secondary": "CHA"
+    },
+    {
+      "name": "Orator",
+      "primary": "CHA",
+      "secondary": "WIS"
+    },
+    {
+      "name": "Bard",
+      "primary": "CHA",
+      "secondary": "DEX"
+    },
+    {
+      "name": "Evoker",
+      "primary": "INT",
+      "secondary": "DEX"
+    },
+    {
+      "name": "Skirmisher",
+      "primary": "STR",
+      "secondary": "DEX"
+    },
+    {
+      "name": "Stalker",
+      "primary": "DEX",
+      "secondary": "WIS"
+    },
+    {
+      "name": "Swashbuckler",
+      "primary": "DEX",
+      "secondary": "CHA"
+    },
+    {
+      "name": "Shaman",
+      "primary": "WIS",
+      "secondary": "CON"
+    },
+    {
+      "name": "Mystic",
+      "primary": "WIS",
+      "secondary": "DEX"
+    },
+    {
+      "name": "Herald",
+      "primary": "CHA",
+      "secondary": "STR"
+    }
+  ],
+  "lines": {
+    "STR": [
+      "Bloodrage",
+      "Duelist",
+      "Warcry"
+    ],
+    "DEX": [
+      "Assassin",
+      "Venomcraft",
+      "Volley"
+    ],
+    "CON": [
+      "Warden",
+      "Guardian",
+      "Bulwark"
+    ],
+    "WIS": [
+      "Disruptor",
+      "Mender",
+      "Siphon"
+    ],
+    "INT": [
+      "Hexer",
+      "Elementalist",
+      "Arcanist"
+    ],
+    "CHA": [
+      "Enchanter",
+      "Captain",
+      "Demagogue"
+    ]
+  },
+  "classLines": {
+    "Tank": [
+      "Guardian",
+      "Warden",
+      "Warcry"
+    ],
+    "Warrior": [
+      "Duelist",
+      "Bloodrage",
+      "Bulwark"
+    ],
+    "Rogue": [
+      "Assassin",
+      "Venomcraft",
+      "Duelist"
+    ],
+    "Ranger": [
+      "Volley",
+      "Assassin",
+      "Elementalist"
+    ],
+    "Sage": [
+      "Mender",
+      "Siphon",
+      "Hexer"
+    ],
+    "Wizard": [
+      "Hexer",
+      "Elementalist",
+      "Arcanist",
+      "Disruptor"
+    ],
+    "Spellsword": [
+      "Arcanist",
+      "Elementalist",
+      "Bulwark"
+    ],
+    "Spellshield": [
+      "Guardian",
+      "Bulwark",
+      "Warden",
+      "Mender"
+    ],
+    "Captain": [
+      "Captain",
+      "Warcry",
+      "Duelist"
+    ],
+    "Orator": [
+      "Demagogue",
+      "Enchanter",
+      "Captain",
+      "Disruptor"
+    ],
+    "Bard": [
+      "Captain",
+      "Enchanter",
+      "Demagogue",
+      "Volley"
+    ],
+    "Evoker": [
+      "Elementalist",
+      "Arcanist",
+      "Volley"
+    ],
+    "Skirmisher": [
+      "Bloodrage",
+      "Duelist",
+      "Assassin"
+    ],
+    "Stalker": [
+      "Assassin",
+      "Venomcraft",
+      "Siphon"
+    ],
+    "Swashbuckler": [
+      "Volley",
+      "Assassin",
+      "Demagogue"
+    ],
+    "Shaman": [
+      "Mender",
+      "Disruptor",
+      "Guardian"
+    ],
+    "Mystic": [
+      "Mender",
+      "Siphon",
+      "Venomcraft"
+    ],
+    "Herald": [
+      "Captain",
+      "Demagogue",
+      "Warcry"
+    ]
+  },
+  "lineOf": {
+    "Scrap": "Bloodrage",
+    "Enrage": "Bloodrage",
+    "Reckless Slam": "Bloodrage",
+    "Last Stand": "Bloodrage",
+    "Titanfall": "Bloodrage",
+    "Blood Price": "Bloodrage",
+    "Blood Fury": "Bloodrage",
+    "Power Strike": "Duelist",
+    "Sunder": "Duelist",
+    "Riposte": "Duelist",
+    "Bonebreaker": "Duelist",
+    "Rend": "Duelist",
+    "Bloodletter": "Duelist",
+    "Twist the Knife": "Duelist",
+    "Executioner": "Duelist",
+    "Headbutt": "Duelist",
+    "Guard": "Warcry",
+    "Cleave": "Warcry",
+    "Intimidate": "Warcry",
+    "Challenge": "Warcry",
+    "Bracer": "Warcry",
+    "Earthshaker": "Warcry",
+    "Whirlwind": "Warcry",
+    "Warlord's Roar": "Warcry",
+    "Shadowstep": "Assassin",
+    "Ambush": "Assassin",
+    "Vanish": "Assassin",
+    "Hamstring": "Assassin",
+    "Throat Cut": "Assassin",
+    "Heartseeker": "Assassin",
+    "Smoke Bomb": "Assassin",
+    "Piercing Shot": "Venomcraft",
+    "Toxin Stack": "Venomcraft",
+    "Fester": "Venomcraft",
+    "Twin Fangs": "Venomcraft",
+    "Paralytic Dart": "Venomcraft",
+    "Virulence": "Venomcraft",
+    "Plague Shot": "Venomcraft",
+    "Sling": "Volley",
+    "Sidestep": "Volley",
+    "Acrobatics": "Volley",
+    "Focus Aim": "Volley",
+    "Pin Down": "Volley",
+    "Gambler's Volley": "Volley",
+    "Rain of Arrows": "Volley",
+    "Deadeye": "Volley",
+    "Ricochet": "Volley",
+    "Pinning Volley": "Volley",
+    "Seize": "Warden",
+    "Shield Wall": "Warden",
+    "Quagmire Stomp": "Warden",
+    "Barricade": "Warden",
+    "Zone of Control": "Warden",
+    "Earthen Grasp": "Warden",
+    "Body Slam": "Warden",
+    "Tremor": "Warden",
+    "Crushing Grip": "Warden",
+    "Taunt": "Guardian",
+    "Steady Vigil": "Guardian",
+    "Interpose": "Guardian",
+    "Barbed Carapace": "Guardian",
+    "Bulwark's Challenge": "Guardian",
+    "Aegis of the Fallen": "Guardian",
+    "Brace": "Bulwark",
+    "Bastion": "Bulwark",
+    "Shell Slam": "Bulwark",
+    "Fortify": "Bulwark",
+    "Retaliate": "Bulwark",
+    "Colossus Crash": "Bulwark",
+    "Vital Surge": "Bulwark",
+    "Overrun": "Bulwark",
+    "Silencing Spike": "Disruptor",
+    "Null Field": "Disruptor",
+    "Field of Doom": "Disruptor",
+    "Dread Whisper": "Disruptor",
+    "Mind Crush": "Disruptor",
+    "Enfeeble": "Disruptor",
+    "Wither": "Disruptor",
+    "Hush": "Disruptor",
+    "Mend": "Mender",
+    "Clarity": "Mender",
+    "Renewal": "Mender",
+    "Mending Surge": "Mender",
+    "Tranquility": "Mender",
+    "Ward Against Ruin": "Mender",
+    "Rebuke": "Mender",
+    "Mana Sap": "Siphon",
+    "Serenity": "Siphon",
+    "Attunement": "Siphon",
+    "Drain Spirit": "Siphon",
+    "Spirit Siphon": "Siphon",
+    "Providence": "Siphon",
+    "Mind Spike": "Siphon",
+    "Judgement": "Siphon",
+    "Ember": "Hexer",
+    "Fracturing Stones": "Hexer",
+    "Cinderburst": "Hexer",
+    "Arcane Bomb": "Hexer",
+    "Curse of Ruin": "Hexer",
+    "Detonate": "Hexer",
+    "Sap Will": "Hexer",
+    "Frost Shard": "Elementalist",
+    "Rime Bind": "Elementalist",
+    "Frost Nova": "Elementalist",
+    "Firewall": "Elementalist",
+    "Inferno": "Elementalist",
+    "Seismic Crush": "Elementalist",
+    "World Ender": "Elementalist",
+    "Spark": "Arcanist",
+    "Phase Step": "Arcanist",
+    "Mirror Image": "Arcanist",
+    "Static Chain": "Arcanist",
+    "Mana Leech": "Arcanist",
+    "Displace": "Arcanist",
+    "Void Lance": "Arcanist",
+    "Arcane Overload": "Arcanist",
+    "Unmake": "Arcanist",
+    "Discord": "Enchanter",
+    "Screech": "Enchanter",
+    "Sonic Boom": "Enchanter",
+    "Lullaby": "Enchanter",
+    "Cacophony": "Enchanter",
+    "Mass Hysteria": "Enchanter",
+    "Rallying Song": "Captain",
+    "Bravura": "Captain",
+    "Battle Hymn": "Captain",
+    "Hymn of Shields": "Captain",
+    "Standing Ovation": "Captain",
+    "Second Wind": "Captain",
+    "Anthem of Iron": "Captain",
+    "Inspire": "Captain",
+    "Fanfare": "Captain",
+    "Triumph": "Captain",
+    "Grand Mockery": "Demagogue",
+    "Captivate": "Demagogue",
+    "Demoralize": "Demagogue",
+    "Crowd Surge": "Demagogue",
+    "Dirge": "Demagogue",
+    "Siren's Call": "Demagogue",
+    "Crescendo": "Demagogue",
+    "Showstopper": "Demagogue"
+  },
+  "classBasic": {
+    "Tank": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "CON"
+    },
+    "Warrior": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "STR"
+    },
+    "Rogue": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "DEX"
+    },
+    "Ranger": {
+      "channel": "ranged",
+      "range": 8,
+      "stat": "DEX"
+    },
+    "Sage": {
+      "channel": "voice",
+      "range": 6,
+      "stat": "WIS"
+    },
+    "Wizard": {
+      "channel": "magic",
+      "range": 7,
+      "stat": "INT"
+    },
+    "Spellsword": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "INT"
+    },
+    "Spellshield": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "CON"
+    },
+    "Captain": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "STR"
+    },
+    "Orator": {
+      "channel": "voice",
+      "range": 6,
+      "stat": "CHA"
+    },
+    "Bard": {
+      "channel": "voice",
+      "range": 6,
+      "stat": "CHA"
+    },
+    "Evoker": {
+      "channel": "magic",
+      "range": 7,
+      "stat": "INT"
+    },
+    "Skirmisher": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "STR"
+    },
+    "Stalker": {
+      "channel": "ranged",
+      "range": 8,
+      "stat": "DEX"
+    },
+    "Swashbuckler": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "DEX"
+    },
+    "Shaman": {
+      "channel": "voice",
+      "range": 6,
+      "stat": "WIS"
+    },
+    "Mystic": {
+      "channel": "voice",
+      "range": 6,
+      "stat": "WIS"
+    },
+    "Herald": {
+      "channel": "voice",
+      "range": 6,
+      "stat": "CHA"
+    },
+    "Generalist": {
+      "channel": "melee",
+      "range": 3,
+      "stat": "STR"
+    }
+  },
+  "channelCastTime": {
+    "melee": 0.15,
+    "ranged": 0.3,
+    "magic": 0.55,
+    "voice": 0.45,
+    "support": 0.4
+  },
+  "channelRange": {
+    "melee": 3,
+    "ranged": 8,
+    "magic": 7,
+    "voice": 5.5,
+    "support": 6
+  },
+  "fieldStatus": {
+    "stun": {
+      "incapacitates": true
+    },
+    "sleep": {
+      "incapacitates": true,
+      "breaksOnDamage": true
+    },
+    "silence": {
+      "noSkills": true
+    },
+    "knockback": {
+      "speedMult": 0.6
+    },
+    "fear": {
+      "steer": "flee",
+      "noAttack": true,
+      "speedMult": 1.15
+    },
+    "confusion": {
+      "steer": "veer",
+      "accPenalty": 15
+    },
+    "charm": {
+      "turncoat": true,
+      "lurchToSource": 2.5
+    },
+    "burn": {
+      "hpPerSec": 0.025
+    },
+    "bleed": {
+      "hpPerSec": 0.01,
+      "maxStacks": 3
+    },
+    "poison": {
+      "mpPerSec": 0.075
+    },
+    "doom": {
+      "detonate": 0.25
+    },
+    "blind": {
+      "accPenalty": 25
+    },
+    "vulnerable": {
+      "damageTakenMult": 1.2
+    },
+    "healblock": {
+      "blockHeal": true
+    },
+    "haste": {
+      "speedMult": 1.35
+    }
+  },
+  "beneficialStatuses": [
+    "haste"
+  ],
+  "hardControlStatuses": [
+    "stun",
+    "sleep",
+    "fear",
+    "confusion",
+    "charm",
+    "silence",
+    "knockback"
+  ],
+  "spreadableStatuses": [
+    "blind",
+    "poison",
+    "burn",
+    "fear",
+    "confusion",
+    "stun",
+    "knockback",
+    "bleed",
+    "silence",
+    "vulnerable",
+    "sleep",
+    "doom",
+    "healblock",
+    "charm"
+  ],
+  "leagues": [
+    {
+      "name": "Wood",
+      "cap": 100
+    },
+    {
+      "name": "Copper",
+      "cap": 200
+    },
+    {
+      "name": "Tin",
+      "cap": 300
+    },
+    {
+      "name": "Bronze",
+      "cap": 400
+    },
+    {
+      "name": "Iron",
+      "cap": 500
+    },
+    {
+      "name": "Silver",
+      "cap": 600
+    },
+    {
+      "name": "Gold",
+      "cap": 750
+    },
+    {
+      "name": "Platinum",
+      "cap": 900
+    },
+    {
+      "name": "Masters",
+      "cap": 1000
+    },
+    {
+      "name": "Tamer Elite",
+      "cap": 1050
+    },
+    {
+      "name": "Tamers Apex",
+      "cap": 1100
+    }
+  ],
+  "teamSizeByLeague": {
+    "Wood": 1,
+    "Copper": 2,
+    "Tin": 2,
+    "Bronze": 3,
+    "Iron": 3,
+    "Silver": 4,
+    "Gold": 4,
+    "Platinum": 5,
+    "Masters": 5,
+    "Tamer Elite": 5,
+    "Tamers Apex": 5
+  }
+}

@@ -1,0 +1,38 @@
+[
+ {
+  "name": "man_a",
+  "title": "Man",
+  "by": "Quaternius",
+  "licence": "CC0 1.0"
+ },
+ {
+  "name": "man_b",
+  "title": "Man",
+  "by": "Quaternius",
+  "licence": "CC0 1.0"
+ },
+ {
+  "name": "woman_dress",
+  "title": "Woman in Dress",
+  "by": "Quaternius",
+  "licence": "CC0 1.0"
+ },
+ {
+  "name": "woman_casual",
+  "title": "Woman Casual",
+  "by": "Quaternius",
+  "licence": "CC0 1.0"
+ },
+ {
+  "name": "woman_tank",
+  "title": "Woman in Tank Top",
+  "by": "Quaternius",
+  "licence": "CC0 1.0"
+ },
+ {
+  "name": "woman",
+  "title": "Woman",
+  "by": "Quaternius",
+  "licence": "CC0 1.0"
+ }
+]

@@ -1,0 +1,532 @@
+{
+  "schema": 1,
+  "subject": "core.ts:classForStats/roleOfClass + decide.ts:manaRoleOf + engine.ts:basicAttackFor",
+  "note": "What a monster IS — emergent class, composition role, mana role, and the authored free attack. Pure stat comparison and table lookup, no geometry. Regenerate with `npx tsx tools/exportport.ts`.",
+  "cases": [
+    {
+      "name": "STR primary, CON secondary",
+      "axis": "classForStats",
+      "input": {
+        "STR": 300,
+        "CON": 200
+      },
+      "expect": "Warrior"
+    },
+    {
+      "name": "STR primary, DEX secondary",
+      "axis": "classForStats",
+      "input": {
+        "STR": 300,
+        "DEX": 200
+      },
+      "expect": "Skirmisher"
+    },
+    {
+      "name": "DEX primary, STR secondary",
+      "axis": "classForStats",
+      "input": {
+        "DEX": 300,
+        "STR": 200
+      },
+      "expect": "Rogue"
+    },
+    {
+      "name": "DEX primary, INT secondary",
+      "axis": "classForStats",
+      "input": {
+        "DEX": 300,
+        "INT": 200
+      },
+      "expect": "Ranger"
+    },
+    {
+      "name": "CON primary, STR secondary",
+      "axis": "classForStats",
+      "input": {
+        "CON": 300,
+        "STR": 200
+      },
+      "expect": "Tank"
+    },
+    {
+      "name": "INT primary, WIS secondary",
+      "axis": "classForStats",
+      "input": {
+        "INT": 300,
+        "WIS": 200
+      },
+      "expect": "Wizard"
+    },
+    {
+      "name": "INT primary, CON secondary",
+      "axis": "classForStats",
+      "input": {
+        "INT": 300,
+        "CON": 200
+      },
+      "expect": "Spellsword"
+    },
+    {
+      "name": "WIS primary, CHA secondary",
+      "axis": "classForStats",
+      "input": {
+        "WIS": 300,
+        "CHA": 200
+      },
+      "expect": "Generalist"
+    },
+    {
+      "name": "WIS primary, INT secondary",
+      "axis": "classForStats",
+      "input": {
+        "WIS": 300,
+        "INT": 200
+      },
+      "expect": "Sage"
+    },
+    {
+      "name": "CHA primary, STR secondary",
+      "axis": "classForStats",
+      "input": {
+        "CHA": 300,
+        "STR": 200
+      },
+      "expect": "Herald"
+    },
+    {
+      "name": "CHA primary, WIS secondary",
+      "axis": "classForStats",
+      "input": {
+        "CHA": 300,
+        "WIS": 200
+      },
+      "expect": "Orator"
+    },
+    {
+      "name": "CHA primary, INT secondary",
+      "axis": "classForStats",
+      "input": {
+        "CHA": 300,
+        "INT": 200
+      },
+      "expect": "Generalist"
+    },
+    {
+      "name": "an unmatched stat pair falls to Generalist",
+      "axis": "classForStats",
+      "input": {
+        "WIS": 300,
+        "STR": 200
+      },
+      "expect": "Generalist"
+    },
+    {
+      "name": "a perfect tie resolves by declaration order",
+      "axis": "classForStats",
+      "input": {
+        "STR": 300,
+        "DEX": 300
+      },
+      "expect": "Skirmisher"
+    },
+    {
+      "name": "an all-zero monster still gets a class",
+      "axis": "classForStats",
+      "input": {},
+      "expect": "Skirmisher"
+    },
+    {
+      "name": "role of Warrior",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Warrior"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Rogue",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Rogue"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Ranger",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Ranger"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Wizard",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Wizard"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Spellsword",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Spellsword"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Captain",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Captain"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Tank",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Tank"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Spellshield",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Spellshield"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Sage",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Sage"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Orator",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Orator"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Bard",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Bard"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Evoker",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Evoker"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Skirmisher",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Skirmisher"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Stalker",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Stalker"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Swashbuckler",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Swashbuckler"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "role of Shaman",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Shaman"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Mystic",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Mystic"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Herald",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Herald"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "role of Generalist",
+      "axis": "roleOfClass",
+      "input": {
+        "className": "Generalist"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "an explicit Tank is a tank",
+      "axis": "manaRoleOf",
+      "input": {
+        "stats": {
+          "STR": 300,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        },
+        "className": "Tank"
+      },
+      "expect": "tank"
+    },
+    {
+      "name": "a support class is a support",
+      "axis": "manaRoleOf",
+      "input": {
+        "stats": {
+          "STR": 0,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 300,
+          "INT": 0,
+          "CHA": 0
+        },
+        "className": "Sage"
+      },
+      "expect": "support"
+    },
+    {
+      "name": "CON-topped stats make a tank even off-class",
+      "axis": "manaRoleOf",
+      "input": {
+        "stats": {
+          "STR": 100,
+          "DEX": 0,
+          "CON": 400,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        },
+        "className": "Warrior"
+      },
+      "expect": "tank"
+    },
+    {
+      "name": "STR-topped damage class is damage",
+      "axis": "manaRoleOf",
+      "input": {
+        "stats": {
+          "STR": 400,
+          "DEX": 100,
+          "CON": 0,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        },
+        "className": "Warrior"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "INT-topped damage class is damage",
+      "axis": "manaRoleOf",
+      "input": {
+        "stats": {
+          "STR": 0,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 100,
+          "INT": 400,
+          "CHA": 0
+        },
+        "className": "Wizard"
+      },
+      "expect": "damage"
+    },
+    {
+      "name": "basic for a STR/CON build",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 359,
+          "DEX": 0,
+          "CON": 200,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        }
+      },
+      "expect": {
+        "channel": "melee",
+        "stat": "STR",
+        "power": 7.164285714285714,
+        "range": 3,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    },
+    {
+      "name": "basic for a DEX/STR build",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 200,
+          "DEX": 359,
+          "CON": 0,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        }
+      },
+      "expect": {
+        "channel": "melee",
+        "stat": "DEX",
+        "power": 6.907857142857143,
+        "range": 3,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    },
+    {
+      "name": "basic for an INT/WIS build",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 0,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 200,
+          "INT": 359,
+          "CHA": 0
+        }
+      },
+      "expect": {
+        "channel": "magic",
+        "stat": "INT",
+        "power": 6.651428571428571,
+        "range": 7,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    },
+    {
+      "name": "basic for a CHA/WIS build",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 0,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 200,
+          "INT": 0,
+          "CHA": 359
+        }
+      },
+      "expect": {
+        "channel": "voice",
+        "stat": "CHA",
+        "power": 6.138571428571428,
+        "range": 6,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    },
+    {
+      "name": "basic for a CON/STR build",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 200,
+          "DEX": 0,
+          "CON": 359,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        }
+      },
+      "expect": {
+        "channel": "melee",
+        "stat": "CON",
+        "power": 6.395,
+        "range": 3,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    },
+    {
+      "name": "basic at zero stats takes the flat floor",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 0,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 0,
+          "INT": 0,
+          "CHA": 0
+        }
+      },
+      "expect": {
+        "channel": "melee",
+        "stat": "STR",
+        "power": 4.6,
+        "range": 3,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    },
+    {
+      "name": "basic scales with the class stat, not the highest stat",
+      "axis": "basicAttackFor",
+      "input": {
+        "stats": {
+          "STR": 0,
+          "DEX": 0,
+          "CON": 0,
+          "WIS": 500,
+          "INT": 900,
+          "CHA": 0
+        }
+      },
+      "expect": {
+        "channel": "magic",
+        "stat": "INT",
+        "power": 9.742857142857144,
+        "range": 7,
+        "cooldown": 0.715,
+        "accuracy": 90,
+        "castTime": 0.15
+      }
+    }
+  ]
+}

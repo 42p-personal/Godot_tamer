@@ -1,0 +1,2 @@
+- [World Guilds doc (2026-08-04)](project_world_guilds.md) — the eight-guild Circuit institution behind Guild Colours; key decisions and open items
+- [art.gd livery colours reference](reference_art_gd_livery_colours.md) — where the 8 canonical team colours/badges live; check before authoring guild/team identity

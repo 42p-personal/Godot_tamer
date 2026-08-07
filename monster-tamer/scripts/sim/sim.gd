@@ -67,6 +67,10 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"bb": _fresh_bb(),
 			"path": PackedVector2Array(), "path_i": 0,
 			"cooldown": 0, "has_attacked": false, "alive": true,
+			"mp": Derive.max_mana(float(stats.get("WIS", 10)), float(stats.get("INT", 10))),
+			"max_mp": Derive.max_mana(float(stats.get("WIS", 10)), float(stats.get("INT", 10))),
+			"regen": Derive.regen_per_sec(float(stats.get("WIS", 10)), false),
+			"kit": u.get("kit", []), "cds": {}, "casting": {},
 			"facing": Vector2(1, 0) if str(u["team"]) == "A" else Vector2(-1, 0),
 		})
 	units.sort_custom(func(a, b): return a.id < b.id)  # id order IS the tick order
@@ -101,7 +105,15 @@ func _step() -> void:
 	for u in units:
 		if not u.alive:
 			continue
-		_execute_move(u)
+		if u.casting.is_empty():
+			_execute_move(u)
+	for u in units:
+		if not u.alive:
+			continue
+		u.mp = minf(u.max_mp, u.mp + u.regen * DT)
+		for k in u.cds.keys():
+			u.cds[k] = maxi(0, int(u.cds[k]) - 1)
+		_execute_cast(u, events)
 	for u in units:
 		if not u.alive:
 			continue
@@ -152,6 +164,12 @@ func _fill_bb(u: Dictionary) -> void:
 	bb.set_value("enemy_line_x", enemy_line_x / maxf(1.0, float(n_enemy)))
 	bb.set_value("nerve", u.nerve)
 	bb.set_value("focus_sticky", u.focus_sticky)
+	# Cast/interrupt context (the WoW-arena layer): is my current target committed to a cast,
+	# and is my kick off cooldown? The tree decides to spend it; the sim executes.
+	var tgt = _unit(str(bb.get_value("target_id", "")))
+	bb.set_value("target_casting", tgt != null and tgt.alive and not tgt.casting.is_empty())
+	bb.set_value("interrupt_ready", _ready_move(u, "interrupt") != "")
+	bb.set_value("cast_ready", _ready_move(u, "cast") != "")
 	# taunt/orders arrive here when abilities and the tactics screen wire in (v1: keys absent).
 
 
@@ -197,7 +215,99 @@ func _execute_move(u: Dictionary) -> void:
 				u.pos += delta / dist * (min_d - dist)
 
 
+## First kit move of `kind` that is off cooldown and affordable, or "".
+func _ready_move(u: Dictionary, kind: String) -> String:
+	for m in u.kit:
+		if str(m.get("kind", "cast")) != kind:
+			continue
+		if int(u.cds.get(str(m.name), 0)) > 0:
+			continue
+		if float(u.mp) < float(m.get("mana", 0)):
+			continue
+		return str(m.name)
+	return ""
+
+
+func _kit_move(u: Dictionary, name: String) -> Dictionary:
+	for m in u.kit:
+		if str(m.name) == name:
+			return m
+	return {}
+
+
+const CAST_RANGE := 30.0        # spells reach far - the arena is big and casters stand off
+const INTERRUPT_LOCKOUT := 30   # ticks (3s) the kicked school stays locked, WoW-style
+const INTERRUPT_CD := 100       # ticks (10s) between kicks - a kick is a RESOURCE
+
+
+## Casts: begin when the tree allows and a kit cast is ready; complete after cast_time through
+## the CONTRACTED maths; die to a kick. A casting unit stands still - the commitment is the
+## legible tell the whole layer exists for.
+func _execute_cast(u: Dictionary, events: Array) -> void:
+	var bb: BT.Blackboard = u.bb
+	if not u.casting.is_empty():
+		var tgt = _unit(str(u.casting.target))
+		if tgt == null or not tgt.alive:
+			events.append({"kind": "fizzle", "from": u.id, "move": str(u.casting.move.name)})
+			u.casting = {}
+		elif tick_now >= int(u.casting.ends):
+			var mv: Dictionary = u.casting.move
+			var out: Dictionary = Damage.resolve_strike({
+				"move": {"name": str(mv.name), "power": float(mv.get("power", 30)),
+					"accuracy": float(mv.get("accuracy", 100)), "type": "attack",
+					"channel": str(mv.get("channel", "magic")), "fx": mv.get("fx", {}),
+					"statScale": mv.get("statScale", 0.004)},
+				"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
+				"now": tick_now * DT,
+				"atk": float(u.stats.get("INT", 10)),
+				"atkMult": 1.0, "attackerHpFrac": float(u.hp) / float(u.max_hp), "attackerWard": 0,
+				"accPenalty": 0.0, "accMod": 0.0, "dodgeMod": 0.0, "flankBonus": 0.0, "behindMult": 1.0,
+				"falloff": 1.0,
+				"defMit": Damage.mitigation_for(float(tgt.stats.get("WIS", 10))),
+				"defMitDebuff": 0.0, "defDmgTakenMod": 1.0, "defStatusDmgTaken": 1.0,
+				"defGuard": 0, "defWard": 0, "defBlocking": false, "defHasAttacked": tgt.has_attacked,
+				"defHasBonusStatus": false, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
+				"defMaxHp": tgt.max_hp,
+			})
+			u.cds[str(mv.name)] = int(float(mv.get("cooldown", 4.0)) / DT)
+			if bool(out.get("hit", false)):
+				tgt.hp -= int(out.get("toHp", 0))
+				events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
+					"move": str(mv.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
+			else:
+				events.append({"kind": "cast_miss", "from": u.id, "to": tgt.id, "move": str(mv.name)})
+			u.casting = {}
+		return
+	if bool(bb.get_value("req_interrupt", false)):
+		bb.set_value("req_interrupt", false)
+		var iname := _ready_move(u, "interrupt")
+		var tid: String = str(bb.get_value("target_id", ""))
+		var tgt = _unit(tid)
+		if iname != "" and tgt != null and tgt.alive and not tgt.casting.is_empty() \
+				and u.pos.distance_to(tgt.pos) <= BASE_REACH * 1.4:
+			var locked: String = str(tgt.casting.move.name)
+			tgt.casting = {}
+			# +1: the victim's own cooldown decrement runs later THIS SAME tick and would eat
+			# one tick of the lockout - found by the probe's exact-window check (29 of 30).
+			tgt.cds[locked] = maxi(int(tgt.cds.get(locked, 0)), INTERRUPT_LOCKOUT + 1)
+			u.cds[iname] = INTERRUPT_CD
+			events.append({"kind": "interrupt", "from": u.id, "to": tid, "locked": locked})
+			return
+	if bool(bb.get_value("req_cast_allowed", false)):
+		var cname := _ready_move(u, "cast")
+		var tid2: String = str(bb.get_value("target_id", ""))
+		var tgt2 = _unit(tid2)
+		if cname != "" and tgt2 != null and tgt2.alive and u.pos.distance_to(tgt2.pos) <= CAST_RANGE:
+			var mv2: Dictionary = _kit_move(u, cname)
+			u.mp -= float(mv2.get("mana", 0))
+			u.casting = {"move": mv2, "target": tid2,
+				"started": tick_now, "ends": tick_now + int(float(mv2.get("cast_time", 1.5)) / DT)}
+			events.append({"kind": "cast_start", "from": u.id, "to": tid2, "move": cname})
+
+
 func _execute_attack(u: Dictionary, events: Array) -> void:
+	if not u.casting.is_empty():
+		return  # committed - the stillness and silence ARE the cast
 	if u.cooldown > 0:
 		u.cooldown -= 1
 		return
@@ -250,5 +360,7 @@ func _emit_frame(events: Array) -> void:
 			"facing": u.facing,
 			"intent": u.bb.intent_string() if u.alive else "",
 			"reason": u.bb.reason() if u.alive else "",
+			"castMove": str(u.casting.move.name) if not u.casting.is_empty() else "",
+			"castFrac": clampf(float(tick_now - int(u.casting.started)) / maxf(1.0, float(int(u.casting.ends) - int(u.casting.started))), 0.0, 1.0) if not u.casting.is_empty() else 0.0,
 		})
 	frames.append({"tick": tick_now, "units": us, "events": events})

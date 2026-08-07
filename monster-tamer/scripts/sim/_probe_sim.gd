@@ -83,6 +83,18 @@ func _go() -> void:
 	_check("guard: different seed diverges (probe not vacuous)",
 		_hash_frames(t1) != _hash_frames(t3))
 
+	# The WoW-arena layer: a caster commits to a big cast; a fighter with a kick breaks it.
+	var duel_kick: Dictionary = await _run_duel(true)
+	var duel_free: Dictionary = await _run_duel(false)
+	_check("casts: the caster commits (cast_start present)", _count(duel_free, "cast_start") > 0)
+	_check("casts: uninterrupted casts LAND (control run)", _count(duel_free, "cast_done") > 0)
+	_check("interrupt: the kick breaks a committed cast", _count(duel_kick, "interrupt") > 0)
+	_check("interrupt: the lockout holds - the kicked school is silent for the full window",
+		_lockout_respected(duel_kick, 30))
+	var dk2: Dictionary = await _run_duel(true)
+	_check("determinism holds with casts and kicks in play",
+		_hash_frames(duel_kick) == _hash_frames(dk2))
+
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
 
@@ -96,3 +108,55 @@ func _team_a_y_spread(res: Dictionary, tick: int) -> float:
 			lo = minf(lo, u.pos.y)
 			hi = maxf(hi, u.pos.y)
 	return hi - lo
+
+
+func _count(res: Dictionary, kind: String) -> int:
+	var n := 0
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == kind:
+				n += 1
+	return n
+
+
+## 2v2 close-quarters duel: one side has an interrupter, the other a hard-hitting caster.
+func _run_duel(with_kick: bool) -> Dictionary:
+	var kit_fighter: Array = [{"name": "Kick", "kind": "interrupt"}] if with_kick else []
+	var us: Array = [
+		{"id": "a0", "team": "A", "pos": Vector2(-12, 0), "speed": 10.0,
+			"stats": {"STR": 70, "CON": 60, "INT": 10, "WIS": 20},
+			"kit": kit_fighter, "tactics": {"target_priority": "casters", "positional": "push"}},
+		{"id": "a1", "team": "A", "pos": Vector2(-12, 6), "speed": 9.0,
+			"stats": {"STR": 50, "CON": 50, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+		{"id": "b0", "team": "B", "pos": Vector2(12, 0), "speed": 7.0,
+			"stats": {"STR": 15, "CON": 40, "INT": 85, "WIS": 60},
+			"kit": [{"name": "Pyroblast", "kind": "cast", "power": 55, "cast_time": 2.2,
+				"cooldown": 3.0, "mana": 8, "channel": "magic"}],
+			"tactics": {"target_priority": "weakest", "positional": "hold"}},
+		{"id": "b1", "team": "B", "pos": Vector2(12, 6), "speed": 8.0,
+			"stats": {"STR": 55, "CON": 55, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+	var sim = Sim.new()
+	sim.setup(777, us, Vector2(80, 44), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-12, 0), Vector2(12, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## After every interrupt, the kicked unit must start no cast for `lockout` ticks - the
+## mechanically exact contract, immune to fight-length differences between runs.
+func _lockout_respected(res: Dictionary, lockout: int) -> bool:
+	var found := false
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) == "interrupt":
+				found = true
+				for j in range(i, mini(i + lockout, res.frames.size())):
+					for e2 in res.frames[j].events:
+						if str(e2.kind) == "cast_start" and str(e2.from) == str(e.to):
+							print("    LOCKOUT VIOLATION: kick@%d cast_start@%d by %s move %s" % [i, j, str(e2.from), str(e2.move)])
+							return false
+	return found

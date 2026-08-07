@@ -283,6 +283,13 @@ static func _act_node(tactics: Dictionary) -> BT.BTBase:
 		var tid: String = str(bb.get_value("target_id", ""))
 		if tid == "":
 			return BT.FAILURE
+		# THE KICK (WoW-arena essence): the target is committed to a cast and my interrupt is
+		# up - spend it. A kick is a resource; the sim enforces range and cooldown.
+		if bb.get_value("target_casting", false) and bb.get_value("interrupt_ready", false):
+			bb.set_value("req_interrupt", true)
+			bb.set_value("req_attack", tid)
+			bb._reason = "kick the cast on %s" % tid
+			return BT.RUNNING
 		var cast_ok := true
 		match policy:
 			"hold_big":

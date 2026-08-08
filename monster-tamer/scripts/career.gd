@@ -44,6 +44,9 @@ var barn_capacity: int = STARTING_BARN_CAPACITY
 var leagues_won: Array = []              # Array[bool], parallel to `leagues` — cleared at least once
 var won_game: bool = false               # terminal: Tamers Apex swept
 
+## Licences bought at the Ranch Shop — licence name (String) -> true. See `holds_licence()`.
+var licences: Dictionary = {}
+
 
 func _ready() -> void:
 	_load_ladder()
@@ -80,7 +83,23 @@ func reset_new_game() -> void:
 	week = 0
 	barn_capacity = STARTING_BARN_CAPACITY
 	won_game = false
+	licences.clear()
 	_reset_leagues_won()
+
+
+## ⚠️ THIS IS A REAL FIELD BECAUSE `set_meta()` SILENTLY REFUSED THE OLD ONE. `shop_ui.gd` stored
+## a bought licence as `Career.set_meta("Special License", true)` — and Godot rejects a metadata
+## identifier containing a space ("Invalid metadata identifier"), so the write failed, `get_meta`
+## kept returning false, and the shop took 800 gold, left the button reading "Buy — 800g", and let
+## the player buy the same licence again and again. The error only ever appeared in the console.
+##
+## A licence is career state, not an annotation: it belongs in a field the save format can see.
+func holds_licence(licence_name: String) -> bool:
+	return bool(licences.get(licence_name, false))
+
+
+func grant_licence(licence_name: String) -> void:
+	licences[licence_name] = true
 
 
 ## True once the stable is as full as the barn allows — the single source of truth for "can I buy

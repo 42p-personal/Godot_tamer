@@ -62,6 +62,9 @@ func _ready() -> void:
 	badge = identity["badge"]
 	accent = UiTheme.team_border_color(0)
 	_build_ui()
+	# Arriving at the hub is the checkpoint — see `_autosave()`. Every other screen's exit lands
+	# here, so one call covers all of them.
+	_autosave()
 
 
 func _build_ui() -> void:
@@ -159,7 +162,7 @@ func _build_ui() -> void:
 	week_btn.text = "End Week"
 	week_btn.custom_minimum_size = Vector2(0, 40)
 	week_btn.focus_mode = Control.FOCUS_ALL
-	week_btn.tooltip_text = "Advances the week counter. Feeding, aging and the full weekly tick still live in the TypeScript build (docs/META_GAME_DISPOSITION.md §1)."
+	week_btn.tooltip_text = "Runs the week: booked drills, feeding, stamina, ageing and the freezer's rent — the same tick the Stable's Advance Week runs."
 	week_btn.pressed.connect(_on_end_week)
 	footer.add_child(week_btn)
 
@@ -356,10 +359,36 @@ func _wire_grid_focus(columns: int) -> void:
 			btn.focus_neighbor_bottom = btn.get_path_to(loc_buttons[i + columns].get_child(0))
 
 
-## ⚠️ Advances ONLY `Career.week` — no feeding, aging or market-tick logic exists on the Godot
-## side yet (docs/META_GAME_DISPOSITION.md §1). Real, not faked: the counter genuinely moves and
-## the Market's offer generator genuinely reseeds off it. Just smaller than the real weekly tick.
+## ⚠️ THERE MUST BE EXACTLY ONE WEEK. This used to call `Career.advance_week(1)` and nothing else,
+## while the Stable's Advance Week ran the real tick (`WeekPlan.advance()` — training, feeding,
+## stamina, ageing, the food-price reroll, the freezer's rent). Two buttons named for the same
+## action did two different things, and the cheap one was the one on the hub screen: a player who
+## planned a week of drills in the Stable, walked back to the Town and pressed End Week burned the
+## week, paid nothing, trained nothing — and left the plan sitting in `WeekPlan.plans` to be spent
+## against a LATER week instead. Both buttons now run the same tick and land on the same feeding
+## screen; this one only falls back to bumping the counter when there is no stable to tick.
 func _on_end_week() -> void:
-	if has_node("/root/Career"):
+	if not has_node("/root/Career"):
+		return
+	if not has_node("/root/Roster") or Roster.monsters.is_empty():
+		# Nothing to feed, train or age — an empty stable still lets the clock run so the Market
+		# restocks, which is the one reason to end a week before owning anything.
 		Career.advance_week(1)
-	_refresh_header_text()
+		_autosave()
+		_refresh_header_text()
+		return
+	var report: Dictionary = WeekPlan.advance(Roster.monsters)
+	WeekPlan.set_meta("last_report", report)
+	_autosave()
+	get_tree().change_scene_to_file("res://scenes/feeding.tscn")
+
+
+## ⚠️ THE GAME NEVER SAVED. `SaveGame.save_game()` was called from NOWHERE in the whole project —
+## `title_ui.gd` read `has_save()` and `load_game()`, so Continue existed, was permanently
+## disabled, and every career died with the process. The Town is the natural checkpoint: it is the
+## hub every other screen returns to, so autosaving on arrival and on the week turning covers the
+## market, the shop, the lab, the breeding ranch and the training week without any of those
+## screens needing to know a save format exists.
+func _autosave() -> void:
+	if has_node("/root/SaveGame"):
+		SaveGame.save_game()

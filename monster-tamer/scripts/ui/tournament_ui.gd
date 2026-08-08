@@ -219,3 +219,9 @@ func _show_result(out: Dictionary) -> void:
 			"No promotion — a cup must be swept. Train, then come back.", "secondary"))
 
 	_result_box.add_child(panel)
+
+	# ⚠️ Checkpoint AFTER the purse and the promotion have been applied. A cup is the longest
+	# uninterruptible stretch in the game (three fights, three tactics screens); losing it to a
+	# crash or a close would cost the player more than any other single action.
+	if has_node("/root/SaveGame"):
+		SaveGame.save_game()

@@ -174,6 +174,11 @@ const GRAND_CIRCUIT_PALETTES := [
 ## the proportion the reference actually uses.
 const MAJOR_MIN_BODIES := 9.0
 
+## The prop kinds a named composition's BLOCKING majors cycle through, so one board does not read
+## as four copies of the same object. Both are `blocking` in `KIND_TABLE`, so the cycle can never
+## change what a piece does — only what it is made of. See `_build_named`.
+const MAJOR_BLOCKING_KINDS := ["low_wall", "low_wall_border"]
+
 static func major_min_width() -> float:
 	return MAJOR_MIN_BODIES * Sp.BODY_RADIUS * 2.0
 
@@ -274,6 +279,7 @@ static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerat
 		return []
 	var out: Array = []
 	var base := major_min_width()
+	var major_i := 0
 	for m in spec.get("major", []):
 		var w: float = base * float(m.get("w", 1.0))
 		# Thickness is a quarter of the width — long and thin, which is what makes cover a READ
@@ -284,10 +290,27 @@ static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerat
 		# is omnidirectional enough to be worth standing behind.
 		var d: float = maxf(Sp.BODY_RADIUS * 2.0, w * float(m.get("d", 0.42)))
 		var c: Vector2 = (m["at"] as Vector2) * g
+		# ⚠️ EVERY MAJOR USED TO BE THE SAME `kind`, AND IT SHOWED. A composition's four blocking
+		# pieces were all `low_wall`, so a board rendered as four copies of one prop — the "grey
+		# slabs" read, half of which was a LAYOUT problem and not a renderer one. `ARENA_DESIGN.md`
+		# §5 already asks for exactly this ("prefer odd arrangements... too symmetrical kept
+		# recurring") and the scatter path below has always rolled its mirror partner's kind
+		# independently for the same reason; the authored path simply never did.
+		#
+		# ⚠️ ALTERNATED BY INDEX, NOT ROLLED FROM `rng`. Two reasons and both matter: an extra rng
+		# draw here would shift every accent kind downstream (the accents draw from the same
+		# stream), silently changing boards that nothing asked to change; and a *deterministic*
+		# alternation guarantees a mirror PAIR gets different props, where a roll only probably
+		# would. The rect, the grade and therefore everything the sim reads are untouched — this
+		# chooses a mesh, nothing more.
+		var mg: String = str(m.get("grade", "blocking"))
+		var mkind: String = MAJOR_BLOCKING_KINDS[major_i % MAJOR_BLOCKING_KINDS.size()] \
+			if mg == "blocking" else ("boulder" if major_i % 2 == 0 else "pillar")
+		major_i += 1
 		out.append({
 			"rect": Rect2(c - Vector2(w, d) * 0.5, Vector2(w, d)),
-			"grade": str(m.get("grade", "blocking")),
-			"kind": "low_wall" if str(m.get("grade", "blocking")) == "blocking" else "boulder",
+			"grade": mg,
+			"kind": mkind,
 		})
 	for a in spec.get("accents", []):
 		var grade: String = str(a.get("grade", "soft"))

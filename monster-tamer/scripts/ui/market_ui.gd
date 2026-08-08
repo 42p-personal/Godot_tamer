@@ -284,6 +284,11 @@ func _on_buy(o: Dictionary) -> void:
 		return
 	if not Career.spend_gold(int(o["price"])):
 		return
+	# ⚠️ A RECRUIT NEEDS A CAREER-SLOT ID BEFORE IT ENTERS THE STABLE. `GameData.make_monster()`
+	# leaves `id` empty, and `week_plan.gd` keys every plan by it while `week.gd` seeds the
+	# training roll off it — so two market recruits with the same empty id shared one plan slot
+	# and one RNG stream. See `roster.gd:next_slot_id()`.
+	o["mi"].id = Roster.next_slot_id()
 	Roster.monsters.append(o["mi"])
 	offers.erase(o)
 	_render_offers()

@@ -12,9 +12,12 @@
 ## reachable. It is declared anyway for readability/tooling, matching this codebase's other leaf
 ## scripts (`Spatial`, `SpatialAi`, `Tactics`).
 ##
-## ── WHY THIS IS NATIVE GDSCRIPT CONTROL FLOW, NOT A LITERAL `bt_node.gd` OBJECT GRAPH ───────────
-## `scripts/ai/bt_*.gd` is shared, stable infrastructure — read, not changed, per the brief — but
-## its `tick(ctx: Object) -> BTResult` shape does not fit `docs/BUILD_CONTRACT.md §1`'s
+## ── WHY THIS IS NATIVE GDSCRIPT CONTROL FLOW, NOT A LITERAL BT OBJECT GRAPH ─────────────────────
+## ⚠️ HISTORICAL — the `scripts/ai/bt_*.gd` library this paragraph argues with was DELETED on
+## 2026-08-08 (legacy deletion round); its lessons are preserved in
+## `docs/COMBAT_SPATIAL_LOG.md` § "What the superseded engine taught us". Kept because it still
+## explains the shape of THIS file. That library was shared infrastructure — read, not changed,
+## per the brief — but its `tick(ctx: Object) -> BTResult` shape did not fit `docs/BUILD_CONTRACT.md §1`'s
 ## `tick(ctx: Dictionary) -> Dictionary` verbatim: the contract wants an ACTION (desired_pos,
 ## target_id, move_name) back, and `BTResult` only carries status/path/reason. Reconciling the two
 ## would mean leaves writing their real decision into a side-channel (the blackboard) for this file

@@ -103,7 +103,14 @@ func _scenario(want_size: int) -> void:
 		not res.is_empty())
 	_check("[%dv%d] the roster really is that size (the scenario is not silently a 1v1)"
 		% [want_size, want_size], _team_a.size() == want_size and _team_b.size() == want_size)
-	_check("it ran the NEW sim (the switch is actually on)", bool(arena.get("USE_NEW_SIM")))
+	# ⚠️ THIS CHECK USED TO READ THE `USE_NEW_SIM` CONSTANT, WHICH IS NOW DELETED — the seam came
+	# out on 2026-08-08 and the screen has exactly one engine. A flag check would now be checking
+	# that a constant equals itself; instead, assert a FINGERPRINT ONLY THE NEW STREAM LEAVES.
+	# `sim/sim.gd` emits `decisionLogs` (the behaviour tree's own account of what it chose and
+	# why); neither superseded engine had a concept of one, so its presence cannot be faked by the
+	# legacy path coming back. This checks the fight, not the config.
+	_check("it ran the NEW sim (the stream carries the tree's decision logs)",
+		res.has("decisionLogs") or res.has("decision_logs"))
 	_check("a side WINS — the screen's fight is not a draw-by-cap",
 		str(res.get("winner", "")) in ["A", "B"])
 	var frames: Array = res.get("frames", [])

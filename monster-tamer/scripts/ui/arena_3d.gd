@@ -33,7 +33,6 @@ const Sp = preload("res://scripts/spatial.gd")
 ## Procedural per-creature animation — see docs/MESHY_SPIKE_RESULT.md's follow-up section.
 const CreatureAnimScript = preload("res://scripts/ui/creature_anim.gd")
 const CreatureRigScript = preload("res://scripts/ui/creature_rig.gd")
-const SPATIAL_SIM_PATH := "res://scripts/spatial_sim.gd"
 const ARENA_LAYOUT_PATH := "res://scripts/arena_layout.gd"
 
 ## ── THE RENDERER SWITCH (2026-08-08) ────────────────────────────────────────────────────────
@@ -48,7 +47,23 @@ const ARENA_LAYOUT_PATH := "res://scripts/arena_layout.gd"
 ## The translation is a pure RE-KEYING of what the stream already states: string unit ids become
 ## the array indices this file addresses nodes by, ticks become seconds, status records become
 ## their kinds, and the event list becomes the flat log. It invents no fact about the fight.
-const USE_NEW_SIM := true
+##
+## ── THE SEAM IS GONE (2026-08-08, integration round) ────────────────────────────────────────
+## `USE_NEW_SIM` and the two legacy branches below it (`spatial_sim.gd`, then `battle_sim.gd`)
+## were deleted once the full probe battery stayed green without them. This screen now has ONE
+## engine and no way to silently run another.
+##
+## ⚠️ WHY A DEAD BRANCH WAS WORTH DELETING RATHER THAN LEAVING GUARDED. Both fallbacks were
+## reached through `ResourceLoader.exists()`, so the screen would have DEGRADED SILENTLY to a
+## superseded engine if a path ever went missing — no error, just a different fight, which is the
+## single most expensive failure shape this project has recorded. A missing `preload` is a parse
+## error you find in one second; a live `exists`-guarded fallback is a debug round.
+##
+## ⚠️ `spatial_sim.gd` / `spatial_ai.gd` / `monster_tree.gd` STILL EXIST ON DISK and that is
+## deliberate: `scripts/ui/sandbox_ui.gd` hard-`preload`s the sim. They must be deleted as ONE
+## atomic move (the trio loads each other by path with `exists`-guards and degrades quietly when
+## partially present) once the sandbox is moved across. That is the next round's job, not this
+## file's problem — nothing here references them any more.
 const NewSim = preload("res://scripts/sim/sim.gd")
 const KitLib = preload("res://scripts/sim/kit.gd")
 
@@ -64,6 +79,87 @@ const STAND_TIERS := 5
 
 const SPEED_OPTIONS := [0.5, 1.0, 2.0, 4.0]
 const OPENING_HOLD := 1.5
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# THE LAMP TABLE — one entry per league, because the LOOK is a rung of the ladder
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ `ART_DIRECTION.md` §"The style, in one line" states the rule this table exists to satisfy:
+# *"Never hard-code a light in the renderer: all ten arenas would get the same lamp and the ladder
+# loses a dimension."* Until now `_build_world` did exactly that — one sun, one ambient colour,
+# every league — so Wood and Tamers Apex were the same room.
+#
+# ⚠️ AND `ground` IS THE FIX FOR THE COMPLAINT THAT STARTED THIS PASS: **the floor was blinding.**
+# Measured off the source art, the authored grounds run luma 0.24 (Iron) to 0.52 (Tin) in sRGB —
+# a 2.2x spread — and the renderer multiplied every one of them by the same white albedo under an
+# ambient term of 1.25. Platinum's marble (0.50) and Tin's (0.52) therefore rendered at or above
+# the value of the creatures standing on them. `ground` is a per-league MULTIPLIER on the floor's
+# albedo, authored to pull each league's floor down UNDER its cast: the brighter the source
+# texture, the harder it is knocked back, so the ladder keeps its material identity while the
+# creatures keep the top of the value range.
+#
+# ⚠️ THE ONE RULE THAT OUTRANKS EVERY ENTRY BELOW: the creatures must be the brightest things on
+# screen. `scripts/_probe_venue.gd` measures exactly that from a rendered frame (body luminance vs
+# floor luminance) and is the arbiter — if a lamp here is retuned, re-run it, do not eyeball it.
+#
+# `key`     — the warm working lamp's colour. Per-league identity falls out of it for free.
+# `key_e`   — its energy.
+# `amb`     — the cool sky bounce. NEVER near-white: that is what flattened the whole venue.
+# `amb_e`   — its energy. Anything above ~0.5 erases the key light's form entirely.
+# `fog`     — the colour distance fades toward; also the backdrop the venue is cut out against.
+# `ground`  — albedo multiplier on the floor (see above).
+# `fill`    — the cool fill/rim colour that separates a silhouette from the floor behind it.
+const LEAGUE_LOOK := {
+	"Wood":        {"key": Color(1.00, 0.86, 0.62), "key_e": 2.0, "amb": Color(0.34, 0.40, 0.52), "amb_e": 0.34, "fog": Color(0.15, 0.16, 0.19), "ground": Color(0.62, 0.58, 0.52), "fill": Color(0.52, 0.64, 0.92)},
+	"Copper":      {"key": Color(1.00, 0.80, 0.58), "key_e": 2.0, "amb": Color(0.32, 0.42, 0.50), "amb_e": 0.34, "fog": Color(0.13, 0.16, 0.17), "ground": Color(0.80, 0.72, 0.62), "fill": Color(0.50, 0.66, 0.90)},
+	"Tin":         {"key": Color(0.96, 0.92, 0.86), "key_e": 1.9, "amb": Color(0.34, 0.40, 0.50), "amb_e": 0.32, "fog": Color(0.15, 0.17, 0.20), "ground": Color(0.52, 0.53, 0.57), "fill": Color(0.56, 0.68, 0.94)},
+	"Bronze":      {"key": Color(1.00, 0.83, 0.55), "key_e": 2.1, "amb": Color(0.32, 0.38, 0.50), "amb_e": 0.32, "fog": Color(0.15, 0.14, 0.16), "ground": Color(0.66, 0.60, 0.52), "fill": Color(0.52, 0.64, 0.92)},
+	"Iron":        {"key": Color(1.00, 0.78, 0.52), "key_e": 2.2, "amb": Color(0.28, 0.33, 0.44), "amb_e": 0.28, "fog": Color(0.10, 0.11, 0.13), "ground": Color(0.92, 0.88, 0.84), "fill": Color(0.48, 0.60, 0.92)},
+	"Silver":      {"key": Color(0.98, 0.90, 0.76), "key_e": 1.9, "amb": Color(0.34, 0.40, 0.52), "amb_e": 0.32, "fog": Color(0.14, 0.16, 0.20), "ground": Color(0.52, 0.53, 0.56), "fill": Color(0.56, 0.68, 0.96)},
+	"Gold":        {"key": Color(1.00, 0.88, 0.62), "key_e": 2.0, "amb": Color(0.34, 0.38, 0.50), "amb_e": 0.30, "fog": Color(0.16, 0.14, 0.14), "ground": Color(0.58, 0.54, 0.47), "fill": Color(0.52, 0.64, 0.92)},
+	# ⚠️ THE FOUR GRAND-CIRCUIT GROUNDS WERE TONED DOWN HARD ON 2026-08-08 (Platinum x0.50,
+	# Masters x0.61, Tamer Elite x0.58, Tamers Apex x0.67). Every one of them FAILED the value
+	# check — the floor out-valued the creatures standing on it (ratios 0.68 / 0.82 / 0.79 / 0.90,
+	# where 1.12 is the pass mark). Factors are derived from the measured floor and body luminance,
+	# not guessed, and each keeps its colour's RATIOS so the league's material identity survives a
+	# change that is purely value. See the "TONE-DOWN" note in `_build_world`.
+	#
+	# ⚠️ AND THE DIAGNOSIS, BECAUSE THE OBVIOUS READING IS WRONG: this is not "high leagues use big
+	# multipliers". IRON RUNS 0.92 — the largest in this table — AND PASSES AT 2.04, while Masters
+	# runs the same 0.92 and failed at 0.82. The multiplier is not the variable; the GROUND ART's
+	# own brightness is (Iron is near-colourless forge stone, Masters is pale marble), and this
+	# column is what compensates for it. So a new ground texture ALWAYS needs a fresh measurement —
+	# you cannot infer its tone-down from a neighbouring league's.
+	"Platinum":    {"key": Color(0.98, 0.91, 0.80), "key_e": 2.0, "amb": Color(0.33, 0.39, 0.53), "amb_e": 0.30, "fog": Color(0.13, 0.15, 0.19), "ground": Color(0.36, 0.37, 0.39), "fill": Color(0.58, 0.70, 0.98)},
+	"Masters":     {"key": Color(1.00, 0.86, 0.68), "key_e": 2.1, "amb": Color(0.30, 0.36, 0.50), "amb_e": 0.28, "fog": Color(0.12, 0.12, 0.16), "ground": Color(0.56, 0.53, 0.49), "fill": Color(0.54, 0.66, 0.96)},
+	"Tamer Elite": {"key": Color(1.00, 0.84, 0.64), "key_e": 2.1, "amb": Color(0.30, 0.35, 0.50), "amb_e": 0.28, "fog": Color(0.11, 0.12, 0.16), "ground": Color(0.52, 0.50, 0.50), "fill": Color(0.54, 0.66, 0.96)},
+	"Tamers Apex": {"key": Color(1.00, 0.87, 0.66), "key_e": 2.2, "amb": Color(0.31, 0.36, 0.52), "amb_e": 0.28, "fog": Color(0.12, 0.11, 0.15), "ground": Color(0.52, 0.49, 0.44), "fill": Color(0.56, 0.68, 0.98)},
+}
+## The lamp a league with no entry gets. Neutral on purpose: a missing league should read as an
+## unfinished VENUE, never as a broken renderer.
+const DEFAULT_LOOK := {
+	"key": Color(1.00, 0.86, 0.64), "key_e": 2.0, "amb": Color(0.32, 0.38, 0.50), "amb_e": 0.32,
+	"fog": Color(0.13, 0.14, 0.18), "ground": Color(0.58, 0.55, 0.50), "fill": Color(0.54, 0.66, 0.94),
+}
+
+
+func _look() -> Dictionary:
+	return LEAGUE_LOOK.get(league_name, DEFAULT_LOOK)
+
+
+## The extra visual layer every unit's geometry is placed on, so one directional light can reach
+## the cast and nothing else. Bit 2 (value 2); layer 1 stays set, so the venue's own lamps still
+## light the creatures normally — this ADDS, it never replaces.
+const CAST_LIGHT_LAYER := 2
+
+
+## Put `n` and everything under it on the cast-light layer as well as its own.
+func _add_to_cast_layer(n: Node) -> void:
+	if n is VisualInstance3D:
+		var v := n as VisualInstance3D
+		v.layers = v.layers | CAST_LIGHT_LAYER
+	for c in n.get_children():
+		_add_to_cast_layer(c)
 
 # ── Camera — steep, dynamic, never the static leash-radius formula that no longer exists. ──────
 ## ⚠️ RE-FRAMED 2026-08-05 TO THE DIRECTION THAT WAS WRITTEN AND NEVER BUILT.
@@ -198,27 +294,38 @@ const STATUS_META := {
 const OBSTACLE_TEX := {
 	"barrel": "res://assets/arena/barrel-wood.jpg",
 	"crate": "res://assets/arena/crate-wood.jpg",
-	"planter": "res://assets/arena/crate-wood.jpg",
-	"low_wall": "res://assets/arena/wall-timber.jpg",
-	"pillar": "res://assets/arena/wall-stone.jpg",
-	"bench": "res://assets/arena/wall-timber.jpg",
-	"fence": "res://assets/arena/wall-timber.jpg",
-	"boulder": "res://assets/arena/wall-stone.jpg",
-	"shrine": "res://assets/arena/wall-stone.jpg",
+	"planter": "res://assets/arena/planter-soil.jpg",
+	"low_wall": "res://assets/arena/low-wall-brick.jpg",
+	"low_wall_border": "res://assets/arena/stone-block.jpg",
+	"pillar": "res://assets/arena/pillar-stone.jpg",
+	"bench": "res://assets/arena/bench-wood.jpg",
+	"fence": "res://assets/arena/fence-timber.jpg",
+	"boulder": "res://assets/arena/boulder-rock.jpg",
+	"shrine": "res://assets/arena/shrine-marble.jpg",
 }
 ## Kinds without an authored texture of their own are tinted (StandardMaterial3D.albedo_color
 ## multiplies albedo_texture) so each still reads as distinct rather than silently reusing an
 ## unrelated kind's look — planter vs crate, fence vs low_wall, boulder/shrine vs pillar.
+## ⚠️ THE BLOCKING KINDS NEEDED ONE AND DID NOT HAVE ONE, AND THAT SHOWED THE MOMENT THE IMPORTED
+## `metallic = 0.4` WAS CORRECTED. Those two models carry a near-white region of their atlas, so
+## with the fake metal removed they rendered at nearly full diffuse — four large WHITE slabs, which
+## is a worse version of the original complaint: the majors are the biggest objects on the board
+## and they became the brightest things in frame, above the creatures. Dressed stone here, so they
+## sit below the cast and above the floor, which is the order the value ladder needs.
 const OBSTACLE_TINT := {
 	"planter": Color(0.55, 0.72, 0.48),
 	"fence": Color(0.95, 0.88, 0.72),
-	"boulder": Color(0.72, 0.66, 0.58),
-	"shrine": Color(0.92, 0.82, 0.58),
+	"boulder": Color(0.80, 0.74, 0.66),
+	"shrine": Color(0.78, 0.72, 0.58),
+	"low_wall": Color(0.58, 0.54, 0.50),
+	"low_wall_border": Color(0.54, 0.52, 0.50),
+	"pillar": Color(0.70, 0.68, 0.64),
+	"crate": Color(0.86, 0.78, 0.62),
 }
 const OBSTACLE_FALLBACK := {
 	"barrel": Color(0.44, 0.32, 0.20), "crate": Color(0.50, 0.38, 0.24),
 	"planter": Color(0.40, 0.52, 0.34), "low_wall": Color(0.55, 0.53, 0.50),
-	"pillar": Color(0.50, 0.48, 0.45),
+	"low_wall_border": Color(0.52, 0.50, 0.47), "pillar": Color(0.50, 0.48, 0.45),
 	"bench": Color(0.52, 0.40, 0.26), "fence": Color(0.58, 0.47, 0.32),
 	"boulder": Color(0.46, 0.43, 0.38), "shrine": Color(0.56, 0.50, 0.38),
 }
@@ -258,7 +365,6 @@ var speed := 1.0
 var opening_timer := 0.0
 var logged_upto := 0
 var event_log: Array = []
-var used_spatial := false
 
 var selected_idx := -1             # Tier-2 disclosure — one unit's callout open at a time
 var shadow_mm: MultiMesh
@@ -421,22 +527,8 @@ func _resolve_fight() -> void:
 	if career2 != null and not committed.is_empty():
 		fight_seed = hash([int(career2.week), int(career2.league_index),
 			int(cup2.current_round) if cup2 != null else 0])
-	if USE_NEW_SIM:
-		result = await _run_new_sim(fight_seed)
-		used_spatial = true
-	elif ResourceLoader.exists(SPATIAL_SIM_PATH):
-		var SimScript = load(SPATIAL_SIM_PATH)
-		var sim = SimScript.new(team_a, team_b, fight_seed,
-			committed.get("planA", {}), committed.get("planB", {}), orders,
-			_obstacles)
-		result = await sim.run()
-		used_spatial = true
-	else:
-		var Fallback = load("res://scripts/battle_sim.gd")
-		var sim2 = Fallback.new(team_a, team_b, fight_seed,
-			committed.get("planA", {}), committed.get("planB", {}), orders)
-		result = sim2.run()
-		used_spatial = false
+	# ⚠️ NO BRANCH, NO FALLBACK — the seam came out 2026-08-08. See the header note above.
+	result = await _run_new_sim(fight_seed)
 
 	event_log = result.get("log", [])
 	frames = result.get("frames", [])
@@ -857,14 +949,14 @@ func _show_resolving(v: bool) -> void:
 func _update_mode_label() -> void:
 	if mode_label == null:
 		return
-	if used_spatial:
-		# ⚠️ Reports what is ON THE FIELD, not what the generator produced. With SHOW_OBSTACLES off
-		# `_obstacles` is empty and the header said "124 obstacles" over an empty board — a HUD that
-		# describes a world the player is not looking at is worse than no HUD.
-		mode_label.text = "%s · %d frames · ground %d×%d · %d obstacles" % [
-			_layout_name, frames.size(), int(ground_size.x), int(ground_size.y), _obstacles.size()]
-	else:
-		mode_label.text = "non-spatial fallback (spatial sim not present)"
+	# ⚠️ Reports what is ON THE FIELD, not what the generator produced. With SHOW_OBSTACLES off
+	# `_obstacles` is empty and the header said "124 obstacles" over an empty board — a HUD that
+	# describes a world the player is not looking at is worse than no HUD.
+	#
+	# The "non-spatial fallback" arm of this label went with the seam: there is one engine now, so
+	# a label that could announce a second one would only ever be able to lie.
+	mode_label.text = "%s · %d frames · ground %d×%d · %d obstacles" % [
+		_layout_name, frames.size(), int(ground_size.x), int(ground_size.y), _obstacles.size()]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -883,24 +975,170 @@ func _build_world() -> void:
 	var bw := ground_size.x * WORLD_SCALE
 	var bd := ground_size.y * WORLD_SCALE
 
+	# ── THE VENUE'S LIGHT. Three lamps, not one. ────────────────────────────────────────────────
+	#
+	# ⚠️ WHAT WAS HERE AND WHY IT READ AS UNFINISHED, stated so it cannot be reverted by accident:
+	# ONE directional light at energy 1.0, against an ambient term of colour (0.68,0.70,0.76) at
+	# energy 1.25. Ambient is direction-free by definition, so an ambient that strong is a flat
+	# wash applied equally to every surface in the scene — the floor, the walls, the stands, the
+	# top of a crate and its side all received roughly the same light, and the key had ~40% of the
+	# total to shape anything with. The measured result (`_probe_venue.gd`) was a frame where the
+	# creatures read at 0.85-1.04x the luminance of the floor they stood on, i.e. no value
+	# separation at all, at every league. A fight the player cannot intervene in has to be legible
+	# above everything else, so that is a design failure, not a polish one.
+	#
+	# The replacement is the standard three-lamp setup the direction already describes
+	# (`ART_DIRECTION.md`: "a single warm key, cool sky bounce, everything past the wall falling
+	# into dark"):
+	#   KEY  — warm, strong, the only shadow-caster. Gives every object a lit face and a dark face.
+	#   FILL — cool, weak, from the opposite side. Keeps shadow SIDES from going to black mush.
+	#   RIM  — cool, from behind the far side, no shadow. Puts a cold edge on every silhouette so a
+	#          body separates from the floor even when the two are the same value.
+	# All three take their colours from `LEAGUE_LOOK`, so the ladder keeps a per-league lamp.
+	var look := _look()
+
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
-	e.background_color = Color(0.06, 0.07, 0.09)
+	e.background_color = look["fog"]
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	e.ambient_light_color = Color(0.68, 0.70, 0.76)
-	e.ambient_light_energy = 1.25
+	e.ambient_light_color = look["amb"]
+	e.ambient_light_energy = float(look["amb_e"])
+
+	# ⚠️ TONEMAPPING, WHICH THE SCENE HAD NONE OF. Godot's default is LINEAR — highlights clip flat
+	# and the whole frame sits in a narrow band, which is half of "washed". FILMIC rolls the top end
+	# off so a lit face can be bright without becoming a white hole, and it is what lets the key
+	# light run at 2.0 without blowing the floor out.
+	# ⚠️ `tonemap_white` STAYS AT 1.0. It was tried at 1.6 — which maps 1.6 down to white and
+	# therefore pulls every midtone with it — and the measured frame luminance fell to 0.09-0.14.
+	# The brief was that the ground is BLINDING, not that the venue should become a cave; a frame
+	# nobody can see is the same legibility failure wearing the opposite sign.
+	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	e.tonemap_white = 1.0
+	e.tonemap_exposure = 1.0
+
+	# Contact shadow and crevice darkening. `ART_DIRECTION.md` §Status names ambient occlusion as
+	# one of the two biggest remaining quality jumps; this is it. It is also what stops a prop
+	# looking like it is hovering — an object with no dark seam where it meets the ground reads as
+	# pasted on, which is a large part of "the cover looks unfinished".
+	e.ssao_enabled = true
+	e.ssao_radius = 1.4
+	e.ssao_intensity = 1.2
+	e.ssao_power = 1.3
+	e.ssao_light_affect = 0.1
+
+	# ⚠️ FOG IS A DEPTH CUE HERE, NOT A GREY WASH — and it was being used as one. At density 0.004
+	# with `fog_sky_affect` at its default of 1.0, the background colour itself was fogged, so the
+	# near-black backdrop rendered as the same mid-slate as the board and the venue had no
+	# silhouette against anything. Density comes down, sky affect goes to 0 (the backdrop already
+	# IS the fog colour), and aerial perspective stays off because there is no sky to sample.
+	#
+	# ⚠️ AND THE DENSITY IS SCALED TO THE BOARD, WHICH IT WAS NOT. Fog density is a per-world-unit
+	# absolute; the grounds are not the same size. A 1v1 board is ~40 world units across and a 5v5
+	# is ~150, and the camera pulls back in proportion, so one fixed density meant Wood got almost
+	# no fog and Platinum got its ENTIRE FLOOR blended ~40% toward the fog colour. That is what made
+	# the big leagues read as a flat uniform slate with black props on it while the small ones
+	# looked fine — measured frame luminance 0.180 at Bronze against 0.102 at Platinum off the same
+	# lamp values. Expressed as "how much fog at the far edge of THIS board", it is scale-free, and
+	# every league gets the same amount of depth cue. This is the same class of bug
+	# `docs/ABILITY_BALANCE_REVIEW.md` records for the spatial constants — a bare world distance
+	# that the board grew out from under.
+	var diag: float = maxf(30.0, Vector2(bw, bd).length())
 	e.fog_enabled = true
-	e.fog_light_color = Color(0.32, 0.34, 0.40)
-	e.fog_density = 0.004
+	e.fog_light_color = look["fog"]
+	e.fog_density = 0.085 / diag
+	e.fog_sky_affect = 0.0
+	e.fog_aerial_perspective = 0.0
+
+	# ⚠️ NO `adjustment_enabled`. It was tried and it is a TRAP in 4.7: switching it on without an
+	# `adjustment_color_correction` texture leaves the post-process shader sampling a binding that
+	# was never supplied — the log fills with "Uniforms supplied for set (3) are not the same format
+	# as required by the pipeline shader" and the whole frame comes back tinted magenta. The grade
+	# it would have applied (a little more contrast and saturation) is instead built into the lamp
+	# colours and `LEAGUE_LOOK` above, which costs nothing and cannot break the pipeline.
 	env.environment = e
 	add_child(env)
 
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-56, -38, 0)
-	sun.light_energy = 1.0
-	sun.shadow_enabled = true
-	add_child(sun)
+	var key := DirectionalLight3D.new()
+	key.rotation_degrees = Vector3(-52, -34, 0)
+	key.light_color = look["key"]
+	key.light_energy = float(look["key_e"])
+	# ⚠️ SPECULAR IS KEPT LOW ON EVERY DIRECTIONAL LIGHT IN THIS SCENE, AND THE FLOOR IS WHY. The
+	# ground is a single unbroken plane tens of units across, so a directional specular lobe on it
+	# is not a highlight — it is a soft-edged wash covering a third of the frame, and it was
+	# measurably the BRIGHTEST thing in the picture. (Caught with `rim.light_specular = 0.6`: a
+	# large blue sheen across the left of the board that out-valued every creature on it.)
+	key.light_specular = 0.12
+	key.shadow_enabled = true
+	# ⚠️ THE SHADOW RANGE IS SIZED TO THE BOARD, NOT LEFT AT THE DEFAULT 100 — a 5v5 ground is ~150
+	# world units across, so the default ended before the far half of the arena and cover there cast
+	# nothing.
+	# ⚠️ AND BIAS MUST SCALE WITH THE SHADOW RANGE, AND THIS IS MEASURED, NOT THEORETICAL. With
+	# a fixed `shadow_bias = 0.04` over a range sized to the board, the 5v5 grounds acne'd across
+	# their whole surface — every texel partially self-shadowing — and the symptom was not speckle
+	# but a uniformly DARK, formless board: floor luminance 0.188 with shadows on against 0.267
+	# with them off, at Platinum, from the same lamps. (Bronze, on a board less than half as long,
+	# was unaffected — which is exactly why this looked like a per-league art problem and was not.)
+	# Shadow-map texel size grows with range, so the depth offset that hides acne has to grow with
+	# it too.
+	var shadow_range: float = clampf(Vector2(bw, bd).length() * 1.15, 80.0, 260.0)
+	key.directional_shadow_max_distance = shadow_range
+	# ⚠️ ONE ORTHOGONAL SPLIT, NOT FOUR PARALLEL ONES — and this is a consequence of the camera,
+	# not a preference. Cascaded splits give the near cascade most of the resolution, which is
+	# correct for a first-person camera where the subject is at your feet and the horizon is far.
+	# This camera is a long lens ~200 units back looking down at a board: EVERYTHING in shot sits
+	# in a narrow distance band, and with 4 splits that band fell almost entirely into the coarsest
+	# cascade. One orthogonal split spends the whole map on the same band, so texel size is uniform
+	# and the bias that hides acne is a single knowable number.
+	key.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+	# Bias tracks texel size, which tracks the range. ~2 texels of depth offset at 4096.
+	key.shadow_bias = maxf(0.06, shadow_range / 4096.0 * 2.6)
+	key.shadow_normal_bias = 1.0
+	key.shadow_blur = 1.1
+	add_child(key)
+
+	var fill := DirectionalLight3D.new()
+	fill.rotation_degrees = Vector3(-28, 148, 0)
+	fill.light_color = look["fill"]
+	fill.light_energy = 0.45
+	fill.light_specular = 0.0
+	fill.shadow_enabled = false
+	add_child(fill)
+
+	var rim := DirectionalLight3D.new()
+	# From behind the far wall and low, so it catches the tops and back edges of bodies and props —
+	# the edge that makes a silhouette readable against a floor of the same value.
+	rim.rotation_degrees = Vector3(-14, 196, 0)
+	rim.light_color = look["fill"]
+	rim.light_energy = 0.75
+	rim.light_specular = 0.0
+	rim.shadow_enabled = false
+	add_child(rim)
+
+	# ── THE CAST LIGHT. The one lamp that only the creatures can see. ───────────────────────────
+	#
+	# ⚠️ THIS IS THE LEVER THAT ACTUALLY SATISFIES "THE CREATURES MUST BE THE BRIGHTEST THINGS ON
+	# SCREEN", and nothing else does. Tuning the venue's own lamps moves the floor and the cast
+	# TOGETHER — their ratio is set by their albedos, so a brighter key brightens the marble by
+	# exactly as much as it brightens the monster standing on it. A light with a cull mask breaks
+	# that coupling: it is +energy on the cast alone, at zero cost to the ground, and it is the only
+	# control in the scene that moves body value WITHOUT moving floor value.
+	#
+	# ⚠️ AND IT IS NOT A CHEAT — it is how the genre lights a board. The alternative is to keep
+	# darkening every floor until the contrast appears, which destroys the per-league material
+	# identity the ground art exists to carry (`ART_DIRECTION.md`'s material axis). This keeps the
+	# floors readable AS FLOORS and puts the value where the design needs it.
+	#
+	# `CAST_LIGHT_LAYER` is the visual layer `_build_units` adds to every unit's geometry; this
+	# light's cull mask is that layer and nothing else.
+	var cast := DirectionalLight3D.new()
+	cast.rotation_degrees = Vector3(-42, 22, 0)
+	cast.light_color = Color(1.0, 0.95, 0.88)
+	cast.light_energy = 1.5
+	cast.light_specular = 0.25
+	cast.shadow_enabled = false
+	cast.light_cull_mask = CAST_LIGHT_LAYER
+	add_child(cast)
 
 	var floor_mesh := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
@@ -911,10 +1149,27 @@ func _build_world() -> void:
 	if gtex != null:
 		fm.albedo_texture = gtex
 		fm.uv1_scale = Vector3(bw / 6.0, bd / 6.0, 1.0)
+		# ⚠️ THE TONE-DOWN. `albedo_color` MULTIPLIES `albedo_texture`, so this darkens the league's
+		# own floor art without replacing it — the material identity survives, the blinding does not.
+		fm.albedo_color = look["ground"]
 	else:
-		fm.albedo_color = Color(0.55, 0.50, 0.43)
-	fm.roughness = 0.95
+		# A missing ground still degrades to a decent tinted floor rather than a grey plane, and it
+		# takes the same per-league tone so an unpainted league is quiet rather than bright.
+		var g: Color = look["ground"]
+		fm.albedo_color = Color(0.55 * g.r, 0.50 * g.g, 0.43 * g.b)
+	fm.roughness = 0.96
+	fm.metallic = 0.0
+	fm.metallic_specular = 0.08
 	floor_mesh.material_override = fm
+	# ⚠️ THE GROUND MUST NOT CAST. This one line is worth more than every lamp value above it.
+	# `MeshInstance3D` casts shadows by default, so the floor plane was casting a shadow onto
+	# ITSELF — coincident geometry at y=0, which a shadow map resolves by texel size, so the larger
+	# the board the larger the shadow range, the coarser the texel and the more of the floor that
+	# fell inside its own shadow. That is why the 5v5 grounds rendered as a flat dark slate while
+	# Bronze, on a board less than half as long, looked correct off IDENTICAL lighting code — and
+	# why it read as a per-league art fault for three rounds of tuning. Nothing below the fight
+	# needs to cast: see the same setting on the zone paint and the centre line.
+	floor_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_mesh)
 
 	_build_venue(bw, bd)
@@ -922,6 +1177,7 @@ func _build_world() -> void:
 	if SHOW_OBSTACLES:
 		_build_obstacles()
 	_build_banners(bw, bd)
+	_build_vignette()
 
 	camera = Camera3D.new()
 	camera.fov = CAM_FOV
@@ -970,7 +1226,13 @@ func _build_deploy_zones(bw: float, bd: float) -> void:
 		mi.mesh = pm
 		var m := StandardMaterial3D.new()
 		var col: Color = Art.team_identity(side)["colour"]
-		m.albedo_color = Color(col.r, col.g, col.b, 0.42)
+		# ⚠️ 0.42 -> 0.14, PLUS A PAINTED EDGE. A flood fill at 0.42 covered roughly half the board
+		# in flat unshaded colour, which did two bad things at once: it erased the ground's own
+		# material identity across most of the frame, and — being unshaded — it was immune to the
+		# lighting, so it flattened the value structure the new lamps exist to create. A sports
+		# ground marks a zone with a LINE and a wash, not a coat of paint; the line is the landmark,
+		# the wash only says which side of it you are on.
+		m.albedo_color = Color(col.r, col.g, col.b, 0.14)
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		m.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -979,7 +1241,29 @@ func _build_deploy_zones(bw: float, bd: float) -> void:
 		var zone2: Rect2 = Sp.deploy_zone(team_size, "A" if side == 0 else "B")
 		var cx_w: float = (zone2.position.x + zone2.size.x * 0.5 - Sp.ground_size(team_size).x * 0.5) * WORLD_SCALE
 		mi.position = Vector3(cx_w, 0.02, 0.0)
+		# Paint on the floor, 2cm above it. It must not cast a shadow — an unshaded transparent
+		# plane still casts an OPAQUE one, and this covers a third of the board.
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mi)
+
+		# The zone's inner boundary — the line a monster is not deployed past. Drawn brighter than
+		# the wash so it survives at a distance, and offset by half its own width so it sits ON the
+		# edge rather than straddling it.
+		var edge := MeshInstance3D.new()
+		var em := PlaneMesh.new()
+		em.size = Vector2(0.5, bd)
+		edge.mesh = em
+		var emat := StandardMaterial3D.new()
+		emat.albedo_color = Color(col.r, col.g, col.b, 0.85).lightened(0.25)
+		emat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		emat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		emat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		edge.material_override = emat
+		var inner_x: float = zone2.position.x + (zone2.size.x if side == 0 else 0.0)
+		edge.position = Vector3(
+			(inner_x - Sp.ground_size(team_size).x * 0.5) * WORLD_SCALE - dir * 0.25, 0.04, 0.0)
+		edge.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(edge)
 
 	# The centre line — the thing both sides are walking toward, and the only way to see at a
 	# glance which side has taken ground.
@@ -988,12 +1272,16 @@ func _build_deploy_zones(bw: float, bd: float) -> void:
 	lm.size = Vector2(0.6, bd * 0.88)
 	line.mesh = lm
 	var lmat := StandardMaterial3D.new()
-	lmat.albedo_color = Color(1, 1, 1, 0.22)
+	# ⚠️ 0.22 -> 0.13 AND OFF PURE WHITE. Unshaded white at 0.22 over a floor that is now properly
+	# dark rendered as a solid bright bar running the depth of the board — a piece of line marking
+	# out-valuing the competitors. It is a landmark, not a light source.
+	lmat.albedo_color = Color(0.86, 0.88, 0.92, 0.10)
 	lmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	lmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	lmat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	line.material_override = lmat
 	line.position = Vector3(0, 0.03, 0)
+	line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(line)
 
 
@@ -1006,6 +1294,18 @@ func _build_venue(bw: float, bd: float) -> void:
 	else:
 		wall_mat.albedo_color = Color(0.30, 0.24, 0.19)
 	wall_mat.roughness = 0.9
+	wall_mat.metallic = 0.0
+	# ⚠️ THE VENUE MUST SIT UNDER THE FLOOR, WHICH SITS UNDER THE CREATURES. One shared timber
+	# texture dressed every league's barrier at full brightness, so the ring of wall around the
+	# board was often the lightest large shape in frame. Taking the same per-league tone-down the
+	# ground takes (a touch darker still) keeps the value ladder in the right order.
+	var lk := _look()
+	var gt: Color = lk["ground"]
+	wall_mat.albedo_color = Color(
+		wall_mat.albedo_color.r * gt.r * 0.85,
+		wall_mat.albedo_color.g * gt.g * 0.85,
+		wall_mat.albedo_color.b * gt.b * 0.85) if wtex == null \
+		else Color(gt.r * 0.85, gt.g * 0.85, gt.b * 0.85)
 
 	var wall_xforms: Array = [
 		_box_xform(Vector3(0, WALL_H * 0.5, -bd * 0.5 - 0.4), Vector3(bw + 1.6, WALL_H, 0.8)),
@@ -1023,6 +1323,12 @@ func _build_venue(bw: float, bd: float) -> void:
 	else:
 		stand_mat.albedo_color = Color(0.24, 0.21, 0.18)
 	stand_mat.roughness = 0.95
+	stand_mat.metallic = 0.0
+	# Darker again than the barrier: the stands are the outermost ring and the furthest thing from
+	# the fight, so they are where "everything past the wall falling into dark" (ART_DIRECTION.md)
+	# actually happens.
+	if ctex != null:
+		stand_mat.albedo_color = Color(gt.r * 0.62, gt.g * 0.62, gt.b * 0.66)
 
 	var stand_xforms: Array = []
 	for tier in range(STAND_TIERS):
@@ -1047,16 +1353,72 @@ func _build_banners(bw: float, bd: float) -> void:
 	mat.albedo_texture = tex
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var xs := [-bw * 0.28, 0.0, bw * 0.28]
-	for x in xs:
+	# ⚠️ NOT `SHADING_MODE_UNSHADED`. An unshaded banner ignores the venue's lamps entirely, so it
+	# rendered at full texture brightness against a dim wall — three bright rectangles that read as
+	# stickers rather than cloth, and (being brighter than the creatures) they competed for the eye
+	# with the one thing that must always win it. Lit, they sit in the venue.
+	mat.roughness = 0.95
+	mat.metallic = 0.0
+	# ⚠️ SIZED OFF THE BOARD, NOT FIXED AT 1.6 UNITS. The near wall is ~150 world units long on a
+	# 5v5 ground, so a 1.6-unit banner was roughly one percent of it — invisible, which is why the
+	# venue read as undressed despite the art existing. Count scales too, so the spacing between
+	# them stays even at every team size instead of three lonely marks on a huge wall.
+	# ⚠️ THE ART IS A TALL BANNER (750x1221), SO IT CANNOT LIVE ON THE BARRIER. `WALL_H` is 1.4 —
+	# a banner drawn to that height is 0.86 wide on a wall ~150 long, which is the invisible thing
+	# that was already happening. They are hung from the barrier's top rail instead and rise in
+	# FRONT of the lower stand rows, which is both where a real ground hangs them and the only
+	# place they can be a monster-height object. Height is pinned to `UNIT_HEIGHT * 0.78` so a
+	# banner always reads as "about as tall as a competitor" at every board size.
+	var h := UNIT_HEIGHT * 0.78
+	var w := h * 0.614          # the source art's own aspect; a squashed banner reads as a poster
+	var span := bw * 0.90
+	var count: int = clampi(int(round(span / (w * 6.0))), 3, 13)
+	for i in range(count):
+		var t: float = (float(i) + 0.5) / float(count)
 		var q := MeshInstance3D.new()
 		var qm := QuadMesh.new()
-		qm.size = Vector2(1.6, 2.2)
+		qm.size = Vector2(w, h)
 		q.mesh = qm
-		q.position = Vector3(x, WALL_H + 1.15, -bd * 0.5 - 0.42)
+		# The far barrier's INNER face is at `-bd*0.5` (the box spans back from there), so a banner
+		# in shot sits a hair on the camera side of it. The old value put them behind the wall.
+		q.position = Vector3(-span * 0.5 + span * t, WALL_H + h * 0.5 - 0.15, -bd * 0.5 + 0.06)
 		q.material_override = mat
 		add_child(q)
+
+
+## A soft corner darkening over the whole frame. ⚠️ NOT DECORATION — it is the cheapest available
+## answer to the readability requirement in `ART_THEME.md` §3 ("who's who, what's happening, who's
+## winning, at a glance"): the fight is always near the middle of frame and the stands, the far
+## crowd and the empty corners are always at the edges, so pulling the edges down puts the eye on
+## the board without moving the camera or hiding anything.
+##
+## ⚠️ ITS OWN `CanvasLayer` AT LAYER 0, BENEATH THE HUD (`overlay` is layer 1). A vignette drawn
+## over the nameplates would dim the one channel that carries whose creature is whose — which is
+## the exact failure the vignette is supposed to help with. And `MOUSE_FILTER_IGNORE`, because a
+## full-screen Control that eats clicks would silently kill the arena's own drag-to-pan.
+func _build_vignette() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 0
+	add_child(layer)
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
+	grad.colors = PackedColorArray([
+		Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.10), Color(0.02, 0.02, 0.04, 0.62)])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 512
+	tex.height = 512
+	var rect := TextureRect.new()
+	rect.texture = tex
+	rect.anchor_right = 1
+	rect.anchor_bottom = 1
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(rect)
 
 
 func _box_xform(pos: Vector3, box_size: Vector3) -> Transform3D:
@@ -1147,7 +1509,43 @@ func _build_obstacles() -> void:
 			add_child(_multimesh_boxes(box_groups[kind], _rim(_obstacle_material(kind))))
 	for kind in cyl_groups.keys():
 		if not _try_prop_multimesh(kind, cyl_groups[kind]):
-			add_child(_multimesh_cylinders(cyl_groups[kind], _obstacle_material(kind)))
+			add_child(_multimesh_cylinders(cyl_groups[kind], _rim(_obstacle_material(kind))))
+
+
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+## WHY COVER USED TO RENDER AS GREY SLABS — three causes, all real, all fixed here
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## The complaint was "the cover is grey slabs, and `assets/arena/` already holds barrel-wood.jpg,
+## crate-wood.jpg, wall-stone.jpg, wall-timber.jpg". The textures were not the problem and neither
+## was `KIND_TABLE` — `kind` is set correctly on every piece and every kind has a real CC0 model in
+## `assets/models/obstacles/`. Measured causes, in order of how much each contributed:
+##
+## 1. ⚠️ **EVERY IMPORTED PROP MATERIAL CARRIES `metallic = 0.40`.** Six of the ten kinds
+##    (crate, planter, boulder, pillar, shrine, low_wall, low_wall_border) import from glTF with a
+##    metallic factor of 0.4 on what are wood and stone objects. A metal has no diffuse response —
+##    it only reflects its environment — and this scene has no reflection probe and no sky, so 40%
+##    of every prop's shading was being taken away and given to a reflection of nothing. That is
+##    what "grey slab" actually was: a correctly textured wooden crate with nearly half its diffuse
+##    term deleted. Forced to 0 below; these are dielectrics.
+## 2. ⚠️ **THE PROP WAS STRETCHED TO THE COVER RECT ON EVERY AXIS.** A blocking major is
+##    `MAJOR_MIN_BODIES` wide — tens of world units — and it was drawn by scaling ONE small wall
+##    model to that width. Its texture atlas therefore spanned the whole piece in a handful of
+##    texels, i.e. a flat colour. `_segment_counts` below tiles the model along its long axes
+##    instead, so a long wall is drawn as a RUN of wall sections at roughly their natural
+##    proportions. The union of the sections is still exactly the sim's rect, so the picture keeps
+##    telling the truth about where cover is — which is the invariant the old comment defended and
+##    it is not weakened by this change, only the stretch is.
+## 3. ⚠️ **`OBSTACLE_TEX` / `OBSTACLE_TINT` WERE DEAD CODE FOR EVERY KIND WITH A MODEL**, which is
+##    all of them — `_obstacle_material()` is only reached on the primitive fallback path. So the
+##    authored arena textures genuinely were not being used. They are now the source for any kind
+##    whose model ships WITHOUT its own texture (barrel, bench, fence today), mapped triplanar so
+##    they survive the section scaling, and the tint applies on both paths.
+##
+## `MAX_SEGMENTS_PER_AXIS` bounds the instance count a single huge piece can add. 6x6 is far more
+## than any authored layout needs; it exists so a future outsized rect cannot quietly cost 400
+## instances.
+const MAX_SEGMENTS_PER_AXIS := 6
 
 
 const PROP_DIR := "res://assets/models/obstacles/"
@@ -1194,28 +1592,98 @@ func _try_prop_multimesh(kind: String, xforms: Array) -> bool:
 	if ab.size.x <= 0.0001 or ab.size.y <= 0.0001 or ab.size.z <= 0.0001:
 		return false
 
+	# Build every section's transform first — the instance count is no longer one-per-piece.
+	var placed: Array = []
+	for i in range(xforms.size()):
+		# `xf` already encodes the target box: basis scale is (w, h, d) and the origin sits at the
+		# box's CENTRE. Convert that into "fill this box with sections of this prop".
+		var xf: Transform3D = xforms[i]
+		var want: Vector3 = xf.basis.get_scale()
+		var counts: Vector2i = _segment_counts(want, ab.size)
+		var seg := Vector3(want.x / float(counts.x), want.y, want.z / float(counts.y))
+		var s := Vector3(seg.x / ab.size.x, seg.y / ab.size.y, seg.z / ab.size.z)
+		var foot: float = xf.origin.y - want.y * 0.5
+		for cx in range(counts.x):
+			for cz in range(counts.y):
+				var ox: float = xf.origin.x - want.x * 0.5 + seg.x * (float(cx) + 0.5)
+				var oz: float = xf.origin.z - want.z * 0.5 + seg.z * (float(cz) + 0.5)
+				# Re-seat on the ground: the prop's own minimum, scaled, is the offset from centre.
+				placed.append(Transform3D(Basis().scaled(s),
+					Vector3(ox, foot - ab.position.y * s.y, oz)))
+
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = mesh
-	mm.instance_count = xforms.size()
-	for i in range(xforms.size()):
-		# `xf` already encodes the target box: basis scale is (w, h, d) and the origin sits at the
-		# box's CENTRE. Convert that into "fit this prop's own bounds into that box".
-		var xf: Transform3D = xforms[i]
-		var want: Vector3 = xf.basis.get_scale()
-		var s := Vector3(want.x / ab.size.x, want.y / ab.size.y, want.z / ab.size.z)
-		# Re-seat on the ground: the prop's own minimum, scaled, is the offset from the box centre.
-		var foot: float = xf.origin.y - want.y * 0.5
-		var pos := Vector3(xf.origin.x, foot - ab.position.y * s.y, xf.origin.z)
-		mm.set_instance_transform(i, Transform3D(Basis().scaled(s), pos))
+	mm.instance_count = placed.size()
+	for i in range(placed.size()):
+		mm.set_instance_transform(i, placed[i])
 
 	var node := MultiMeshInstance3D.new()
 	node.multimesh = mm
-	if mat != null:
-		node.material_override = mat
+	node.material_override = _prop_material(kind, mat)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(node)
 	return true
+
+
+## How many sections of a prop to lay along X and Z to fill a cover rect without stretching it out
+## of proportion. Height is never sectioned — the sim carries the cover GRADE in height and a
+## stacked wall would misreport it.
+##
+## The prop's natural width is taken at the scale its HEIGHT is being drawn at, so a piece keeps a
+## believable width:height ratio; anything wider than ~1.6 of that gets another section.
+static func _segment_counts(want: Vector3, natural: Vector3) -> Vector2i:
+	if natural.y <= 0.0001:
+		return Vector2i(1, 1)
+	var s_y: float = want.y / natural.y
+	var nat_x: float = maxf(0.0001, natural.x * s_y)
+	var nat_z: float = maxf(0.0001, natural.z * s_y)
+	var nx: int = clampi(int(round(want.x / (nat_x * 1.6))), 1, MAX_SEGMENTS_PER_AXIS)
+	var nz: int = clampi(int(round(want.z / (nat_z * 1.6))), 1, MAX_SEGMENTS_PER_AXIS)
+	return Vector2i(nx, nz)
+
+
+## The material a prop is actually drawn with. See the block comment above `MAX_SEGMENTS_PER_AXIS`
+## for why the imported one cannot be used as-is.
+##
+## ⚠️ THE MISSING-TEXTURE PATH IS THE ONE THAT LIGHTS UP FOR FREE. A kind whose model ships without
+## a texture takes the authored `assets/arena/` art instead, mapped WORLD-TRIPLANAR so it tiles
+## correctly across a sectioned wall regardless of what the model's own UVs do. When more arena
+## textures land, adding a row to `OBSTACLE_TEX` is the whole integration; when one is absent it
+## degrades to the kind's tint, which is a plausible object rather than a grey box.
+func _prop_material(kind: String, imported: Material) -> Material:
+	var tint: Color = OBSTACLE_TINT.get(kind, Color(1, 1, 1))
+	var base := StandardMaterial3D.new()
+	var tex: Texture2D = Art.load_or_null(str(OBSTACLE_TEX.get(kind, "")))
+	if tex != null:
+		# ⚠️ FIRST CHOICE: THE AUTHORED PER-KIND TEXTURE, MAPPED WORLD-TRIPLANAR. Authored beats
+		# imported for two reasons. It is INTENT — someone drew `low-wall-brick.jpg` FOR the low
+		# wall, where the model's own texture is a shared CC0 atlas that happens to contain a wall.
+		# And it SURVIVES THE FIT: a cover piece is scaled and sectioned to the sim's own rect, and
+		# a triplanar projection is indifferent to that where atlas UVs stretch to a flat smear.
+		# Adding a row to `OBSTACLE_TEX` is the whole integration for a newly generated texture;
+		# removing one degrades to the model's own look, and then to a tinted solid.
+		base.albedo_texture = tex
+		base.uv1_triplanar = true
+		base.uv1_world_triplanar = true
+		base.uv1_scale = Vector3(0.45, 0.45, 0.45)
+		base.albedo_color = tint
+	elif imported is StandardMaterial3D and (imported as StandardMaterial3D).albedo_texture != null:
+		base = (imported as StandardMaterial3D).duplicate()
+		var own: Color = base.albedo_color
+		base.albedo_color = Color(own.r * tint.r, own.g * tint.g, own.b * tint.b, own.a)
+	else:
+		var fb: Color = OBSTACLE_FALLBACK.get(kind, Color(0.5, 0.45, 0.35))
+		base.albedo_color = Color(fb.r * tint.r, fb.g * tint.g, fb.b * tint.b)
+	# ⚠️ THE LINE THAT FIXED THE GREY. Wood and stone are dielectrics; the glTF import gives them
+	# metallic 0.4 and this scene has nothing for a metal to reflect.
+	base.metallic = 0.0
+	base.metallic_specular = 0.22
+	base.roughness = maxf(base.roughness, 0.82)
+	base.rim_enabled = true
+	base.rim = 0.45
+	base.rim_tint = 0.5
+	return base
 
 
 ## The accumulated local transform from `root` down to `node`, for a scene that is not in the
@@ -1377,6 +1845,8 @@ func _build_units() -> void:
 		var rig = CreatureRigScript.new()
 		holder.add_child(rig)
 		if rig.build(m.species_id, UNIT_HEIGHT):
+			# The cast is the subject of the frame, so it gets its own lamp — see `CAST_LIGHT_LAYER`.
+			_add_to_cast_layer(holder)
 			var rplate := _make_plate(m, side, i)
 			plates_root.add_child(rplate)
 			nodes.append({
@@ -1425,6 +1895,11 @@ func _build_units() -> void:
 		var anim = CreatureAnimScript.new()
 		holder.add_child(anim)
 		anim.setup(spr)
+		# ⚠️ Harmless-but-deliberate on this path: a `Sprite3D` here is `shaded = false`, so no lamp
+		# reaches it at all and the cast light changes nothing. Set anyway, because the day a
+		# painted sprite is made shaded it must light like the rigged units do, not stay a flat
+		# cut-out among lit bodies.
+		_add_to_cast_layer(holder)
 
 		var plate := _make_plate(m, side, i)
 		plates_root.add_child(plate)

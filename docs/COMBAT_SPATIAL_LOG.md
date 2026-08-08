@@ -1176,3 +1176,109 @@ and ranged-leaning comps stretch. Largest single shift was pressure vs balanced,
 ticks. This is the authored content doing its job, not a regression — and critically, the stall
 picture is unchanged: still **4 of 16 matchups over 90s, and the same four** (both sustain and
 both control mirrors/crossings). The dampening and no-kill-ratchet findings stand as recorded.
+
+## What the superseded engine taught us (2026-08-08, legacy deletion round)
+
+Parity was reached last round (`arena_3d.gd` runs `sim/sim.gd` behind `USE_NEW_SIM`), so the
+superseded engine can start coming out. **The code goes; the findings do not.** This section is
+the extraction — everything still true that lived only as a comment in a file being deleted, or
+in a file queued for deletion. The project standard it serves: *"a rework that reintroduces a bug
+the sim already caught is not a rework, it is an amnesia."*
+
+### Deleted this round: the OLD `bt_*` behaviour-tree library (17 files, ~850 LOC)
+
+`bt_node · bt_action · bt_selector · bt_sequence · bt_composite · bt_condition · bt_context ·
+bt_blackboard · bt_result · bt_decorator · bt_inverter · bt_succeeder · bt_parallel · bt_cooldown ·
+bt_until_fail · bt_tree · bt_selftest`. Superseded by `scripts/ai/bt.gd` + `combat_tree.gd`.
+It was already a **closed island** — nothing outside the library referenced any of it, by path or
+by global class name, in any script or scene. Four lessons were paid for once and are kept here.
+
+**1. Legibility is a property of the RETURN VALUE, not a debug feature bolted on afterwards.**
+The old library's `tick()` returned a `BTResult` object rather than a bare status int, carrying
+the ACTIVE PATH (root-to-leaf node names) plus an optional reason. The path was built by *pure
+composition* — each node prepends its own name to whatever its WINNING child reported — never by
+mutating a shared "current path" on the context. ⚠️ **That is what structurally guarantees a
+Selector's REJECTED siblings cannot leak their reasoning into the branch that actually won.**
+This is the stated reason a behaviour tree was chosen over a flat utility scorer at all: the
+active branch *is* the explanation, and reconstructing intent from scores after the fact is the
+failure mode being avoided. `bt.gd` must keep this property; if a future refactor makes intent a
+side-channel written during traversal, that guarantee is gone and nothing will announce it.
+
+**2. Running state belongs on a per-monster blackboard, NEVER on a node instance.** One node
+object may be shared across a whole tree *definition* ticked for many different monsters, so
+anything remembered between ticks (current target, destination, dwell timers, mid-action flags)
+must be keyed by the node's own name in a per-monster store. A tree that stashes state on `self`
+looks correct at 1v1 and silently cross-talks at 5v5 — the bug does not appear until team size
+grows, which is exactly when it is hardest to see.
+
+**3. Two GDScript traps this project hit more than once, re-confirmed against 4.7.1.**
+⚠️ Cross-file references used `preload()` and subclasses used `extends "res://..."` by path, never
+`extends BTNode` — **the global script-class cache is COLD under `--headless --script` and during
+early autoload boot**, so a bare class-name reference fails to *parse* in exactly the state every
+probe runs in. And ⚠️ methods were deliberately named `set_value`/`get_value`, not `set`/`get`/
+`has`/`erase`, because those already exist as built-in `Object` methods and shadowing them on a
+scripted class is a live footgun.
+
+**4. Determinism was enforced at the context boundary, and that shape was right.** `dt` was a
+caller-supplied fixed step (never a frame `delta`) and `rng` was a caller-owned seeded generator
+(the library never called `randf()` itself); composites iterated children in fixed array order.
+Putting both on the context object rather than trusting each leaf to behave makes the rule
+*checkable in one place* instead of auditable across every node.
+
+### Not deleted, and why — the legacy trio is still on a live path
+
+`spatial_sim.gd` (1852 LOC), `spatial_ai.gd` (116) and `ai/monster_tree.gd` (1474) **stay this
+round.** `arena_3d.gd` no longer needs them (its legacy branch is a guarded `ResourceLoader.exists`
+fallback), but **`scripts/ui/sandbox_ui.gd:47` hard-`preload`s `spatial_sim.gd`** and constructs it
+at line 645. A `preload` of a missing path is a parse error, not a graceful degrade, so deleting
+the sim would break the sandbox screen outright.
+
+⚠️ **AND THE TRIO MUST GO ATOMICALLY, NOT PIECEMEAL.** `spatial_sim.gd` loads the other two by
+path with an `exists`-guard and falls back silently: without `monster_tree.gd` every unit degrades
+to "walk at the nearest living enemy", and without `spatial_ai.gd` team focus fire disappears.
+Deleting two of three would leave a screen that still *runs* while being quietly lobotomised —
+the exact half-state that costs this project debug rounds. One move, or none.
+
+### The findings the trio still holds — extracted now, while the context is in hand
+
+**The blob had an ARITHMETIC cause, not an AI cause.** `_apply_leash` clamped every unit's desired
+position into a circle around the living centroid of *both* teams (24% of board width at tight,
+42% at loose). It was self-reinforcing: the anchor was wherever everyone already was, so units
+could never spread, so the centroid never moved, so units still could not spread. ⚠️ **No amount
+of AI work could have fixed the user's "big blob of monsters" complaint while that ran** — it was
+a hard geometric bound on every fight, not a tuning problem. Shape must come from positional
+intent, formations and objectives; never from a positional clamp. *(This lesson is already
+safe — it is preserved in `spatial.gd`'s `engagement_radius()` tombstone, which is a LAYOUT-ONLY
+helper and must never gate movement again.)*
+
+**A default that returns one answer for every unit is not a decision, it is the absence of one.**
+Positional intent defaulted to `hold` below aggression 66; `personality` was a stub returning `{}`
+so aggression was 50 for everyone — all ten units on the field took the same branch. "Ten units
+walking in a straight line at each other was not an AI that had decided to; it was an AI with one
+option." ⚠️ **A team's default must be a FORMATION OF ROLES, not one behaviour repeated five
+times**, derived from what the sim already knows: long reach → HOLD (ground is its advantage),
+fast + short → WINGS (it can pay for the arc), otherwise → PUSH.
+
+**The engagement gate: a fight that could not end.** Measured — a 3v3 ran the full 180s cap twice
+with ZERO deaths, the gap between sides pinned at 33.1 units (exactly `DEPLOY_SEPARATION`) for all
+1801 ticks, while every weapon in the game reaches 3–11. Both teams stood at spawn because `hold`
+anchors to `home_point` and nothing owned closing the distance. ⚠️ **WHY IT WENT UNCAUGHT IS THE
+transferable part:** `push`, `wings` and `dive` each closed as a *side effect* of their own logic,
+so engagement was incidental to three subtrees rather than owned by the root — the two that did
+not implement it were silently broken, and every probe written to that point passed an explicit
+intent, so the DEFAULT path (the one every real fight takes) was the broken one. **When a
+capability is an emergent side effect of several branches, the branches that lack it fail
+silently, and the untested default is where it bites.**
+
+**Symmetric cover is worth nothing, and the AI avoiding it was CORRECT.** A blocking piece costs
+both sides the same accuracy, so standing behind one is a wash. Cover becomes profitable only
+where the trade stops being even: when OUTNUMBERED (a symmetric penalty against 3:1 fire is a
+trade in your favour) or for a SUPPORT kit (whose moves target allies, so it pays nothing for
+cover between itself and the enemy). ⚠️ A universal "seek cover" drive would replace one wrong
+behaviour with another — a duelling melee kit gains nothing from a wall.
+
+**Team focus fire had to be computed for the TEAM, once.** Target priority used to live
+per-monster, so five monsters "agreeing" on a target was coincidence. Computing one focus per side
+per decision cycle and passing it down as *advisory* — the unit still weighs whether following it
+is worth the walk — is what turns coincidence into coordination without turning a team into a
+single mind.

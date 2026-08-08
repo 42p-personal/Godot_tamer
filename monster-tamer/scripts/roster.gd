@@ -15,6 +15,32 @@ var selected_index: int = 0
 var frozen: Array = []
 var rng := RandomNumberGenerator.new()
 
+## Monotonic counter behind `next_slot_id()`. Not saved: ids themselves are saved, and
+## `_bump_slot_counter_past()` re-floors this above every loaded id so a post-load recruit can
+## never collide with one already in the stable.
+var _slot_counter: int = 0
+
+
+## A UNIQUE CAREER-SLOT ID for a monster entering the stable.
+##
+## ⚠️ THIS EXISTS BECAUSE `GameData.make_monster()` LEAVES `id` EMPTY AND NOBODY NOTICED. Every
+## recruit bought at the Market therefore had `id == ""` — and `week_plan.gd` keys its plans by
+## `mi.id` while `week.gd` seeds the training roll off `"%s:%d" % [mi.id, mi.career_week]`. With
+## two monsters in the barn that meant ONE shared plan slot (booking a drill for one booked it for
+## both) and one shared RNG stream (identical rolls). It was invisible at a one-monster Wood
+## stable and would have gone wrong the moment the player bought their second monster.
+## `breeding_ui.gd` was already assigning its own ids, which is what made the gap easy to miss.
+func next_slot_id() -> String:
+	_slot_counter += 1
+	return "slot-%d" % _slot_counter
+
+
+## Raise the counter above any numeric slot id already present, so ids stay unique across a load.
+func _bump_slot_counter_past(id: String) -> void:
+	if not id.begins_with("slot-"):
+		return
+	_slot_counter = maxi(_slot_counter, id.trim_prefix("slot-").to_int())
+
 ## ⚠️ THE STABLE DRAWS FROM `Art.ROSTER`, NOT FROM ALL 65 SPECIES, AND THAT IS DELIBERATE.
 ## This list used to be five hand-picked ids topped up with random species from `data.json`.
 ## That was fine when nothing had art — but this build paints exactly twelve creatures, and a
@@ -68,6 +94,7 @@ func _generate_starting_roster() -> void:
 		# career, not six identical fresh recruits — 0.0 (wild) up to 0.55 (well underway).
 		var t := rng.randf_range(0.0, 0.55)
 		var mi = GameData.make_monster(id, t, rng)
+		mi.id = next_slot_id()   # ⚠️ see next_slot_id() — an empty id collides in WeekPlan
 		monsters.append(mi)
 
 
@@ -88,6 +115,7 @@ func reset_to_empty() -> void:
 	frozen.clear()
 	monsters.clear()
 	selected_index = 0
+	_slot_counter = 0
 
 
 ## Build a plausible rival team of the same size as the player's fielded team, drawn from

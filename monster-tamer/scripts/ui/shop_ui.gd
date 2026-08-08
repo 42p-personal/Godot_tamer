@@ -140,7 +140,11 @@ func _licence_card(label: String, price: int, league_req: int, effect: String) -
 	col.add_child(UiTheme.body_text(effect, "secondary"))
 
 	var req_name: String = Career.league_at(league_req).get("name", "?")
-	var owned: bool = bool(Career.get_meta(label, false))
+	# ⚠️ NOT `Career.get_meta(label)`. Godot refuses a metadata identifier containing a space, so
+	# `set_meta("Special License", true)` failed silently: the licence never registered, the button
+	# never flipped to "✓ Held", and the player could buy the same licence repeatedly, losing 800g
+	# (or 2000g) each time. `Career.licences` is a real field — see `career.gd:holds_licence()`.
+	var owned: bool = Career.holds_licence(label)
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 38)
 	btn.focus_mode = Control.FOCUS_ALL
@@ -161,7 +165,7 @@ func _licence_card(label: String, price: int, league_req: int, effect: String) -
 		btn.text = "Buy — %dg" % price
 		btn.pressed.connect(func():
 			if Career.spend_gold(price):
-				Career.set_meta(label, true)
+				Career.grant_licence(label)
 				_refresh())
 	col.add_child(btn)
 	return panel

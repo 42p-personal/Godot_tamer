@@ -151,7 +151,20 @@ func _on_new_career() -> void:
 	get_tree().change_scene_to_file("res://scenes/town.tscn")
 
 
+## ⚠️ A REFUSED LOAD MUST NOT DROP THE PLAYER SOMEWHERE UNDEFINED. `load_game()` deliberately
+## returns false without mutating anything when the file is corrupt, truncated or from a species
+## table that no longer has the saved monsters (save_game.gd documents that contract) — and this
+## used to ignore the return value and walk into the Town regardless, on whatever Career/Roster
+## state happened to be in memory. Falling back to a clean new career is the honest outcome:
+## the same place New Career lands, rather than a half-loaded run.
 func _on_continue() -> void:
+	var loaded := false
 	if has_node("/root/SaveGame"):
-		SaveGame.load_game()
+		loaded = SaveGame.load_game()
+	if not loaded:
+		push_warning("Continue: no usable save — starting a fresh career instead")
+		if has_node("/root/Career"):
+			Career.reset_new_game()
+		if has_node("/root/Roster"):
+			Roster.reset_to_empty()
 	get_tree().change_scene_to_file("res://scenes/town.tscn")

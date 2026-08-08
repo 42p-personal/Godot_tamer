@@ -653,6 +653,10 @@ func _on_advance_week() -> void:
 		return
 	var report: Dictionary = WeekPlan.advance(Roster.monsters)
 	WeekPlan.set_meta("last_report", report)
+	# The week turning is the one irreversible thing on this screen — checkpoint it. See
+	# `town_ui.gd:_autosave()` for why the project needs explicit save calls at all.
+	if has_node("/root/SaveGame"):
+		SaveGame.save_game()
 	get_tree().change_scene_to_file("res://scenes/feeding.tscn")
 
 

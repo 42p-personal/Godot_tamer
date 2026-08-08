@@ -21,10 +21,24 @@ const ARENA_DIR := "res://assets/arenas/"
 const UI_DIR := "res://assets/ui/"
 const AREA_DIR := "res://assets/areas/"
 
-## Which leagues have authored arena art in this slice. A league not listed here falls back to
-## the nearest listed one BELOW it (see `backdrop_for`), so the ladder is always playable even
-## though only five of eleven leagues are painted.
-const ARENA_LEAGUES := ["Wood", "Bronze", "Silver", "Platinum", "Tamers Apex"]
+## Which leagues have authored arena art. A league not listed here falls back to the nearest
+## listed one BELOW it (see `backdrop_for`), so the ladder is always playable while art lands.
+##
+## ⚠️ ALL ELEVEN ARE NOW PAINTED (widened 2026-08-08). This list said five for as long as five
+## were painted, and it was correct then. The venue-textures pass generated ground + backdrop art
+## for the missing six (Copper, Tin, Iron, Gold, Masters, Tamer Elite) and `_probe_venue_art.gd`
+## confirms all 39 files load at real size — but NOBODY WIDENED THE GATE, so every one of those
+## six kept borrowing a humbler league's venue and the new art was unreachable from the game.
+##
+## ⚠️ THIS IS THE PROJECT'S SIGNATURE FAILURE, CAUGHT ONCE MORE: content authored, priced and
+## verified, then never reached because a list upstream of it still described the old world. The
+## art probe passing is NOT evidence the art is in the game — it proves the files load, and a
+## file that loads into a code path nobody calls is still not content. If a future pass adds a
+## twelfth league's art, this constant is the second half of that job.
+const ARENA_LEAGUES := [
+	"Wood", "Copper", "Tin", "Bronze", "Iron", "Silver",
+	"Gold", "Platinum", "Masters", "Tamer Elite", "Tamers Apex",
+]
 
 ## The playable roster for this build — 12 species chosen for BODY and ROLE spread, not for
 ## power. ⚠️ Deliberately not all 65: twelve fully-realised creatures beat sixty-five

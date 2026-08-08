@@ -94,6 +94,12 @@ var _cam: Camera3D
 var _cam_look := Vector3.ZERO
 var _team_size := 5       # per side, read from setup — the camera push-in denominator
 
+## In-flight shots (#34), pooled by index: the sim streams a projectiles array per frame and
+## this pool grows to the high-water mark, never per-shot allocation. A shot the stream stops
+## publishing simply hides — arrival, fizzle and expiry all read the same to the pool.
+var _shots: Array = []          # Array[MeshInstance3D], the pooled projectile bodies
+var _shot_trails: Array = []    # Array[MeshInstance3D], the stretched tail behind each shot
+
 var _vfx: Node3D = null   # BattleVfx, or null if anything about it is missing (degrade, never crash)
 var _crowd: Node3D = null
 
@@ -113,6 +119,7 @@ func _ready() -> void:
 		if vfx_script != null:
 			_vfx = vfx_script.new()
 			add_child(_vfx)
+	_build_shot_pool()
 	_run_fight()
 
 
@@ -447,6 +454,7 @@ func _unhandled_input(event: InputEvent) -> void:
 ## fight already happened; this only resets what presentation mutated.
 func _restart_replay() -> void:
 	_gen += 1                      # every pending corpse/banner timer from this run goes stale
+	_hide_shots()                  # no stale shot hangs in the air across a replay
 	_t = 0.0
 	_fi = 0
 	_done = false
@@ -498,6 +506,83 @@ func _restart_replay() -> void:
 	_show_opening_card()
 
 
+## ── PROJECTILES (#34) — the shot is a BODY, not an instant ────────────────────────────────────
+## Why this matters beyond looks: an aimed miss flies at where the target WAS, so a viewer
+## watches the shot sail through empty ground and understands WHY it missed. That causal read
+## is the whole point of the projectile layer, and it only exists if the renderer draws it.
+const SHOT_POOL := 24
+const SHOT_HIT := Color(1.0, 0.80, 0.35)     # a shot that will land: warm, confident
+const SHOT_MISS := Color(0.62, 0.66, 0.78)   # a doomed shot: cold and pale, readable in flight
+
+func _build_shot_pool() -> void:
+	for i in SHOT_POOL:
+		var mi := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.55
+		sm.height = 1.1
+		sm.radial_segments = 8
+		sm.rings = 4
+		mi.mesh = sm
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.emission_enabled = true
+		mi.material_override = m
+		mi.visible = false
+		add_child(mi)
+		_shots.append(mi)
+		var trail := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.22, 0.22, 3.2)
+		trail.mesh = bm
+		var tm := StandardMaterial3D.new()
+		tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		tm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		trail.material_override = tm
+		trail.visible = false
+		add_child(trail)
+		_shot_trails.append(trail)
+
+
+func _hide_shots() -> void:
+	for mi in _shots:
+		(mi as MeshInstance3D).visible = false
+	for t in _shot_trails:
+		(t as MeshInstance3D).visible = false
+
+
+## Draw this frame's in-flight shots. Everything comes off the stream: pos, the live aim point,
+## and will_hit — the renderer decides nothing about the fight, only how it looks.
+func _update_shots(f: Dictionary) -> void:
+	var pr: Array = f.get("projectiles", [])
+	for i in _shots.size():
+		var mi: MeshInstance3D = _shots[i]
+		var trail: MeshInstance3D = _shot_trails[i]
+		if i >= pr.size():
+			mi.visible = false
+			trail.visible = false
+			continue
+		var p: Dictionary = pr[i]
+		var pos := Vector3(p.pos.x, 3.2, p.pos.y)
+		var aim := Vector3(p.aim.x, 3.2, p.aim.y)
+		var hit: bool = bool(p.get("will_hit", true))
+		var col: Color = SHOT_HIT if hit else SHOT_MISS
+		mi.position = pos
+		mi.visible = true
+		var mat: StandardMaterial3D = mi.material_override
+		mat.albedo_color = col
+		mat.emission = col
+		mat.emission_energy_multiplier = 2.2 if hit else 1.1
+		var dir := aim - pos
+		if dir.length() > 0.4:
+			trail.visible = true
+			trail.position = pos - dir.normalized() * 1.6
+			trail.look_at(pos, Vector3.UP)
+			var tmat: StandardMaterial3D = trail.material_override
+			tmat.albedo_color = Color(col.r, col.g, col.b, 0.38)
+		else:
+			trail.visible = false
+
+
 func _process(delta: float) -> void:
 	if _frames.is_empty() or _done:
 		return
@@ -517,6 +602,7 @@ func _process(delta: float) -> void:
 		var f: Dictionary = _frames[_fi]
 		for e in f.events:
 			_present_event(e)
+		_update_shots(f)
 		for uf in f.units:
 			var uid := str(uf.id)
 			var rig = _rigs.get(uid)

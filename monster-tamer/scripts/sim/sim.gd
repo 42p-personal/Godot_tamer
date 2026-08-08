@@ -1359,6 +1359,12 @@ func _resolve_aoe(u: Dictionary, kentry: Dictionary, events: Array) -> void:
 		events.append({"kind": "fizzle", "from": u.id, "move": str(kentry.name)})
 		return
 	var falloff := aoe_falloff(targets.size())
+	# ⚠️ THE BURST MUST BE VISIBLE OR IT IS NOT A MECHANIC. An allEnemies move hitting three
+	# bodies at once with nothing on screen showing an AREA reads as three unrelated hits, and
+	# the whole falloff design ("weak into one body, strong into three") becomes invisible.
+	# The renderer draws this ring; it derives nothing — centre, radius and count come from here.
+	events.append({"kind": "aoe", "from": u.id, "move": str(kentry.name),
+		"centre": u.pos, "radius": reach, "targets": targets.size(), "falloff": falloff})
 	var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
 	for tgt in targets:
 		var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))

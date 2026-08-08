@@ -808,6 +808,13 @@ func _present_event(e: Dictionary) -> void:
 			if _vfx != null and _vfx.has_method("burst") and rig != null:
 				_vfx.burst(rig.position + Vector3(0, 1.0, 0), "smoke", Color(0.5, 0.48, 0.46), 1.4, 12)
 			_crowd_react(0.85)
+		"aoe":
+			# An expanding ground ring at the burst's true radius: the AREA is the read. Its
+			# brightness carries the target count, so "strong into three" is visible as it happens.
+			_aoe_ring(Vector2(e.centre), float(e.radius), int(e.get("targets", 1)))
+			if int(e.get("targets", 1)) >= 3:
+				_shake = maxf(_shake, 0.20)
+				_crowd_react(0.4)
 		"heal":
 			# A heal landing is an arena BEAT, not bookkeeping — it is the moment a kill window closed.
 			var amt := int(e.get("amount", 0))
@@ -1216,6 +1223,32 @@ func _score_cell(txt: String, col: Color, bold: bool) -> Label:
 ## Generic floating read above a unit — the shared vehicle for every non-damage beat
 ## (heals, soaks, status names, reflects). Same rise-and-fade as damage so the eye learns
 ## one motion, with size and colour carrying WHAT it was.
+## The AoE ring: a flat torus that expands to the burst's real radius and fades. Pooled? No —
+## bursts are rare and short-lived, so one node per burst is honest and simpler than a pool
+## that would spend most of the fight empty.
+func _aoe_ring(centre: Vector2, radius: float, targets: int) -> void:
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = radius * 0.92
+	tm.outer_radius = radius
+	tm.rings = 32
+	ring.mesh = tm
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# More bodies caught = brighter: the falloff rule made visible at the moment it applies.
+	var heat: float = clampf(float(targets) / 3.0, 0.35, 1.0)
+	m.albedo_color = Color(1.0, 0.55 + 0.25 * heat, 0.25, 0.55 * heat + 0.25)
+	ring.material_override = m
+	ring.position = Vector3(centre.x, 0.35, centre.y)
+	ring.scale = Vector3(0.15, 1.0, 0.15)
+	add_child(ring)
+	var tw := create_tween()
+	tw.tween_property(ring, "scale", Vector3.ONE, 0.28).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(m, "albedo_color:a", 0.0, 0.5)
+	tw.tween_callback(ring.queue_free)
+
+
 func _float_text(uid: String, txt: String, col: Color, size: int = 38, rise: float = 2.4) -> void:
 	var f = _rigs.get(uid)
 	if f == null or txt == "":

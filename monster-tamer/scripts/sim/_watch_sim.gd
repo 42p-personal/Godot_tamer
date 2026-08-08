@@ -296,42 +296,95 @@ func _run_fight() -> void:
 
 	# Ten real species from the roster; team A shows the tactic spread, B pushes classically.
 	var roster: Array = Art.ROSTER.slice(0, 10)
-	var tactics_a: Array = [
-		{"target_priority": "casters", "positional": "push"},
-		{"target_priority": "nearest", "positional": "guard", "guard_ally": ""},
-		{"target_priority": "weakest", "positional": "wings", "wing_side": 1},
-		{"target_priority": "weakest", "positional": "hold"},
-		{"target_priority": "weakest", "positional": "dive", "when_hurt": "fall_back"},
+	# ── THE COMPOSITION ───────────────────────────────────────────────────────────────────────
+	# A real arena five per side, so the demo exercises the WHOLE sim: a tank that TAUNTS and
+	# wears thorns, a healer that heals and cleanses, a caster with an AoE, a kicker whose job
+	# is the enemy healer, and a diver. Presentation for a mechanic the fight cannot produce is
+	# the "authored but unreachable" failure this codebase keeps re-finding — the roster is the
+	# fix, not more renderer code.
+	# Each entry: posture/priority + the kit by AUTHORED MOVE NAME (kit.gd builds from data.json,
+	# so a retuned move changes this fight without an edit here).
+	var ROLES := [
+		{"role": "tank",   "moves": ["Taunt", "Barbed Carapace", "Bastion"],
+			"tac": {"target_priority": "nearest", "positional": "hold", "when_hurt": "fight_on"}},
+		{"role": "healer", "moves": ["Mend", "Clarity"],
+			"tac": {"target_priority": "nearest", "positional": "hold", "when_hurt": "fall_back"}},
+		{"role": "caster", "moves": ["Hush", "Cleave", "Arcane Bomb"],
+			"tac": {"target_priority": "weakest", "positional": "wings", "wing_side": 1}},
+		{"role": "kicker", "moves": [],
+			"tac": {"target_priority": "healers", "positional": "push"}},
+		{"role": "diver",  "moves": [],
+			"tac": {"target_priority": "casters", "positional": "dive", "when_hurt": "fall_back"}},
+	]
+	# Team B: PRESSURE. No healer, no taunt-tank — a bruiser, two divers, a kicker and one
+	# caster. It must win before A's sustain out-turtles it, which is the actual arena question.
+	var ROLES_B := [
+		{"role": "kicker", "moves": [],
+			"tac": {"target_priority": "healers", "positional": "push"}},
+		{"role": "diver",  "moves": [],
+			"tac": {"target_priority": "healers", "positional": "dive"}},
+		{"role": "caster", "moves": ["Hush", "Cleave", "Arcane Bomb"],
+			"tac": {"target_priority": "weakest", "positional": "wings", "wing_side": -1}},
+		{"role": "kicker", "moves": [],
+			"tac": {"target_priority": "casters", "positional": "push"}},
+		{"role": "diver",  "moves": [],
+			"tac": {"target_priority": "weakest", "positional": "dive", "when_hurt": "fight_on"}},
 	]
 	var us: Array = []
-	var caster_a := ""
+	var healer_of := {"A": "", "B": ""}
 	for i in roster.size():
 		var sid: String = str(roster[i])
 		var sp: Dictionary = by_id[sid]
 		var base: Dictionary = sp["base"]
 		var team := "A" if i < 5 else "B"
 		var idx := i % 5
+		# ⚠️ ASYMMETRIC ON PURPOSE — and MEASURED. A mirror of this comp ground to 1345 ticks
+		# (134s): five-a-side sustain (two healers, two tanks, thorns, wards) outlasts the damage
+		# a five-stack brings, so both sides just healed through each other. Real arena is SUSTAIN
+		# vs PRESSURE, which is both more decisive and a better demonstration — team B trades its
+		# healer and tank for two more bodies on the kill target.
+		var role: Dictionary = (ROLES[idx] if team == "A" else ROLES_B[idx])
 		var stats := {}
 		for k in ["STR", "DEX", "CON", "WIS", "INT", "CHA"]:
 			stats[k] = float(base.get(k, 10)) * 1.6   # early-career scale
+		# The ROLE needs the stats to do its job — a healer with 12 WIS heals for nothing and the
+		# demo shows an empty mechanic. Floors, never overwrites a species that already qualifies.
+		match str(role.role):
+			# ⚠️ MEASURED, NOT GUESSED. The first cut floored CON at 95 and WIS/INT at 90, and the
+			# demo ground to 1696 ticks — 170s, at the cap — because defensive stacking (tank CON +
+			# Barbed Carapace's defBuff + thorns + Bastion's ward + heals) outruns the damage a
+			# five-stack brings. A real finding about the support layer, recorded in the log; here
+			# the floors are just enough for the ROLE to function.
+			"tank":
+				stats["CON"] = maxf(stats["CON"], 70.0)
+				stats["STR"] = maxf(stats["STR"], 55.0)
+			"healer":
+				stats["WIS"] = maxf(stats["WIS"], 70.0)
+				stats["CHA"] = maxf(stats["CHA"], 50.0)
+			"caster":
+				stats["INT"] = maxf(stats["INT"], 75.0)
+				stats["WIS"] = maxf(stats["WIS"], 45.0)
+			"kicker", "diver":
+				stats["STR"] = maxf(stats["STR"], 75.0)
+				stats["DEX"] = maxf(stats["DEX"], 65.0)
 		var uid := "%s%d" % [team.to_lower(), idx]
-		var kit: Array = []
-		if float(stats["INT"]) >= 40.0:
-			kit = Kit.build([str(magic[idx % magic.size()].name)], moves)
-			if team == "A" and caster_a == "":
-				caster_a = uid
-		elif float(stats["STR"]) >= 55.0:
-			kit = [Kit.kick()]
-		var tac: Dictionary = tactics_a[idx].duplicate() if team == "A" \
-			else {"target_priority": "nearest", "positional": "push"}
+		if str(role.role) == "healer":
+			healer_of[team] = uid
+		var kit: Array = Kit.build(role.moves, moves) if not (role.moves as Array).is_empty() else []
+		if str(role.role) in ["kicker", "diver"]:
+			kit.append(Kit.kick())        # the interrupt is a class feature, not an authored move
+		var tac: Dictionary = (role.tac as Dictionary).duplicate()
+		if team == "B":
+			tac["wing_side"] = -1         # mirror the flank so the two wings do not collide
 		us.append({"id": uid, "team": team, "species": sid,
 			"pos": Vector2(-38 if team == "A" else 38, -14 + 7 * idx),
 			"speed": 7.0 + float(stats["DEX"]) * 0.03,
 			"stats": stats, "kit": kit, "tactics": tac})
-	# The guard guards team A's first caster (or its neighbour if no caster rolled).
+	# Any guard posture protects its own side's healer — the classic arena assignment.
 	for u in us:
 		if u.tactics.get("positional", "") == "guard":
-			u.tactics["guard_ally"] = caster_a if caster_a != "" else "a0"
+			var h: String = str(healer_of.get(str(u.team), ""))
+			u.tactics["guard_ally"] = h if h != "" else ("a0" if str(u.team) == "A" else "b0")
 	_team_size = 5
 
 	var sim = Sim.new()
@@ -342,6 +395,19 @@ func _run_fight() -> void:
 	sim.nav.free_rids()  # the teardown every discarded sim owes (nav_service.gd)
 	_frames = _result.frames
 	print("WATCH: winner=%s ticks=%d frames=%d" % [str(_result.winner), int(_result.ticks), _frames.size()])
+	# The event VOCABULARY this fight produced. A dev scene should say what it exercised —
+	# a mechanic the demo cannot produce is a mechanic nobody is watching (this codebase's
+	# recurring "authored but unreachable" failure), and this line is the tripwire.
+	var vocab := {}
+	for fr in _frames:
+		for ev in fr.events:
+			vocab[str(ev.kind)] = int(vocab.get(str(ev.kind), 0)) + 1
+	var keys: Array = vocab.keys()
+	keys.sort()
+	var parts: Array = []
+	for k in keys:
+		parts.append("%s:%d" % [str(k), int(vocab[k])])
+	print("WATCH vocabulary — ", " ".join(PackedStringArray(parts)))
 
 	# Roster facts for the opening card + scoreboard: species name, posture, kit move names.
 	for u in us:
@@ -742,6 +808,57 @@ func _present_event(e: Dictionary) -> void:
 			if _vfx != null and _vfx.has_method("burst") and rig != null:
 				_vfx.burst(rig.position + Vector3(0, 1.0, 0), "smoke", Color(0.5, 0.48, 0.46), 1.4, 12)
 			_crowd_react(0.85)
+		"heal":
+			# A heal landing is an arena BEAT, not bookkeeping — it is the moment a kill window closed.
+			var amt := int(e.get("amount", 0))
+			if amt > 0 and victim != null:
+				_float_text(str(e.to), "+%d" % amt, Color(0.45, 0.95, 0.55), 46, 2.8)
+				_scale_pop(str(e.to), 1.08)
+				if _vfx != null and _vfx.has_method("burst"):
+					_vfx.burst(vpos + Vector3(0, 2.0, 0), "spark", Color(0.5, 1.0, 0.6), 1.0, 8)
+		"ward_soak":
+			# THE SOAK IS THE READ: without it a viewer sees a clean hit do nothing and calls it a bug.
+			var sk := int(e.get("amount", 0))
+			if sk > 0:
+				_float_text(str(e.to), "◈%d" % sk, Color(0.55, 0.80, 1.0), 38, 2.0)
+		"thorns":
+			# `to` is the ATTACKER — reflected damage lands on whoever swung.
+			var rf := int(e.get("dmg", 0))
+			if rf > 0:
+				_float_text(str(e.to), "%d ⟲" % rf, Color(1.0, 0.45, 0.40), 34, 2.0)
+		"status_applied":
+			var kindname := str(e.get("status", ""))
+			var scol: Color = STATUS_COL.get(kindname, Color(0.80, 0.80, 0.85))
+			_float_text(str(e.to), kindname.to_upper(), scol, 32, 2.2)
+			if _vfx != null and _vfx.has_method("burst") and victim != null:
+				_vfx.burst(vpos + Vector3(0, 2.4, 0), "magic", scol, 0.9, 7)
+		"status_break":
+			# DISTINCT from the kick: a cast lost to hard control. The feed names the cause so the
+			# viewer learns the difference between "kicked" and "stunned out of it".
+			var mvname := str(e.get("move", ""))
+			if mvname != "":
+				_feed_line("%s's %s shattered — %s" % [str(e.to), mvname, str(e.get("status", ""))],
+					Color(1.0, 0.85, 0.45))
+				if _vfx != null and _vfx.has_method("burst") and victim != null:
+					_vfx.burst(vpos + Vector3(0, 3.0, 0), "spark", Color(1.0, 0.9, 0.5), 1.2, 10)
+				_crowd_react(0.3)
+		"cleanse":
+			_float_text(str(e.to), "cleansed", Color(0.75, 1.0, 0.85), 32, 2.4)
+			if _vfx != null and _vfx.has_method("burst") and victim != null:
+				_vfx.burst(vpos + Vector3(0, 2.2, 0), "spark", Color(0.7, 1.0, 0.85), 1.0, 8)
+		"taunted":
+			# A forced target swap is one of the loudest tactical beats in the fight — say it.
+			_feed_line("%s taunted %s" % [str(e.get("from", "")), str(e.to)], Color(1.0, 0.65, 0.30))
+			_float_text(str(e.to), "TAUNTED", Color(1.0, 0.65, 0.30), 34, 2.4)
+			_crowd_react(0.25)
+		"buff":
+			_float_text(str(e.to), str(e.get("move", "buff")), Color(1.0, 0.88, 0.50), 30, 2.2)
+		"status_tick":
+			# Attrition: deliberately SMALL and dim. DoTs must be visible (a unit dying to poison
+			# with no on-screen cause is unreadable) without competing with real hits.
+			var tickdmg := int(round(float(e.get("dmg", 0.0))))
+			if tickdmg > 0:
+				_float_text(str(e.to), str(tickdmg), Color(0.85, 0.55, 0.45, 0.85), 26, 1.6)
 		_:
 			pass   # miss / cast_miss / fizzle stay silent — absence of impact IS the read
 
@@ -1094,6 +1211,29 @@ func _score_cell(txt: String, col: Color, bold: bool) -> Label:
 	lbl.add_theme_font_size_override("font_size", 17 if bold else 15)
 	lbl.add_theme_color_override("font_color", col)
 	return lbl
+
+
+## Generic floating read above a unit — the shared vehicle for every non-damage beat
+## (heals, soaks, status names, reflects). Same rise-and-fade as damage so the eye learns
+## one motion, with size and colour carrying WHAT it was.
+func _float_text(uid: String, txt: String, col: Color, size: int = 38, rise: float = 2.4) -> void:
+	var f = _rigs.get(uid)
+	if f == null or txt == "":
+		return
+	var d := Label3D.new()
+	d.text = txt
+	d.font_size = size
+	d.outline_size = 10
+	d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	d.no_depth_test = true
+	d.pixel_size = 0.030
+	d.modulate = col
+	d.position = f.position + Vector3(0, 5.0, 0)
+	add_child(d)
+	var tw := create_tween()
+	tw.tween_property(d, "position:y", d.position.y + rise, 0.9)
+	tw.parallel().tween_property(d, "modulate:a", 0.0, 0.9)
+	tw.tween_callback(d.queue_free)
 
 
 func _float_dmg(uid: String, dmg: int, is_cast: bool) -> void:

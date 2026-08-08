@@ -1098,3 +1098,33 @@ for proven logic. All three new probes green: framework 15/15, combat tree 33/33
 Two lessons paid for this session: a --script SceneTree cannot sync a navmesh (no main loop -
 probes that need nav run as SCENES); and one decision tick is ONE intent - per-action commits
 made the decision log cycle Mark->Move->Engage forever until the tree committed once per tick.
+
+## The legibility audit, and what a demo roster is FOR (2026-08-08)
+
+Two findings from wiring the renderer to the rewritten sim's event stream.
+
+**1. The renderer presented 5 of 21 event kinds.** Heals, ward soaks, taunts, thorns
+reflects, status applications, cast-severing control, cleanses, buffs and DoT ticks were all
+emitted by the sim and silently dropped. In a game whose entire loop is WATCHING, an
+unpresented event is a mechanic that does not exist for the player — the same
+"authored but unreachable" failure this log keeps recording, one layer further out. All nine
+significant kinds now have a read (misses stay silent on purpose: absence of impact IS the
+read, and a projectile miss is already visible in flight).
+
+**2. ⚠️ A DEMO ROSTER THAT CANNOT PRODUCE A MECHANIC IS A DEMO THAT HIDES IT.** The watch
+scene assigned kits by stat threshold — damage moves and kicks only — so the heal, ward,
+taunt, thorns, AoE and status layers built over four rounds could never appear on screen no
+matter how good the presentation was. The fix is the ROSTER, not more renderer code: the demo
+now fields a real arena composition, and a permanent `WATCH vocabulary —` line prints which
+event kinds the fight actually produced. That line is the tripwire; if a mechanic stops
+appearing, the demo says so.
+
+**And the roster measured a real balance finding.** A MIRROR of the sustain comp (two
+healers, two tanks, thorns, wards both sides) ground to **1345 ticks — 134 seconds**, near
+the 1800 cap: five-a-side sustain outlasts the damage a five-stack brings, and both sides
+simply healed through each other. Moderating the stat floors moved it barely at all; the
+structure was the cause, not the numbers. Asymmetry fixed it — SUSTAIN vs PRESSURE, the
+actual arena question, resolves in **254 ticks (25s)** with seven deaths and sixteen event
+kinds firing. Worth remembering when the balance pass comes: with the support layer live,
+defensive stacking is strong enough that mirror comps stall, and that is a design question
+(does sustain need a brake?) rather than a bug.

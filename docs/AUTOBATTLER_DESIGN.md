@@ -80,11 +80,42 @@ creature *wants* to do before overriding it.
 | `tanks` | highest CON — break the wall first |
 | `marked` | the one monster the player named (requires scouting) |
 | `threat` | whoever is hurting me or my charge most |
+| `healers` | highest recent healing OUTPUT — kill the healer. Until an enemy has actually healed, falls back to `casters` scoring (a healer that has not healed yet is still a caster; that fallback is the priority's defined behaviour, not an accident) |
 
 Plus **commitment**: `sticky` (hold a target ~4s unless it dies or a taunt overrides) vs
 `reassess` (re-score every decision tick).
 ⚠️ **Commitment is the direct fix for the TFM complaint** about losing interest in the healer
 because a tank dipped low. `Focus` sets the default.
+
+#### §2A addendum: healers and threat *(decided 2026-08-08)*
+
+**The gap, named:** the sim's threat ledger (`dmg_from`) only records DAMAGE. A healer that
+never swings never appears in anyone's ledger, so the `threat` priority is structurally blind
+to the unit deciding the fight — and before the `healers` priority above, no tactic could say
+"kill the healer" at all. In a game where the player commits and then watches, an invisible
+win condition is the worst kind: the fight is being decided by a unit the AI cannot even name.
+
+**WoW's answer, and ours:** WoW makes healing generate threat at a REDUCED rate, split across
+the enemies aware of the healer. We adopt the same shape: **every effective heal (hp actually
+restored — overheal is not pressure) feeds the healer's row in each living enemy's `dmg_from`
+ledger at `HEAL_THREAT_MULT = 0.5×`, divided evenly across those living enemies.** Two effects,
+both wanted: the `threat` priority now sees a working healer without any special case, and the
+existing ledger decay (~2s half-life) means a healer that STOPS healing fades from threat the
+same way a bruiser that stops swinging does — pressure is recent by construction.
+
+**Why 0.5× and not 1.0×:** at parity, a healer out-threatens the bruiser it is healing (the
+heal answers the damage 1:1, but the healer also has the ward/cleanse output the bruiser
+lacks), and every `threat` unit in the fight converges on the backline — which un-tanks every
+tank and re-creates the blob on the healer's position. At 0.5× the healer becomes VISIBLE in
+the threat race without automatically WINNING it; a tactic that wants the healer dead above
+all says `healers`, which is the point of having both. ⚠️ **`HEAL_THREAT_MULT` is a tuning
+knob, not a law** — 0.5 is the WoW-shaped opening bid; judge it in the quality probe once the
+sim wiring lands, and move it in small steps like any other balance number.
+
+**Division of labour:** the tree reads `heal_out` (recent healing output, sim-filled) for the
+`healers` priority and reads `threat` exactly as before; both ledgers — `heal_done` and the
+threat feed — are SIM wiring, deterministic (no rng, unit-id iteration order), specified in
+the combat_tree.gd contract block.
 
 ### B. Positional intent
 *Where do I want to be?* — **this is the axis that makes the arena get used.**

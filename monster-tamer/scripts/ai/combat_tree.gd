@@ -31,7 +31,7 @@
 ##   nerve       : 0-100, sets how cleanly `fall back` disengages (dwell scaling)
 ##
 ## ── TACTICS (per unit; team plan supplies defaults, any axis overridable — decision #13) ─────
-##   target_priority : nearest | weakest | casters | tanks | marked | threat
+##   target_priority : nearest | weakest | casters | tanks | marked | threat | healers
 ##   positional      : push | hold | wings | dive | guard
 ##   wing_side       : -1 | 1 (which flank for `wings`)
 ##   when_hurt       : fight_on | fall_back | disengage
@@ -73,8 +73,16 @@
 ##                         on an enemy never reads as combo setup. Feeds the combo policy's
 ##                         `setup_status_live` derivation; default [] (absent) falls back to
 ##                         the `can_apply_setup` gate unchanged.
+##   enemies[i].heal_out : float (sim wire-up pending) — recent healing OUTPUT by this enemy,
+##                         a scalar `heal_done` ledger decaying exactly like `dmg_from`
+##                         (×0.985/tick, ~2s half-life at 10Hz), credited with the EFFECTIVE
+##                         heal (hp actually restored — overheal dribble is not visibility).
+##                         Feeds the `healers` target priority; default 0.0 means "has not
+##                         healed", which drops the priority to its casters fallback — see
+##                         _target_node. The sim's 'heal' events already carry the amount;
+##                         the ledger is the decayed mirror of them.
 ##
-## ── SIM WISHLIST (EMPTY — every key above is sim-filled as of the support-layer round) ───────
+## ── SIM WISHLIST (one key — `heal_done`/`heal_out` above awaits its sim.gd wiring) ───────────
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -141,11 +149,22 @@ static func _urgent_branch(tactics: Dictionary) -> BT.BTBase:
 	var when_hurt: String = str(tactics.get("when_hurt", "fight_on"))
 	var children: Array = [
 		# Taunted: answer it. Taunt is an ability effect and it wins over every priority.
+		# The sim fills `taunted_by` when a tauntForce move lands (AOE LAYER); the compulsion
+		# is the WHOLE decision: swap the working target and CLOSE on the taunter — a taunt
+		# that only redirects the swing while the body walks elsewhere is half a taunt.
 		BT.Sequence.new("Taunted", [
 			BT.Condition.new("", func(bb): return str(bb.get_value("taunted_by", "")) != ""),
 			BT.Action.new("Answer the taunt", func(bb):
 				var tid: String = str(bb.get_value("taunted_by", ""))
 				bb.set_value("req_attack", tid)
+				bb.set_value("target_id", tid)
+				# Enemy record for the position; a hand-built bb without one keeps its
+				# current destination (the swing still swaps — that is the tested contract).
+				for e in bb.get_value("enemies", []):
+					if str(e.id) == tid:
+						bb.set_value("target_pos", Vector2(e.pos))
+						bb.set_value("req_move_to", Vector2(e.pos))
+						break
 				bb._reason = "taunted by %s" % tid
 				return BT.RUNNING),
 		]),
@@ -280,6 +299,22 @@ static func _target_node(tactics: Dictionary) -> BT.BTBase:
 				scorer = func(e): return float(e.get("con", 0))
 			"threat":
 				scorer = func(e): return float(e.get("threat", 0.0))
+			"healers":
+				# KILL THE HEALER (§2A addendum): highest recent healing output among the living.
+				# `heal_out` is sim-filled (wire-up pending — see the contract above); until an
+				# enemy has actually healed, every heal_out is 0.0 and the priority DEFINEDLY
+				# falls back to the casters scoring — a healer that has not healed yet is still
+				# a caster, and a zero-score tie degenerating to array order would make the
+				# priority mean "nearest by id", which is not a priority at all.
+				var any_heal := false
+				for e in live:
+					if float(e.get("heal_out", 0.0)) > 0.0:
+						any_heal = true
+						break
+				if any_heal:
+					scorer = func(e): return float(e.get("heal_out", 0.0))
+				else:
+					scorer = func(e): return float(e.get("int_stat", 0)) + float(e.get("wis", 0))
 			_:
 				scorer = func(e): return -Vector2(me.pos).distance_to(e.pos)
 		if pick.is_empty():

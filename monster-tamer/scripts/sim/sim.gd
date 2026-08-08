@@ -24,10 +24,13 @@
 ## friendly casts (heal/ward/guard/timed atk-def-acc-dodge mods/cleanse, targets self/ally/team),
 ## timed MODS living on the unit and expiring through the contracted Tick, wards as absorb pools
 ## consumed by resolve_strike's defWard input, and enemy stat debuffs (defDebuff/atkDebuff/
-## accDebuff) applied as timed mods on a landed hit. Still layering on next: projectiles (#34),
-## innate auras, thorns, tauntForce, charm's turncoat, confusion's veer steering, knockback
-## displacement (its speedMult ticks; the SHOVE needs the flight machinery), spreadStatus
-## contagion, AoE geometry (allEnemies moves).
+## accDebuff) applied as timed mods on a landed hit — and PROJECTILES (#34): ranged/magic
+## hostile casts launch a shot on completion and their outcome APPLIES on arrival (see the
+## note below) — and THE AOE LAYER (## AOE LAYER marks): allEnemies AoE geometry (a BURST
+## resolved per living enemy within the move's authored range of the CASTER), tauntForce
+## compulsion feeding the tree's Taunted branch, and thorns' flat melee reflect. Still layering
+## on next: innate auras, charm's turncoat, confusion's veer steering, knockback displacement
+## (its speedMult ticks; the SHOVE needs the flight machinery), spreadStatus contagion.
 ##
 ## ⚠️ STATUS RNG DRAW ORDER (part of the determinism contract): a cast completion draws
 ## acc/crit/variance as before, then — ONLY when the move carries a `status` block AND the
@@ -37,6 +40,24 @@
 ## ⚠️ FRIENDLY CASTS DRAW ZERO RNG. A heal/buff/cleanse on your own side cannot miss and cannot
 ## crit (matching the legacy team-effect path, which rolled nothing), so completing one consumes
 ## no draws — every fight without support in play is byte-identical to before the layer existed.
+## ⚠️ PROJECTILES (#34/#20) DO NOT CHANGE THE DRAW ORDER. A ranged/magic hostile cast still
+## draws acc/crit/variance at CAST COMPLETION (now the LAUNCH), and the conditional status draw
+## (the 4th, hit-gated) is taken IMMEDIATELY after, at that same completion tick — the identical
+## stream positions the instant path always used. What moves is APPLICATION TIMING only: the
+## fully resolved outcome rides the projectile and lands at ARRIVAL. Accuracy is AIM QUALITY
+## (decision #20, no double jeopardy): the acc roll resolves at launch — a failed roll launches
+## a shot aimed at where the target STOOD at launch, so the viewer watches it sail through empty
+## ground; a passed roll homes and hits on arrival. Projectile advancement draws ZERO rng.
+## ⚠️ AOE LAYER RNG CONTRACT (allEnemies casts): a completed allEnemies cast is a BURST from the
+## caster — it never takes the projectile branch (a burst has no single flight path) — and it
+## draws PER TARGET, in unit-id order (`units` is id-sorted): acc/crit/variance for that
+## target's strike, then — only when the move authors a `status` block AND that target's acc
+## roll hit — the one status-chance draw, i.e. the standard 3(+1) block repeated per target.
+## The falloff input to resolve_strike is aoe_falloff(N) where N is the count of living enemies
+## inside the move's authored range of the CASTER at resolution time (the legacy gate,
+## spatial_sim.gd:1077-1086: an AoE reaches only what the move's own range covers, measured
+## from the caster). Fights without an allEnemies cast draw exactly as before the layer landed.
+## tauntForce application and thorns reflect draw ZERO rng.
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -57,6 +78,11 @@ const BASIC_COOLDOWN := 12      # ticks between basic attacks (1.2s)
 ## Healing multiplier when the target is healblocked — `src/battle.ts:430` (via battle_sim.gd).
 ## The heal itself is the field heal rule from the same line: round(power * 1.2 * mult).
 const HEALBLOCK_MULT := 0.4
+
+## §2A addendum (docs/AUTOBATTLER_DESIGN.md): healing feeds the THREAT ledger at this fraction,
+## so a healer becomes VISIBLE to the `threat` priority without out-shouting the damage dealers.
+## WoW's answer to the same problem; explicitly a tuning knob, not a derived number.
+const HEAL_THREAT_MULT := 0.5
 
 ## MOVEMENT FEEL — the constants that make the fight read as bodies, not sliding chips.
 const SLOT_COUNT := 6           # surround slots per target, 60° apart: chord at SLOT_RADIUS is
@@ -104,6 +130,8 @@ var tick_now := 0
 var winner := ""
 var last_damage_tick := 0       # last tick any strike/cast landed — pauses stagnation growth
 var stagnation_level := 0.0     # the pressure ratchet: grows in silence, resets ONLY on a death
+var projectiles: Array = []     # in-flight shots (#34), in LAUNCH order (launches happen in
+								#  unit-id order per tick, so append order is deterministic)
 
 ## unit: {id, team ("A"/"B"), pos: Vector2, stats: {STR..CHA}, speed, tactics: Dictionary,
 ##        personality: {nerve, focus_sticky}}  — everything injected, nothing global.
@@ -115,6 +143,7 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 	nav = NavService.new()
 	nav.build(ground, obstacles, BODY_RADIUS)
 	units = []
+	projectiles = []
 	for u in in_units:
 		var stats: Dictionary = u["stats"]
 		units.append({
@@ -138,6 +167,7 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"statuses": [], "cc_resist": 0.0, "last_cc_at": -999.0,
 			"mods": [],       # timed atk/def/acc/dodge/ward/guard/regen mods — tick.gd expires them
 			"dmg_from": {},   # attacker id -> decaying recent damage (the THREAT ledger)
+			"heal_done": 0.0,  # recent healing OUTPUT (decays like dmg_from; feeds enemies[i].heal_out)
 			"kite_ticks": int(u.get("kite_budget", 80)),  # #39: kiting ENDS - 8s default budget
 			"facing": Vector2(1, 0) if str(u["team"]) == "A" else Vector2(-1, 0),
 			"vel": Vector2.ZERO,          # smoothed velocity — movement feel state
@@ -185,6 +215,7 @@ func _step() -> void:
 			continue
 		for a in u.dmg_from.keys():
 			u.dmg_from[a] = float(u.dmg_from[a]) * 0.985   # ~2s half-life at 10Hz
+		u.heal_done = float(u.heal_done) * 0.985   # same ~2s half-life as the threat ledger
 		# STATUS TICK — the CONTRACTED per-tick rulebook (tick.gd), never inlined here: mana
 		# regen (same wis/200 formula the old inline line used), DoT attrition (burn/bleed
 		# hpPerSec, poison mpPerSec — poison drains MANA, that is the authored table), doom's
@@ -219,6 +250,8 @@ func _step() -> void:
 		if not u.alive:
 			continue
 		_execute_attack(u, events)
+	# PROJECTILES (#34) advance after every launch this tick, in launch order. Zero rng.
+	_advance_projectiles(events)
 	# Stagnation clock: a landed hit PAUSES the ratchet (miss/fizzle does not — silence is
 	# silence); growth happens below only after ARM ticks of real silence. Deaths reset it
 	# further down, once they are detected.
@@ -227,8 +260,12 @@ func _step() -> void:
 	# is not fight progress — if support casts paused the ratchet, a healer alone could hold a
 	# turtled remnant unresolvable forever. Damage still pauses it and only a death resets it,
 	# so a sustain-heavy fight comes under the same growing leash as any other stalemate.
+	# 'cast_done' fires at the LAUNCH of a will-hit shot and 'proj_hit' when it LANDS (#34) —
+	# both pause: the launch is committed damage, the arrival is the damage actually landing,
+	# and the gap between them is one flight (≤ ~1s), so this only ever moves last_damage_tick
+	# by flight time. Misses and fizzles pause nothing, exactly as cast_miss never did.
 	for e in events:
-		if str(e.kind) in ["strike", "cast_done"]:
+		if str(e.kind) in ["strike", "cast_done", "proj_hit"]:
 			last_damage_tick = tick_now
 	if tick_now - last_damage_tick > STAGNATION_ARM_TICKS:
 		stagnation_level += STAGNATION_LEASH_RATE
@@ -281,6 +318,9 @@ func _fill_bb(u: Dictionary) -> void:
 			#              records on purpose — no timers/payloads for the tree to lean on.
 			#              No rng, no new iteration order: pure read, deterministic.
 			rec["threat"] = float(u.dmg_from.get(o.id, 0.0))
+			#   heal_out — recent healing OUTPUT by this enemy (its own decaying ledger), so
+			#              the `healers` priority can SEE a healer (§2A addendum).
+			rec["heal_out"] = float(o.get("heal_done", 0.0))
 			rec["casting"] = o.alive and not o.casting.is_empty()
 			var team_dmg := 0.0
 			for t in units:
@@ -344,7 +384,10 @@ func _fill_bb(u: Dictionary) -> void:
 			bb.set_value("charge_attacker_id", best_att)
 		else:
 			bb.set_value("charge_attacker_id", "")
-	# taunt/orders arrive here when abilities and the tactics screen wire in (v1: keys absent).
+	## AOE LAYER: tauntForce fills the tree's Urgent → Taunted branch — "" when no live taunt
+	## (expired, or the taunter fell: battle.ts:982, the compulsion breaks). Zero rng, pure read.
+	bb.set_value("taunted_by", _taunt_source_of(u))
+	# orders arrive here when the tactics screen wires in (v1: keys absent).
 
 
 ## Dictionary key order is insertion order in Godot, which depends on hit history - SORT before
@@ -559,6 +602,7 @@ const MOD_OF_EFFECT := {
 	"atkBuff": "atkMultBonus", "defBuff": "defMitDebuff", "accBuff": "accMod",
 	"dodgeBuff": "dodgeMod", "ward": "ward", "guard": "guard",
 	"hpRegenBuff": "hpRegen", "regenBuff": "regen",
+	"thorns": "thorns",  ## AOE LAYER: flat melee reflect, worn as a timed mod (see _reflect_thorns)
 }
 
 static var _beneficial_cache: Array = []
@@ -686,6 +730,16 @@ func _resolve_friendly(u: Dictionary, kentry: Dictionary, events: Array) -> void
 			r.hp = minf(float(r.max_hp), float(r.hp) + heal)
 			events.append({"kind": "heal", "from": u.id, "to": r.id,
 				"move": str(kentry.name), "amount": int(float(r.hp) - before)})
+			var healed: float = float(r.hp) - before   # EFFECTIVE heal — overheal is not visibility
+			if healed > 0.0:
+				u.heal_done = float(u.heal_done) + healed
+				# §2A addendum: healing feeds the THREAT ledger at HEAL_THREAT_MULT, split evenly
+				# across living enemies (units is id-sorted — iteration order is deterministic).
+				var living_enemies: Array = units.filter(func(t): return t.alive and t.team != u.team)
+				if not living_enemies.is_empty():
+					var share: float = HEAL_THREAT_MULT * healed / float(living_enemies.size())
+					for t in living_enemies:
+						t.dmg_from[u.id] = float(t.dmg_from.get(u.id, 0.0)) + share
 		var mod := {"until": tick_now * DT + Derive.rounds_to_seconds(float(fxd.get("duration", 1))),
 			"src": str(mv.get("name", kentry.name))}
 		var applied := false
@@ -732,6 +786,14 @@ func _resolve_friendly(u: Dictionary, kentry: Dictionary, events: Array) -> void
 
 
 const CAST_RANGE := 30.0        # spells reach far - the arena is big and casters stand off
+
+## PROJECTILE FLIGHT (#34) — speeds taken VERBATIM from the superseded spatial layer's authored
+## constants (scripts/spatial.gd:301, under its "projectiles (2026-08-06)" banner): ranged 90
+## ("an arrow: fast, barely dodgeable"), magic 55 ("a fireball: slower than an arrow"), in
+## world-units/second. Channels absent from this table (melee / voice / support) stay INSTANT —
+## a shout has no flight — and FRIENDLY casts never reach this branch at all (touch/aura, not
+## shots; the friendly path resolves and returns before the channel check).
+const PROJECTILE_SPEED := {"ranged": 90.0, "magic": 55.0}
 const INTERRUPT_LOCKOUT := 30   # ticks (3s) the kicked school stays locked, WoW-style
 const INTERRUPT_CD := 100       # ticks (10s) between kicks - a kick is a RESOURCE
 const INTERRUPT_REACH := BASE_REACH * 1.4  # the kick's real reach — published to the tree as
@@ -754,6 +816,15 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			# mods and cleanse per recipient. Cooldown starts here like any completed cast.
 			if bool(u.casting.get("friendly", false)):
 				_resolve_friendly(u, kentry, events)
+				u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
+				u.casting = {}
+				return
+			## AOE LAYER: an allEnemies move resolves against GEOMETRY — every living enemy
+			## inside the move's authored range of the CASTER — never the single anchor target,
+			## and never the projectile branch (a burst has no single flight path). Per-target
+			## draws in unit-id order; see the AOE LAYER rng contract in the header.
+			if _entry_target(kentry) == "allEnemies":
+				_resolve_aoe(u, kentry, events)
 				u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
 				u.casting = {}
 				return
@@ -791,22 +862,39 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 				"defMaxHp": tgt.max_hp,
 			})
 			u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
-			if bool(out.get("hit", false)):
-				tgt.hp -= int(out.get("toHp", 0))
-				_drain_ward(u, tgt, out, events)
-				# Threat credits the FULL blow — a soaked hit still marks the attacker as the
-				# problem (identical to before when no wards exist: toHp == dmg then).
-				tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("dmg", 0))
-				events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
-					"move": str(kentry.name), "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
-				if int(out.get("toHp", 0)) > 0:
-					_break_on_damage(tgt, events)
-				if bvs_armed:
-					_consume_bonus_status(mv, tgt, events)
-				_apply_enemy_debuffs(u, tgt, mv, events)
-				# ⚠️ THE 4TH DRAW — see the draw-order note in the file header. Only on a hit,
-				# only when the move authors a status.
-				_maybe_apply_status(u, tgt, mv, events)
+			# ⚠️ THE 4TH DRAW — the hit-gated status roll, taken HERE for BOTH the instant and
+			# the projectile path so its stream position never moves (see the header note).
+			# -1.0 means "no draw happened": no status authored, or the acc roll missed.
+			var status_roll := -1.0
+			if bool(out.get("hit", false)) and mv.get("status") is Dictionary:
+				status_roll = rng.randf()
+			var chan := str(mv.get("channel", "magic"))
+			if PROJECTILE_SPEED.has(chan):
+				# PROJECTILE (#34): the resolved outcome rides the shot and APPLIES at arrival.
+				# A power-0 magic/ranged control move flies too — its status rides the bolt,
+				# which is the causally readable version of "the hex reached you".
+				var will_hit := bool(out.get("hit", false))
+				projectiles.append({
+					"from": u.id, "target_id": tgt.id, "pos": u.pos,
+					"speed": float(PROJECTILE_SPEED[chan]), "kname": str(kentry.name),
+					"move": mv, "out": out, "will_hit": will_hit, "aim_pos": tgt.pos,
+					"bvs_armed": bvs_armed, "status_roll": status_roll,
+					"launched_at": tick_now,
+				})
+				events.append({"kind": "proj_launch", "from": u.id, "to": tgt.id,
+					"move": str(kentry.name), "will_hit": will_hit})
+				if will_hit:
+					# cast_done stays the COMMITTED-damage event at completion (the watch
+					# scoreboard aggregates its dmg); the hp actually moves on 'proj_hit'
+					# at arrival — the probe pins hp-drop-tick > cast_done-tick.
+					events.append({"kind": "cast_done", "from": u.id, "to": tgt.id,
+						"move": str(kentry.name), "dmg": int(out.get("dmg", 0)),
+						"crit": bool(out.get("crit", false))})
+				# An aimed MISS (#20) says nothing at launch — its cast_miss is emitted where
+				# the shot expends, so the sail-through moment IS the event's moment.
+			elif bool(out.get("hit", false)):
+				_apply_strike_outcome(u, tgt, mv, str(kentry.name), out, bvs_armed,
+					status_roll, "cast_done", events)
 			else:
 				events.append({"kind": "cast_miss", "from": u.id, "to": tgt.id, "move": str(kentry.name)})
 			u.casting = {}
@@ -870,6 +958,83 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 			events.append({"kind": "cast_start", "from": u.id, "to": tid2, "move": cname})
 
 
+## Apply a resolved hostile-cast outcome to its target — shared VERBATIM by the instant path
+## (melee/voice channels, applied at cast completion) and the projectile path (applied at
+## ARRIVAL, with the rolls that were drawn at launch). `evt_kind` is the damage event emitted
+## ("cast_done" for instant, "proj_hit" for arrival). Draws zero rng — the status roll arrives
+## pre-drawn (-1.0 = no draw happened, so nothing to apply).
+func _apply_strike_outcome(u: Dictionary, tgt: Dictionary, mv: Dictionary, kname: String,
+		out: Dictionary, bvs_armed: bool, status_roll: float, evt_kind: String, events: Array) -> void:
+	tgt.hp -= int(out.get("toHp", 0))
+	_drain_ward(u, tgt, out, events)
+	# Threat credits the FULL blow — a soaked hit still marks the attacker as the
+	# problem (identical to before when no wards exist: toHp == dmg then).
+	tgt.dmg_from[u.id] = float(tgt.dmg_from.get(u.id, 0.0)) + float(out.get("dmg", 0))
+	events.append({"kind": evt_kind, "from": u.id, "to": tgt.id,
+		"move": kname, "dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
+	if int(out.get("toHp", 0)) > 0:
+		_break_on_damage(tgt, events)
+	if bvs_armed:
+		_consume_bonus_status(mv, tgt, events)
+	_apply_enemy_debuffs(u, tgt, mv, events)
+	_apply_taunt(u, tgt, mv, events)         ## AOE LAYER: tauntForce lands here — zero rng
+	_reflect_thorns(u, tgt, mv, out, events)  ## AOE LAYER: melee-only flat reflect — zero rng
+	if status_roll >= 0.0:
+		_apply_status_rolled(u, tgt, mv, events, status_roll)
+
+
+# ═══ PROJECTILES (#34) ═══════════════════════════════════════════════════════════════════════
+# The shot is state, not a node: {from, target_id, pos, speed, move, out, will_hit, aim_pos,
+# bvs_armed, status_roll, launched_at}. A will-hit shot HOMES on its target's CURRENT position
+# (the autobattler standard — nothing outruns a fireball); an aimed MISS flies to `aim_pos`,
+# the target's position AT LAUNCH, and expends in empty ground where the target used to be
+# (#20: the miss is visible and causal). Advancement draws zero rng and iterates in launch
+# order, which is deterministic because launches happen in unit-id order.
+
+
+## Advance every in-flight shot one tick and land the ones that arrive. A shot skips its launch
+## tick (it spends that tick leaving the caster), so flight is always >= 1 tick and damage can
+## never land on the cast_done tick itself.
+func _advance_projectiles(events: Array) -> void:
+	var kept: Array = []
+	for p in projectiles:
+		if int(p.launched_at) == tick_now:
+			kept.append(p)
+			continue
+		var tgt = _unit(str(p.target_id))
+		# Homing reads the target's CURRENT pos — for a corpse that is its last position, so a
+		# shot whose mark died mid-flight still completes its arc there (and fizzles on landing).
+		var aim: Vector2 = tgt.pos if bool(p.will_hit) else Vector2(p.aim_pos)
+		var step: float = float(p.speed) * DT
+		var to_aim: Vector2 = aim - Vector2(p.pos)
+		if to_aim.length() <= step:
+			p.pos = aim
+			_projectile_land(p, tgt, events)
+		else:
+			p.pos = Vector2(p.pos) + to_aim / to_aim.length() * step
+			kept.append(p)
+	projectiles = kept
+
+
+## Landing: an aimed miss expends in empty ground (cast_miss, HERE, where the sail-through is
+## visible); a will-hit shot whose target died mid-flight expends on the corpse (proj_fizzle);
+## a live hit applies the outcome resolved at launch (proj_hit + all its consequences).
+func _projectile_land(p: Dictionary, tgt: Dictionary, events: Array) -> void:
+	if not bool(p.will_hit):
+		events.append({"kind": "cast_miss", "from": str(p.from), "to": str(p.target_id),
+			"move": str(p.kname)})
+		return
+	if tgt == null or not tgt.alive:
+		events.append({"kind": "proj_fizzle", "from": str(p.from), "to": str(p.target_id),
+			"move": str(p.kname)})
+		return
+	# The shooter may itself be dead by now — a loosed arrow does not care. _unit still returns
+	# the body, whose mods/id are all the application needs.
+	var shooter = _unit(str(p.from))
+	_apply_strike_outcome(shooter, tgt, p.move, str(p.kname), p.out, bool(p.bvs_armed),
+		float(p.status_roll), "proj_hit", events)
+
+
 func _execute_attack(u: Dictionary, events: Array) -> void:
 	if not u.casting.is_empty():
 		return  # committed - the stillness and silence ARE the cast
@@ -918,6 +1083,8 @@ func _execute_attack(u: Dictionary, events: Array) -> void:
 			"dmg": int(out.get("dmg", 0)), "crit": bool(out.get("crit", false))})
 		if int(out.get("toHp", 0)) > 0:
 			_break_on_damage(tgt, events)   # sleep (breaksOnDamage, table-driven) wakes here too
+		## AOE LAYER: the basic is melee — a thorny defender punishes it with flat reflect.
+		_reflect_thorns(u, tgt, {"channel": "melee"}, out, events)
 	else:
 		events.append({"kind": "miss", "from": u.id, "to": tid})
 
@@ -1075,14 +1242,16 @@ func _break_on_damage(tgt: Dictionary, events: Array) -> void:
 	tgt.statuses = kept
 
 
-## Roll the move's authored status through the shared rng (the documented 4th draw) and apply
-## it through the contracted rulebook. Called ONLY on a landed hit — same accuracy gate as the
+## Apply the move's authored status using a PRE-DRAWN chance roll (the documented 4th draw —
+## taken by _execute_cast at completion, so the projectile path's delayed application never
+## moves the draw's stream position). Called ONLY on a landed hit — same accuracy gate as the
 ## damage, no double jeopardy (#20 analogue).
-func _maybe_apply_status(u: Dictionary, tgt: Dictionary, mv: Dictionary, events: Array) -> void:
+func _apply_status_rolled(u: Dictionary, tgt: Dictionary, mv: Dictionary, events: Array,
+		roll: float) -> void:
 	var spec = mv.get("status")
 	if not (spec is Dictionary) or not tgt.alive:
 		return
-	if rng.randf() * 100.0 >= float((spec as Dictionary).get("chance", 100.0)):
+	if roll * 100.0 >= float((spec as Dictionary).get("chance", 100.0)):
 		return
 	var kind := str((spec as Dictionary)["kind"])
 	var out: Dictionary = StatusMathLib.apply_status({
@@ -1140,6 +1309,136 @@ func _emit_frame(events: Array) -> void:
 			"castMove": str(u.casting.move.name) if not u.casting.is_empty() else "",
 			"castFrac": clampf(float(tick_now - int(u.casting.started)) / maxf(1.0, float(int(u.casting.ends) - int(u.casting.started))), 0.0, 1.0) if not u.casting.is_empty() else 0.0,
 		})
-	frames.append({"tick": tick_now, "units": us, "events": events})
+	# PROJECTILES ride the frame (#34): everything the renderer needs to draw a shot travelling
+	# — and `will_hit`, so a doomed shot can read differently in flight if the renderer wants.
+	# `aim` is the point the shot is flying at RIGHT NOW: the target's live position for a
+	# homing hit (or its corpse), the frozen launch-time position for an aimed miss. Computed
+	# here, never derived by the renderer.
+	var pr: Array = []
+	for p in projectiles:
+		var ptgt = _unit(str(p.target_id))
+		pr.append({"from": str(p.from), "target_id": str(p.target_id), "pos": p.pos,
+			"move": str(p.kname), "will_hit": bool(p.will_hit),
+			"aim": ptgt.pos if bool(p.will_hit) else Vector2(p.aim_pos)})
+	frames.append({"tick": tick_now, "units": us, "events": events, "projectiles": pr})
 	for u in units:
 		u["prev_pos"] = u.pos
+
+
+# ═══ AOE LAYER — allEnemies geometry, tauntForce, thorns ═════════════════════════════════════
+# Purely additive functions plus the marked call-site hooks above (and kit.gd's acceptance
+# list). RNG contract: see the ⚠️ AOE LAYER note in the file header — per-target draws in
+# unit-id order for allEnemies bursts; taunt and thorns draw nothing.
+
+const AOE_FALLOFF_PER_TARGET := 0.05  # core.ts:74 — every extra body shaves 5% off each hit …
+const AOE_FALLOFF_FLOOR := 0.4        # … floored at 40% (core.ts:95-96, aoeFalloff)
+
+
+## The per-hit falloff FACTOR for an N-target burst: "AoE is weak into one body and strong into
+## three" (the standing rule) is priced exactly here — each of N targets takes aoe_falloff(N)
+## of the single-target hit, so 1 body is x1.00 and 3 bodies total x2.70, never x3.
+static func aoe_falloff(target_count: int) -> float:
+	return maxf(AOE_FALLOFF_FLOOR, 1.0 - AOE_FALLOFF_PER_TARGET * float(maxi(0, target_count - 1)))
+
+
+## Resolve a completed allEnemies cast: a BURST against every living enemy within the move's
+## authored range of the CASTER — the legacy gate (spatial_sim.gd:1077-1086: an AoE reaches
+## only what the move's own range covers, measured from the caster; the position-blind fan-out
+## it replaced hit covered bodies 250 units away and the VFX tracer exposed it). Each target
+## goes through the ONE contracted resolve_strike with the shared falloff input, then the same
+## application path every other hit uses (_apply_strike_outcome: ward drain, threat, debuffs,
+## taunt, thorns, status via its per-target pre-drawn roll).
+func _resolve_aoe(u: Dictionary, kentry: Dictionary, events: Array) -> void:
+	var mv := _move_of_entry(kentry)
+	var reach := float(kentry.get("range", CAST_RANGE))
+	var targets: Array = []
+	for o in units:  # unit-id order — the determinism order, as everywhere
+		if o.alive and o.team != u.team and u.pos.distance_to(o.pos) <= reach:
+			targets.append(o)
+	if targets.is_empty():
+		events.append({"kind": "fizzle", "from": u.id, "move": str(kentry.name)})
+		return
+	var falloff := aoe_falloff(targets.size())
+	var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
+	for tgt in targets:
+		var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))
+		var bvs_armed: bool = _bonus_status_armed(mv, tgt)
+		var out: Dictionary = Damage.resolve_strike({
+			"move": mv,
+			"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
+			"now": tick_now * DT,
+			"atk": float(u.stats.get(str(kentry.get("stat", "INT")), 10)),
+			"atkMult": 1.0 + _sum_mods(u, "atkMultBonus"),
+			"attackerHpFrac": float(u.hp) / float(u.max_hp),
+			"attackerWard": _sum_mods(u, "ward"),
+			"accPenalty": _acc_penalty_of(u), "accMod": _sum_mods(u, "accMod"),
+			"dodgeMod": _sum_mods(tgt, "dodgeMod"), "flankBonus": 0.0, "behindMult": 1.0,
+			"falloff": falloff,
+			"defMit": Damage.mitigation_for(def_stat),
+			"defMitDebuff": _sum_mods(tgt, "defMitDebuff"), "defDmgTakenMod": 1.0,
+			"defStatusDmgTaken": _dmg_taken_of(tgt),
+			"defGuard": _sum_mods(tgt, "guard"), "defWard": _sum_mods(tgt, "ward"),
+			"defBlocking": false, "defHasAttacked": tgt.has_attacked,
+			"defHasBonusStatus": bvs_armed, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
+			"defMaxHp": tgt.max_hp,
+		})
+		if bool(out.get("hit", false)):
+			# The 4th draw stays hit-gated and PER TARGET — drawn here, applied through the
+			# same pre-rolled path the projectile layer uses, so the stream position is fixed.
+			var status_roll := -1.0
+			if mv.get("status") is Dictionary:
+				status_roll = rng.randf()
+			_apply_strike_outcome(u, tgt, mv, str(kentry.name), out, bvs_armed,
+				status_roll, "cast_done", events)
+		else:
+			events.append({"kind": "cast_miss", "from": u.id, "to": tgt.id, "move": str(kentry.name)})
+
+
+## TAUNTFORCE — a landed tauntForce move compels the victim onto the caster for the authored
+## duration (rounds -> seconds via the contracted Derive). Mirrors battle.ts:944-946: on a
+## landed debuff, `target.tauntedBy = {side, slot, turnsLeft: duration}`. The sim stores the
+## compulsion on the unit; _fill_bb publishes it as bb `taunted_by` and the tree's Urgent →
+## Taunted branch answers it with NO tree edit. Emits 'taunted'. Zero rng.
+func _apply_taunt(u: Dictionary, tgt: Dictionary, mv: Dictionary, events: Array) -> void:
+	var fx = mv.get("effects")
+	if not (fx is Dictionary) or not bool((fx as Dictionary).get("tauntForce", false)):
+		return
+	var secs: float = Derive.rounds_to_seconds(float((fx as Dictionary).get("duration", 1)))
+	tgt["taunt"] = {"by": u.id, "until": tick_now * DT + secs}
+	events.append({"kind": "taunted", "from": u.id, "to": tgt.id, "seconds": secs})
+
+
+## The live compeller of a taunted unit, or "". Expires by time; the compulsion also breaks
+## the moment the taunter falls (battle.ts:982 — "taunter fell — compulsion breaks").
+func _taunt_source_of(u: Dictionary) -> String:
+	var t = u.get("taunt")
+	if not (t is Dictionary):
+		return ""
+	if tick_now * DT >= float((t as Dictionary)["until"]):
+		return ""
+	var src = _unit(str((t as Dictionary)["by"]))
+	if src == null or not src.alive:
+		return ""
+	return str((t as Dictionary)["by"])
+
+
+## THORNS — flat reflect per MELEE hit taken, worn as a timed `thorns` mod (a self/team buff
+## from the wearer's OWN kit, via MOD_OF_EFFECT). A REFLECT EVENT, never a second
+## resolve_strike: battle.ts:1281-1284 subtracts `target.thornsFlat` straight off the
+## attacker's hp — flat, unmitigated, no accuracy, no crit — so a reflect can never trigger
+## the attacker's own thorns: thorny-vs-thorny cannot chain, structurally.
+## ⚠️ The authored numbers are FLAT damage (Riposte 10, Retaliate 16), not fractions — the
+## legacy field name `thornsFlat` says so, and 6-16 read as fractions would exceed 100%.
+## ⚠️ MELEE-GATED BY DESIGN BRIEF (legacy reflected every channel): thorns punish the bodies
+## standing in reach; an archer or caster does not prick itself on armour it never touches.
+func _reflect_thorns(attacker: Dictionary, defender: Dictionary, mv: Dictionary,
+		out: Dictionary, events: Array) -> void:
+	if not bool(out.get("hit", false)) or int(out.get("dmg", 0)) <= 0:
+		return
+	if str(mv.get("channel", "magic")) != "melee":
+		return
+	var flat: float = _sum_mods(defender, "thorns")
+	if flat <= 0.0:
+		return
+	attacker.hp = float(attacker.hp) - flat
+	events.append({"kind": "thorns", "from": defender.id, "to": attacker.id, "dmg": int(flat)})

@@ -10,12 +10,13 @@
 ## (power-as-heal through the field heal rule), cleanse, the timed-mod keys
 ## (atkBuff/defBuff/accBuff/dodgeBuff/ward/guard/hpRegenBuff/regenBuff), and authored
 ## friendly statuses (Battle Hymn's haste, applied with no chance draw), targets
-## self/ally/team; and status-less single-enemy debuffs whose keys are the mod system's
-## (defDebuff/atkDebuff/accDebuff). Still skipped, loudly: `thorns` and `tauntForce` (not
-## simulated — a kit accepting a taunt that never taunts would be a lie), `allEnemies`
-## debuffs (AoE geometry is not built), and any move with NOTHING the sim expresses.
-## A move accepted for one expressed component may still carry an unexpressed `thorns`
-## alongside — that key alone never gates acceptance, only never-does-anything moves do.
+## self/ally/team; status-less single-enemy debuffs whose keys are the mod system's
+## (defDebuff/atkDebuff/accDebuff); and — the AOE LAYER round — `thorns` (flat melee reflect,
+## worn as a timed mod), `tauntForce` (the sim compels the victim; the tree's Taunted branch
+## answers), and `allEnemies` moves of every type (the sim resolves them as a burst within the
+## move's authored range of the caster). Still skipped, loudly: any move with NOTHING the sim
+## expresses — after this round that is exactly ONE move, Firewall (self, no effects: a ground
+## zone the sim has no geometry for yet).
 extends RefCounted
 
 const Derive = preload("res://scripts/derive.gd")
@@ -23,8 +24,9 @@ const Derive = preload("res://scripts/derive.gd")
 const GEOMETRY_SCALE := 2.2   # authored move.range is board units; the world is scaled (spatial.gd)
 
 ## Effect keys the sim turns into timed mods on FRIENDLY targets (sim.gd MOD_OF_EFFECT) …
+## (`thorns` joined in the AOE LAYER round — flat melee reflect worn as a timed mod)
 const FRIENDLY_MOD_KEYS := ["atkBuff", "defBuff", "accBuff", "dodgeBuff", "ward", "guard",
-	"hpRegenBuff", "regenBuff"]
+	"hpRegenBuff", "regenBuff", "thorns"]
 ## … and into timed mods on an ENEMY, applied on a landed hit (sim.gd _apply_enemy_debuffs).
 const ENEMY_DEBUFF_KEYS := ["defDebuff", "atkDebuff", "accDebuff"]
 
@@ -76,12 +78,12 @@ static func _skip_reason(mv: Dictionary) -> String:
 		for k in FRIENDLY_MOD_KEYS:
 			if fxd.has(k):
 				return ""
-		return "%s-type %s move with no expressed effect (keys: %s) — thorns/etc not simulated" \
+		return "%s-type %s move with no expressed effect (keys: %s)" \
 			% [mtype, target, str(fxd.keys())]
+	# AOE LAYER: tauntForce compels (sim fills `taunted_by`, the tree's Urgent branch answers),
+	# and allEnemies moves resolve as a caster-centred burst — both are live, neither skips.
 	if fxd.has("tauntForce"):
-		return "tauntForce not simulated — accepting it would cast a taunt that never taunts"
-	if target == "allEnemies":
-		return "allEnemies debuff — AoE geometry not built"
+		return ""
 	for k in ENEMY_DEBUFF_KEYS:
 		if fxd.has(k):
 			return ""   # timed enemy debuff mods, applied on a landed hit

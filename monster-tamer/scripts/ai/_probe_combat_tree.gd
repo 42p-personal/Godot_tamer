@@ -6,6 +6,8 @@ extends SceneTree
 
 const BT = preload("res://scripts/ai/bt.gd")
 const CombatTree = preload("res://scripts/ai/combat_tree.gd")
+const SimLib = preload("res://scripts/sim/sim.gd")   # AOE LAYER checks drive sim functions
+const KitLib = preload("res://scripts/sim/kit.gd")   # directly — no nav is ever touched
 
 var _fails := 0
 
@@ -61,6 +63,12 @@ func _init() -> void:
 	_test_big_moment_defined()
 	_test_combo_setup_derived()
 	_test_wing_variety()
+	_test_healers_priority()
+	_test_sim_taunt()
+	_test_aoe_falloff()
+	_test_sim_aoe()
+	_test_sim_thorns()
+	_test_kit_aoe_acceptance()
 	_test_determinism()
 	print("COMBAT TREE PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	quit(1 if _fails > 0 else 0)
@@ -472,6 +480,41 @@ func _test_wing_variety() -> void:
 	_check("wings: the flip is legible", bb_c.reason() == "wing crowded — swinging to the other side")
 
 
+func _test_healers_priority() -> void:
+	# §2A `healers`: highest recent healing OUTPUT among the living. e1 has healed hardest —
+	# it wins over e2, the statistically bigger caster (int 80 + wis 70), because heal_out is
+	# EVIDENCE and stats are only suspicion.
+	var tree := CombatTree.build({"target_priority": "healers"})
+	var bb := _bb_base()
+	bb.get_value("enemies")[0].heal_out = 60.0   # e1: the working healer
+	bb.get_value("enemies")[2].heal_out = 10.0   # e3: dribbled a heal once
+	_tick(tree, bb, 0)
+	_check("healers: highest heal_out wins", str(bb.get_value("target_id")) == "e1")
+	_check("healers: the pick is legible", bb.reason() == "target: e1 (healers)")
+	# DEFINED FALLBACK: nobody has healed yet -> casters scoring (a healer that has not healed
+	# is still a caster). e2's int+wis carries it, exactly as the `casters` priority would.
+	var tree2 := CombatTree.build({"target_priority": "healers"})
+	var bb2 := _bb_base()
+	_tick(tree2, bb2, 0)
+	_check("healers: nobody healed yet falls back to casters scoring", str(bb2.get_value("target_id")) == "e2")
+	# The same fallback when the sim-filled key is present but zero everywhere.
+	var tree3 := CombatTree.build({"target_priority": "healers"})
+	var bb3 := _bb_base()
+	for e in bb3.get_value("enemies"):
+		e.heal_out = 0.0
+	_tick(tree3, bb3, 0)
+	_check("healers: all-zero heal_out is the same fallback", str(bb3.get_value("target_id")) == "e2")
+	# A dead healer's output is not a target: e1 healed most but is down -> e3 (the only other
+	# enemy that has healed) takes the priority.
+	var tree4 := CombatTree.build({"target_priority": "healers"})
+	var bb4 := _bb_base()
+	bb4.get_value("enemies")[0].heal_out = 60.0
+	bb4.get_value("enemies")[0].hp = 0
+	bb4.get_value("enemies")[2].heal_out = 10.0
+	_tick(tree4, bb4, 0)
+	_check("healers: a dead healer is nobody's target", str(bb4.get_value("target_id")) == "e3")
+
+
 func _run_scenario() -> String:
 	var tree := CombatTree.build({"target_priority": "weakest", "when_hurt": "fall_back",
 		"positional": "wings", "wing_side": -1, "ability_policy": "combo", "hurt_at": 0.35})
@@ -497,3 +540,181 @@ func _test_determinism() -> void:
 	var b := _run_scenario()
 	_check("determinism: 300-tick scenario, twin runs, identical decision log", a == b)
 	_check("probe not vacuous: the scenario produced real decisions", a.length() > 100)
+
+
+# ═══ AOE LAYER — sim-side scenario checks, nav-free ══════════════════════════════════════════
+# These drive sim.gd's AOE-layer functions DIRECTLY on hand-built units: no setup(), no
+# NavService, no scene tree needed — which is what qualifies them for this --script probe.
+
+
+## A minimal sim with hand-built units — every key the driven functions read, none the nav
+## needs. Mirrors setup()'s unit shape; units end id-sorted (the determinism order).
+func _mk_sim(seed_val: int, specs: Array) -> RefCounted:
+	var s = SimLib.new()
+	s.rng = RandomNumberGenerator.new()
+	s.rng.seed = seed_val
+	for sp in specs:
+		var bb := BT.Blackboard.new()
+		bb.rng = s.rng
+		s.units.append({"id": str(sp.id), "team": str(sp.team), "pos": sp.pos, "home": sp.pos,
+			"stats": sp.get("stats", {"STR": 50, "CON": 30, "WIS": 20, "INT": 60}),
+			"hp": 200.0, "max_hp": 200, "speed": 8.0, "tactics": {},
+			"nerve": 50, "aggression": 50, "focus_sticky": 1.3, "tree": null, "bb": bb,
+			"path": PackedVector2Array(), "path_i": 0, "cooldown": 0, "has_attacked": false,
+			"alive": true, "mp": 100.0, "max_mp": 100, "kit": [], "cds": {},
+			"casting": {}, "statuses": [], "cc_resist": 0.0, "last_cc_at": -999.0,
+			"mods": sp.get("mods", []), "dmg_from": {}, "kite_ticks": 80,
+			"facing": Vector2(1, 0), "vel": Vector2.ZERO, "slot_angle": 0.0, "slot_ok": false})
+	s.units.sort_custom(func(a, b): return a.id < b.id)
+	return s
+
+
+func _test_sim_taunt() -> void:
+	# A landed tauntForce compels the victim onto the caster; the tree's Urgent → Taunted
+	# branch answers off the sim-filled bb key with NO tree edit; the compulsion expires with
+	# its authored duration and breaks the moment the taunter falls (battle.ts:944-946, 982).
+	var s = _mk_sim(5, [{"id": "a1", "team": "A", "pos": Vector2(0, 0)},
+		{"id": "b1", "team": "B", "pos": Vector2(10, 0)}])
+	var a1 = s._unit("a1")
+	var b1 = s._unit("b1")
+	var ev: Array = []
+	s._apply_taunt(a1, b1, {"effects": {"tauntForce": true, "duration": 2}}, ev)
+	_check("taunt: a landed tauntForce emits 'taunted' with its duration",
+		ev.size() == 1 and str(ev[0].kind) == "taunted" and float(ev[0].seconds) > 0.0
+		and str(ev[0].from) == "a1" and str(ev[0].to) == "b1")
+	_check("taunt: the victim is compelled onto the caster", s._taunt_source_of(b1) == "a1")
+	s._fill_bb(b1)
+	_check("taunt: the sim fills the tree's `taunted_by` key",
+		str(b1.bb.get_value("taunted_by")) == "a1")
+	var tree := CombatTree.build({"target_priority": "nearest"})
+	tree.tick(b1.bb, 0)
+	_check("taunt: the tree swaps the swing onto the taunter (no tree edit needed)",
+		str(b1.bb.get_value("req_attack")) == "a1" and str(b1.bb.get_value("target_id")) == "a1")
+	_check("taunt: the compelled unit CLOSES on the taunter",
+		Vector2(b1.bb.get_value("req_move_to")) == Vector2(0, 0))
+	# Expiry by time…
+	var until: float = float(b1.taunt.until)
+	s.tick_now = int(until / 0.1) + 1
+	_check("taunt: the compulsion expires with its authored duration", s._taunt_source_of(b1) == "")
+	# …and by the taunter falling (battle.ts:982 — compulsion breaks).
+	s.tick_now = 0
+	a1.alive = false
+	_check("taunt: the taunter falling breaks the compulsion", s._taunt_source_of(b1) == "")
+
+
+func _test_aoe_falloff() -> void:
+	# The falloff FORMULA, pinned to core.ts:74/95: 1 body x1.00, 3 bodies x0.90 each (total
+	# x2.70 — "weak into one body, strong into three"), floored at 0.40 however wide the pack.
+	_check("aoe falloff: one body takes the full hit", is_equal_approx(SimLib.aoe_falloff(1), 1.0))
+	_check("aoe falloff: three bodies take x0.90 each (x2.70 total, never x3)",
+		is_equal_approx(SimLib.aoe_falloff(3), 0.9))
+	_check("aoe falloff: the floor holds at 0.40 into any pack",
+		is_equal_approx(SimLib.aoe_falloff(15), 0.4) and is_equal_approx(SimLib.aoe_falloff(100), 0.4))
+
+
+func _mk_nova() -> Dictionary:
+	# An inline allEnemies test move: variance 0 so per-hit damage is exact; accuracy 100 so
+	# nothing ever misses (acc roll <= 1.0 always passes) — crits stay the only rng effect.
+	return {"name": "Nova", "kind": "cast", "stat": "INT", "channel": "magic",
+		"move": {"name": "Nova", "power": 40, "accuracy": 100, "type": "damage",
+			"channel": "magic", "target": "allEnemies", "variance": 0.0},
+		"range": 12.0, "cooldown": 4.0, "mana": 0.0, "cast_time": 1.0, "min_range": 0.0}
+
+
+func _run_aoe(specs: Array) -> Array:
+	var s = _mk_sim(9, specs)
+	var ev: Array = []
+	s._resolve_aoe(s._unit("a1"), _mk_nova(), ev)
+	return ev
+
+
+func _test_sim_aoe() -> void:
+	# One isolated body vs three bunched — same caster, same seed. The burst is range-gated
+	# from the CASTER (the legacy spatial_sim.gd:1077-1086 rule): the two far bodies in the
+	# first roster are never touched.
+	var lone: Array = [{"id": "a1", "team": "A", "pos": Vector2.ZERO},
+		{"id": "b1", "team": "B", "pos": Vector2(6, 0)},
+		{"id": "b2", "team": "B", "pos": Vector2(40, 0)},
+		{"id": "b3", "team": "B", "pos": Vector2(40, 5)}]
+	var packed: Array = [{"id": "a1", "team": "A", "pos": Vector2.ZERO},
+		{"id": "b1", "team": "B", "pos": Vector2(6, 0)},
+		{"id": "b2", "team": "B", "pos": Vector2(6, 3)},
+		{"id": "b3", "team": "B", "pos": Vector2(6, -3)}]
+	var ev1 := _run_aoe(lone)
+	var ev3 := _run_aoe(packed)
+	var hits1: Array = ev1.filter(func(e): return str(e.kind) == "cast_done")
+	var hits3: Array = ev3.filter(func(e): return str(e.kind) == "cast_done")
+	_check("aoe: bodies outside the authored range are never touched (caster-range gate)",
+		hits1.size() == 1 and ev1.filter(func(e): return str(e.get("to", "")) in ["b2", "b3"]).is_empty())
+	_check("aoe: three bunched bodies are ALL hit", hits3.size() == 3)
+	var total1 := 0
+	for e in hits1:
+		total1 += int(e.dmg)
+	var total3 := 0
+	for e in hits3:
+		total3 += int(e.dmg)
+	_check("aoe: three bunched bodies take MORE in total than one isolated (%d > %d)" % [total3, total1],
+		total3 > total1)
+	# Falloff visible per hit: compare non-crit hits only (crit is the one rng left in play).
+	var nc1: Array = hits1.filter(func(e): return not bool(e.crit))
+	var nc3: Array = hits3.filter(func(e): return not bool(e.crit))
+	var per_hit_ok := not nc1.is_empty() and not nc3.is_empty()
+	if per_hit_ok:
+		for e in nc3:
+			if int(e.dmg) >= int(nc1[0].dmg):
+				per_hit_ok = false
+	_check("aoe: falloff visible — each of three takes LESS than the lone target", per_hit_ok)
+	# Twin runs, same seed: identical event streams (per-target draws in unit-id order).
+	_check("aoe determinism: twin runs are byte-identical",
+		JSON.stringify(_run_aoe(packed)) == JSON.stringify(ev3))
+
+
+func _test_sim_thorns() -> void:
+	# A thorny defender punishes a landed melee basic with FLAT reflect through a REFLECT
+	# event — never a second resolve_strike — so thorny-vs-thorny cannot loop (battle.ts:
+	# 1281-1284: `attacker.hp -= target.thornsFlat`, flat and unmitigated).
+	var s = _mk_sim(3, [
+		{"id": "a1", "team": "A", "pos": Vector2(0, 0),
+			"mods": [{"thorns": 8.0, "until": 999.0, "src": "Riposte"}]},
+		{"id": "b1", "team": "B", "pos": Vector2(4, 0),
+			"mods": [{"thorns": 16.0, "until": 999.0, "src": "Retaliate"}]}])
+	var a1 = s._unit("a1")
+	var b1 = s._unit("b1")
+	a1.bb.set_value("req_attack", "b1")
+	var ev: Array = []
+	for i in 10:   # 95-acc basic: swing until one lands (cooldown reset by hand)
+		a1.cooldown = 0
+		s._execute_attack(a1, ev)
+		if not ev.filter(func(e): return str(e.kind) == "strike").is_empty():
+			break
+	var strikes: Array = ev.filter(func(e): return str(e.kind) == "strike")
+	var reflects: Array = ev.filter(func(e): return str(e.kind) == "thorns")
+	_check("thorns: a landed melee hit reflects the authored FLAT damage (16, b1 -> a1)",
+		strikes.size() == 1 and reflects.size() == 1 and int(reflects[0].dmg) == 16
+		and str(reflects[0].from) == "b1" and str(reflects[0].to) == "a1")
+	_check("thorns: the reflect comes straight off hp — unmitigated, no second strike",
+		is_equal_approx(float(a1.hp), 200.0 - 16.0))
+	_check("thorns: thorny-vs-thorny cannot chain — ONE reflect per landed hit, ever",
+		reflects.size() == 1)
+	# Non-melee hits do not prick themselves on armour they never touch (melee-gated).
+	var ev2: Array = []
+	s._reflect_thorns(a1, b1, {"channel": "magic"}, {"hit": true, "dmg": 10}, ev2)
+	_check("thorns: a non-melee hit does not reflect", ev2.is_empty())
+
+
+func _test_kit_aoe_acceptance() -> void:
+	# The AOE LAYER's kit round: tauntForce, thorns self-buffs and allEnemies moves all build
+	# from data.json; the remaining loud skip is exactly the one genuinely inexpressible move.
+	var moves: Array = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/data.json"))["moves"]
+	_check("kit: tauntForce builds (Taunt — the sim compels, the tree answers)",
+		KitLib.build(["Taunt"], moves).size() == 1)
+	_check("kit: the taunting wall builds (Bulwark's Challenge — allEnemies + tauntForce + guard)",
+		KitLib.build(["Bulwark's Challenge"], moves).size() == 1)
+	_check("kit: allEnemies damage builds (Cleave)", KitLib.build(["Cleave"], moves).size() == 1)
+	_check("kit: thorns self/control buffs build (Retaliate, Zone of Control)",
+		KitLib.build(["Retaliate", "Zone of Control"], moves).size() == 2)
+	_check("kit: allEnemies debuff builds (Demoralize — AoE geometry is live)",
+		KitLib.build(["Demoralize"], moves).size() == 1)
+	_check("kit: the one genuinely inexpressible move still skips loudly (Firewall)",
+		KitLib.build(["Firewall"], moves).size() == 0)

@@ -180,12 +180,15 @@ func _go() -> void:
 		Kit.build(["Sunder"], moves_all).size() == 1)
 	_check("kit: a pure heal builds (Mend — the friendly-cast path)",
 		Kit.build(["Mend"], moves_all).size() == 1)
-	_check("kit: tauntForce still skips loudly (Taunt — a taunt that never taunts is a lie)",
-		Kit.build(["Taunt"], moves_all).size() == 0)
-	_check("kit: thorns-only self move still skips loudly (Zone of Control)",
-		Kit.build(["Zone of Control"], moves_all).size() == 0)
-	_check("kit: allEnemies debuff still skips loudly (Demoralize — no AoE geometry)",
-		Kit.build(["Demoralize"], moves_all).size() == 0)
+	## AOE LAYER: these three pins FLIPPED when the layer landed — taunt now compels (the sim
+	## fills `taunted_by`), thorns now reflect (timed mod), and allEnemies resolves as a
+	## caster-centred burst. The deep scenario checks live in _probe_combat_tree.gd (nav-free).
+	_check("kit: tauntForce now builds (Taunt — the sim compels, the tree answers)",
+		Kit.build(["Taunt"], moves_all).size() == 1)
+	_check("kit: thorns self move now builds (Zone of Control — reflect is live)",
+		Kit.build(["Zone of Control"], moves_all).size() == 1)
+	_check("kit: allEnemies debuff now builds (Demoralize — AoE geometry is live)",
+		Kit.build(["Demoralize"], moves_all).size() == 1)
 
 	# THE SUPPORT LAYER: heals reach the wounded ally, wards soak before health, a timed atk
 	# buff raises damage then expires, a cleanse scrubs a DoT early — and none of it pauses the
@@ -223,6 +226,31 @@ func _go() -> void:
 	var cl: Dictionary = await _run_cleanse()
 	_check("cleanse: a DoT is scrubbed EARLY (battle.ts:423 — ailments go, beneficial stays)",
 		_cleanse_scrubbed_burn(cl, "a2", "a0"))
+
+	# PROJECTILES (#34): ranged/magic casts TRAVEL — damage lands on arrival, an aimed miss
+	# (#20: accuracy = aim quality) sails to where the target stood at launch, a mid-flight
+	# death fizzles the shot harmlessly, and flight time is distance/speed. Melee stays
+	# instant (every same-frame strike/hp comparison above is that pin).
+	var ph: Dictionary = await _run_proj(83, 100)
+	_check("projectile: shots launch and land (proj_launch + proj_hit, non-vacuous)",
+		_count(ph, "proj_launch") > 0 and _count(ph, "proj_hit") > 0)
+	_check("projectile: damage lands ON ARRIVAL, not at cast completion (hp drop tick > cast_done tick)",
+		_hit_on_arrival(ph, "a0", "b0"))
+	var pm: Dictionary = await _run_proj(83, 1)
+	_check("projectile: aimed misses happen and expend (cast_miss at arrival, non-vacuous)",
+		_count(pm, "cast_miss") > 0)
+	_check("projectile: an aimed miss visibly diverges from the moving target (> body radius)",
+		_miss_diverges(pm, "a0", "b0"))
+	_check("projectile: flight time matches launch distance / channel speed (within a tick + the muzzle tick)",
+		_flight_time_ok(pm, "a0", "b0", 55.0))
+	_check("projectile: stream carries the in-flight shot (frames[].projectiles non-empty mid-flight)",
+		_stream_carries_projectile(ph))
+	_check("projectile: target death mid-flight fizzles the shot (proj_fizzle, expends on the corpse)",
+		await _fizzle_check())
+	var ph2: Dictionary = await _run_proj(83, 100)
+	var pm2: Dictionary = await _run_proj(83, 1)
+	_check("determinism holds with projectiles in play",
+		_hash_frames(ph) == _hash_frames(ph2) and _hash_frames(pm) == _hash_frames(pm2))
 
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
@@ -721,7 +749,9 @@ func _hp_drop_without_hit(res: Dictionary, victim: String) -> bool:
 		var hit := false
 		var ticked := false
 		for e in res.frames[i].events:
-			if str(e.kind) in ["strike", "cast_done"] and str(e.get("to", "")) == victim:
+			# proj_hit counts: since #34, cast damage APPLIES on projectile arrival, so a frame
+			# with a proj_hit on the victim is attacker damage, not the DoT signature.
+			if str(e.kind) in ["strike", "cast_done", "proj_hit"] and str(e.get("to", "")) == victim:
 				hit = true
 			if str(e.kind) == "status_tick" and str(e.get("to", "")) == victim:
 				ticked = true
@@ -1038,4 +1068,164 @@ func _cleanse_scrubbed_burn(res: Dictionary, cleanser: String, victim: String) -
 							gone = false
 			if gone:
 				return true
+	return false
+
+
+# ═══ PROJECTILE SCENARIOS (#34) ══════════════════════════════════════════════════════════════
+
+
+## Standing magic caster (hold) vs an approaching walker — the burn-probe geometry. `acc` is the
+## Bolt's authored accuracy: 100 pins the hit path, 1 forces aimed misses at a mover (#20).
+func _proj_units(acc: int) -> Array:
+	return [
+		{"id": "a0", "team": "A", "pos": Vector2(-14, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 45, "INT": 70, "WIS": 60},
+			"kit": [{"name": "Bolt", "kind": "cast", "power": 25, "accuracy": acc, "cast_time": 1.0,
+				"cooldown": 3.0, "mana": 3, "channel": "magic"}],
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		{"id": "b0", "team": "B", "pos": Vector2(14, 0), "speed": 8.0,
+			"stats": {"STR": 40, "CON": 120, "INT": 10, "WIS": 20},
+			"tactics": {"target_priority": "nearest", "positional": "push"}},
+	]
+
+
+func _run_proj(seed_val: int, acc: int) -> Dictionary:
+	var sim = Sim.new()
+	sim.setup(seed_val, _proj_units(acc), Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-14, 0), Vector2(14, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+func _pos_at(res: Dictionary, uid: String, i: int) -> Vector2:
+	for u in res.frames[maxi(0, i)].units:
+		if str(u.id) == uid:
+			return Vector2(u.pos)
+	return Vector2.ZERO
+
+
+func _hp_at(res: Dictionary, uid: String, i: int) -> int:
+	for u in res.frames[maxi(0, i)].units:
+		if str(u.id) == uid:
+			return int(u.hp)
+	return -1
+
+
+## The first cast_done from `caster` must leave the victim's HP untouched THAT frame, and the
+## first proj_hit after it (a strictly later tick) must be where the HP actually drops.
+func _hit_on_arrival(res: Dictionary, caster: String, victim: String) -> bool:
+	var t_done := -1
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) == "cast_done" and str(e.get("from", "")) == caster:
+				t_done = i
+				break
+		if t_done >= 0:
+			break
+	if t_done <= 0:
+		return false
+	var t_hit := -1
+	for i in range(t_done, res.frames.size()):
+		for e in res.frames[i].events:
+			if str(e.kind) == "proj_hit" and str(e.get("from", "")) == caster \
+					and str(e.get("to", "")) == victim:
+				t_hit = i
+				break
+		if t_hit >= 0:
+			break
+	if t_hit <= t_done:
+		print("    ARRIVAL: cast_done@%d but proj_hit@%d — not strictly later" % [t_done, t_hit])
+		return false
+	var flat_at_done: bool = _hp_at(res, victim, t_done) == _hp_at(res, victim, t_done - 1)
+	var drops_at_hit: bool = _hp_at(res, victim, t_hit) < _hp_at(res, victim, t_hit - 1)
+	if not (flat_at_done and drops_at_hit):
+		print("    ARRIVAL: hp flat@done=%s drop@hit=%s (done %d, hit %d)" % [flat_at_done, drops_at_hit, t_done, t_hit])
+	return flat_at_done and drops_at_hit
+
+
+## First aimed miss: pair the first will_hit=false proj_launch with the first cast_miss after
+## it (cooldown 3s >> flight, so shots never overlap). Returns {tl, tm}, or tl -1.
+func _first_miss_pair(res: Dictionary, caster: String) -> Dictionary:
+	var tl := -1
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) == "proj_launch" and str(e.get("from", "")) == caster \
+					and not bool(e.get("will_hit", true)):
+				tl = i
+				break
+		if tl >= 0:
+			break
+	if tl < 0:
+		return {"tl": -1, "tm": -1}
+	for i in range(tl + 1, res.frames.size()):
+		for e in res.frames[i].events:
+			if str(e.kind) == "cast_miss" and str(e.get("from", "")) == caster:
+				return {"tl": tl, "tm": i}
+	return {"tl": tl, "tm": -1}
+
+
+## The miss expends where the target STOOD at launch; by arrival the mover must be > one body
+## radius away from that point — the sail-through is real, visible separation, not a re-label.
+func _miss_diverges(res: Dictionary, caster: String, victim: String) -> bool:
+	var pair := _first_miss_pair(res, caster)
+	if int(pair.tl) < 0 or int(pair.tm) < 0:
+		return false
+	var aim := _pos_at(res, victim, int(pair.tl))       # target at launch == the shot's final pos
+	var tgt_now := _pos_at(res, victim, int(pair.tm))   # where the target actually is at arrival
+	var gap := aim.distance_to(tgt_now)
+	if gap <= Sim.BODY_RADIUS:
+		print("    MISS DIVERGENCE: only %.2f (radius %.1f)" % [gap, Sim.BODY_RADIUS])
+	return gap > Sim.BODY_RADIUS
+
+
+## Aimed-miss flight is exact: the aim point is frozen at launch, so flight ticks must equal
+## launch distance / (speed * DT), within the muzzle tick (a shot spends its launch tick
+## leaving the caster) plus arrival quantization — actual - ideal in (0, 2].
+func _flight_time_ok(res: Dictionary, caster: String, victim: String, speed: float) -> bool:
+	var pair := _first_miss_pair(res, caster)
+	if int(pair.tl) < 0 or int(pair.tm) < 0:
+		return false
+	var d := _pos_at(res, caster, int(pair.tl)).distance_to(_pos_at(res, victim, int(pair.tl)))
+	var ideal := d / (speed * 0.1)
+	var actual := float(int(pair.tm) - int(pair.tl))
+	if actual - ideal <= 0.0 or actual - ideal > 2.0:
+		print("    FLIGHT TIME: d=%.1f ideal=%.2f ticks actual=%d" % [d, ideal, int(actual)])
+		return false
+	return true
+
+
+## Some frame between a launch and its landing must carry the shot in frames[].projectiles —
+## the stream contract the renderer will draw from.
+func _stream_carries_projectile(res: Dictionary) -> bool:
+	for f in res.frames:
+		for p in f.get("projectiles", []):
+			if str(p.get("move", "")) != "" and bool(p.get("will_hit", false)):
+				return true
+	return false
+
+
+## White-box (the _burn_reaches_bb pattern): step until a will-hit Bolt is in the air, kill the
+## target directly, keep stepping — the shot must complete its arc to the corpse and expend as
+## proj_fizzle, never as damage.
+func _fizzle_check() -> bool:
+	var sim = Sim.new()
+	sim.setup(83, _proj_units(100), Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-14, 0), Vector2(14, 0))
+	if not ok:
+		return false
+	while sim.winner == "" and sim.tick_now < 600 and sim.projectiles.is_empty():
+		sim._step()
+	if sim.projectiles.is_empty():
+		return false
+	var b0 = sim._unit("b0")
+	b0.hp = 0   # the killing blow lands mid-flight; the death pass picks it up next step
+	for i in 80:
+		sim._step()
+		for e in sim.frames[sim.frames.size() - 1].events:
+			if str(e.kind) == "proj_fizzle":
+				return true
+			if str(e.kind) == "proj_hit" and str(e.get("to", "")) == "b0":
+				print("    FIZZLE: shot HIT the corpse instead of fizzling")
+				return false
 	return false

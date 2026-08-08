@@ -90,11 +90,49 @@ static func deploy_separation(team_size: int) -> float:
 ## fire long before the lines meet: the walk IS the opening phase of the fight, which is exactly
 ## the "closing under fire" shape `ENGAGEMENT_DESIGN.md` wants. `AUTOBATTLER_DESIGN.md` #11 puts
 ## emergent fight length at ~30s to ~3min, so a 26s approach sits inside the design, not outside.
+##
+## ⚠️⚠️ THE PARAGRAPH DIRECTLY ABOVE IS FALSE OF THE SIM THAT SHIPS, AND IT IS LEFT STANDING ONLY
+## SO THIS CORRECTION HAS SOMETHING TO POINT AT. MEASURED 2026-08-08 by the opening instrument in
+## `scripts/sim/_probe_sim_quality.gd` (`_opening`, `_reach_vs_separation`), on the real 440x246
+## board across seven comps and six seeds:
+##
+##     time to the first attempt of any kind   11.1s  (sd 0.2s across ALL seven comps)
+##     time to the first damage                11.2s
+##     time the two fronts physically cross    11.4s
+##     attempt-events during the approach      1 to 3, i.e. 0.09-0.26 per second
+##
+## First shot, first blood and first contact are the SAME MOMENT to within half a second. Nothing
+## opens fire during the approach, because nothing can: the live sim's reaches are 6.6u (the melee
+## basic) to 24.2u (the longest range in the whole 141-move pool), against a deploy separation of
+## 391.6u — **6% of the walk**. The 96-unit figure is `HARD_REACH_MAX` from `reach_of()` below,
+## and `scripts/sim/sim.gd` NEVER CALLS IT: it does not preload this file at all (`Sp.` appears in
+## it only inside comments), and `scripts/sim/kit.gd` lifts an authored `move.range` by
+## `GEOMETRY_SCALE` (x2.2) where `reach_of` lifts it by `REACH_SCALE` (x8.8). The claim described
+## the superseded `spatial_sim.gd`, which does call `reach_of`.
+## ⚠️ SO: THIS FILE'S REACH NUMBERS DESCRIBE A LAYER THAT NO LONGER FIGHTS. Do not quote them as
+## the game's reaches, and do not "fix" the approach by trusting them.
+##
 ## ⚠️ 26.0 → 21.0 → 17.0 ON 2026-08-06, both steps on the user's call that the fight reads sluggish. This is
 ## the RIGHT knob for "make them faster": every unit speed is derived from it, so the DEX ladder,
 ## the closing bonus and the backpedal all scale together and stay in proportion. Bolting a
 ## multiplier onto SPEED_MIN/SPEED_MAX instead would have silently decoupled speed from the board
 ## — which is the fifth-scale-bug failure this constant was introduced to end.
+##
+## ⚠️⚠️ AND NEITHER OF THOSE TWO RETUNINGS CHANGED ANY FIGHT. `scripts/sim/sim.gd:122` clamps
+## per-tick displacement at `MAX_TICK_MOVE := 1.8`, i.e. a hard **18.0 units/second** ceiling on
+## every body. `SPEED_MIN` below is 20.0 and `SPEED_MAX` is 39.2 — the ENTIRE ladder, floor
+## included, sits above the ceiling, so every monster in the game moves at exactly 18.0 u/s and
+## this constant is inert. Proved by a paired A/B (same seeds, same comps, same board, every
+## speed scaled +42% and +70%): the fronts met at 11.5 / 11.3 / 11.2s per comp, IDENTICAL to 0.1s
+## at all three speeds, while the realised fastest tick stayed pinned at 1.80u.
+## ⚠️ THE SECOND RETUNING MADE IT STRICTLY WORSE, WHICH IS THE PART TO REMEMBER: at TCS 26 the
+## realised range was still 13.1..18.0 u/s and DEX bought something; at 17 it is 18.0..18.0 and
+## DEX buys nothing. Chasing "faster" through this constant flattened the speed stat.
+## ⚠️ DO NOT RETUNE THIS UNTIL THE CLAMP IS RAISED — the change cannot be measured, and an
+## unmeasurable change recorded as a decision is exactly what `CLAUDE.md` warns about. The clamp
+## is in a file this workstream does not own; raising it re-baselines every fight in the game, so
+## it is a deliberate, measured step of its own. `_probe_sim_quality.gd` prints the verdict every
+## run under "speed ceiling", and the A/B above is the standing detector.
 const TARGET_CLOSE_SECONDS := 17.0
 
 ## ⚠️ SPEED IS DERIVED FROM THE 5v5 BOARD, and 5v5 is the anchor by standing rule ("The game is a
@@ -219,6 +257,11 @@ const DT := 0.1                      # the fixed simulation step. NEVER use fram
 ## board in TARGET_CLOSE_SECONDS, and the DEX range brackets it: the floor is a little under it,
 ## the ceiling a little over. Writing these as bare numbers again is how the fifth scale bug
 ## happened; they are ratios against the board, deliberately.
+## ⚠️ BOTH ENDS OF THIS LADDER ARE CURRENTLY UNREACHABLE — 20.0 and 39.2 u/s against a hard 18.0
+## u/s clamp in `scripts/sim/sim.gd:122` (`MAX_TICK_MOVE := 1.8`). DEX therefore buys no movement
+## at all today. The numbers are left as authored because they are the CORRECT design (a DEX
+## ladder brackets the board-crossing speed) and because changing them cannot be measured while
+## the clamp is below the floor — see the ⚠️⚠️ block on TARGET_CLOSE_SECONDS above for the A/B.
 const SPEED_MIN := SLOW_REF_SPEED * 0.87    # at DEX 0 — slightly slower than the reference tank
 const SPEED_MAX := SLOW_REF_SPEED * 1.70    # at DEX 1000 — fast, without reading as a teleport
 ## ⚠️ THIS IS THE HUDDLE, AND IT WAS NOT AN AI PROBLEM. 0.9 kept bodies 1.8 units apart — correct

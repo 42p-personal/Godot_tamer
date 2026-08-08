@@ -119,8 +119,21 @@ const ALLY_MIN_SEP := BODY_RADIUS * 2.0  # allies are PASSABLE (#22) but drift a
 								#  read as two bodies, but the FORCE below stays soft
 const ALLY_SOFT_FRAC := 0.4     # fraction of ally overlap resolved per tick (enemy: all of it)
 const ALLY_PUSH_MAX := 0.5      # cap on that drift per tick (enemy cap: 0.9)
-const MAX_TICK_MOVE := 1.8      # hard per-tick displacement ceiling, enforced at the source —
-								#  the probe's anti-teleport tripwire is 2.0 (old repo lesson)
+## ⚠️ THE ANTI-TELEPORT CEILING IS DERIVED, NEVER A LITERAL — and this constant being a literal
+## was the single most expensive bug in the spatial layer. It sat at 1.8 (18.0 u/s at DT 0.1)
+## while `spatial.gd`'s injected ladder runs SPEED_MIN 20.0 to SPEED_MAX 39.2: THE ENTIRE LADDER,
+## FLOOR INCLUDED, SAT ABOVE THE CEILING, so every monster moved at exactly 18.0 u/s and the DEX
+## speed stat bought NOTHING. spatial.gd carries the paired A/B that proved it (same seeds, same
+## comps, speeds scaled +42% and +70%: fronts met at 11.5 / 11.3 / 11.2s — identical to 0.1s —
+## with the realised fastest tick pinned at 1.80u), and TWO deliberate retunings of
+## TARGET_CLOSE_SECONDS were measured as no-ops because of it.
+##
+## So the ceiling now comes from the speeds the caller actually injected, computed per fight in
+## setup(). A tripwire must sit ABOVE every legal movement and below an actual teleport; deriving
+## it from the fastest body plus the separation pushes guarantees the first half by construction,
+## which a literal cannot do on a board whose scale keeps changing.
+const TICK_MOVE_SAFETY := 1.25  # headroom over (fastest speed * DT) for the same-tick push-out
+const TICK_MOVE_FLOOR := 1.8    # the historic value, kept as a lower bound for tiny-speed tests
 
 ## STAGNATION PRESSURE — the anti-turtle rule. Two hold/guard remnants out of each other's
 ## reach would otherwise stand at their anchors forever (measured: caster_peel/seed3333, both
@@ -196,6 +209,9 @@ var units: Array = []           # ordered by id — the determinism order
 var frames: Array = []
 var tick_now := 0
 var winner := ""
+## Per-fight anti-teleport ceiling, derived in setup() from the injected speeds (see the
+## TICK_MOVE_SAFETY block). Never read before setup() runs.
+var max_tick_move := TICK_MOVE_FLOOR
 var last_damage_tick := 0       # last tick any strike/cast landed — pauses stagnation growth
 var stagnation_level := 0.0     # the pressure ratchet: grows in silence, resets ONLY on a death
 var last_progress_tick := 0     # last tick anything DIED — the no-kill arm clock (see above)
@@ -242,7 +258,15 @@ func setup(seed_val: int, in_units: Array, ground: Vector2, obstacles: Array) ->
 			"vel": Vector2.ZERO,          # smoothed velocity — movement feel state
 			"slot_angle": 0.0, "slot_ok": false,  # this tick's surround slot, if attacking
 		})
-	units.sort_custom(func(a, b): return a.id < b.id)  # id order IS the tick order
+	units.sort_custom(func(a, b): return a.id < b.id)
+	# Derive the anti-teleport ceiling from the fastest body actually in this fight, plus the
+	# separation pushes that can land on the same tick. Ordered max over an id-sorted array —
+	# deterministic, and it cannot fall below the historic floor.
+	var fastest := 0.0
+	for u in units:
+		fastest = maxf(fastest, float(u.speed))
+	max_tick_move = maxf(TICK_MOVE_FLOOR,
+		fastest * DT * TICK_MOVE_SAFETY + ENEMY_PUSH_MAX + ALLY_PUSH_MAX)  # id order IS the tick order
 
 
 func _fresh_bb() -> BT.Blackboard:
@@ -649,10 +673,10 @@ func _resolve_pushes(u: Dictionary, prev_pos: Vector2) -> void:
 		elif dist < ALLY_MIN_SEP:
 			u.pos += delta / dist * minf((ALLY_MIN_SEP - dist) * ALLY_SOFT_FRAC, ALLY_PUSH_MAX)
 	# The anti-teleport tripwire, enforced at the source: whatever movement plus pushes summed
-	# to this tick, nothing displaces more than MAX_TICK_MOVE (probe asserts 2.0).
+	# to this tick, nothing displaces more than the DERIVED ceiling (see TICK_MOVE_SAFETY).
 	var moved: Vector2 = u.pos - prev_pos
-	if moved.length() > MAX_TICK_MOVE:
-		u.pos = prev_pos + moved / moved.length() * MAX_TICK_MOVE
+	if moved.length() > max_tick_move:
+		u.pos = prev_pos + moved / moved.length() * max_tick_move
 
 
 ## First kit move of `kind` that is off cooldown, affordable and — for a FRIENDLY move — has

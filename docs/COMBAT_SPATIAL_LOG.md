@@ -1282,3 +1282,36 @@ per-monster, so five monsters "agreeing" on a target was coincidence. Computing 
 per decision cycle and passing it down as *advisory* — the unit still weighs whether following it
 is worth the walk — is what turns coincidence into coordination without turning a team into a
 single mind.
+
+## The clamp that ate the speed stat (2026-08-08)
+
+⚠️ **`sim.gd`'s `MAX_TICK_MOVE := 1.8` — a per-tick displacement ceiling, i.e. 18.0 u/s — sat
+BELOW the floor of the injected speed ladder (SPEED_MIN 20.0, SPEED_MAX 39.2). Every monster in
+the game moved at exactly 18.0 u/s and the DEX speed stat bought nothing.** `spatial.gd` had
+already proved it with a paired A/B (same seeds and comps, speeds scaled +42% and +70%: fronts
+met at 11.5 / 11.3 / 11.2s — identical to 0.1s — with the realised fastest tick pinned at 1.80u),
+and had written the instruction *"DO NOT RETUNE THIS UNTIL THE CLAMP IS RAISED"* beside
+`TARGET_CLOSE_SECONDS`, because **two deliberate retunings of that constant had been measured as
+no-ops**. The diagnosis sat in the tree, correct and complete, in a file nobody owned.
+
+**The shape, again:** an absolute that was right when it was written (bodies moved at single
+digits) and became wrong when the world grew around it. This is the fifth-scale-bug family —
+`ABILITY_BALANCE_REVIEW.md` records it for the ability constants, round 7 found it in the layout
+generator's major width, round 8 found it in the accent `row` spacing. **The fix is never a
+bigger literal.** The ceiling is now DERIVED per fight from the speeds actually injected
+(`fastest * DT * TICK_MOVE_SAFETY` plus the same-tick pushes, floored at the historic value), so
+it cannot sit below the floor again on any board or ladder.
+
+⚠️ **AND THE PROBE THRESHOLD WAS THE SAME STALE ABSOLUTE.** The anti-teleport tripwire asserted
+2.0 units/tick — also written under single-digit speeds — so it had quietly become the tightest
+constraint in the sim rather than a guard against a bug. Derived alongside.
+
+**What raising it exposed, and why the check was wrong rather than the sim:** the quality probe's
+contested-centre gate at the fight's MIDPOINT began failing on exactly three comps — `wings`,
+`kite` and `dive` — the three postures whose entire design is to leave the centre (§2B calls
+wings and dive "the two that spread a fight across a 160-wide board"; #39's kite is a budgeted
+retreat). It had passed only because equal speeds mashed both lines into a mid-board meeting and
+held them there: **an artefact of the bug reading as evidence of good shape.** The midpoint gate
+now exempts those three postures, and the invariants that actually guard the original
+deploy-hugging complaint are untouched and still apply to every comp — the lines must MEET at
+34%, coverage must exceed 48%, no posture may be parked.

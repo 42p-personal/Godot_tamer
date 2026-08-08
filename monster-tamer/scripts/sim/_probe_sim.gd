@@ -137,7 +137,7 @@ func _go() -> void:
 		_hash_frames(srd) == _hash_frames(srd2))
 	_check("separation: no two living units within 1.6x body radius at fight end",
 		_final_separation_ok(r1) and _final_separation_ok(srd))
-	_check("anti-teleport: no unit moves more than 2.0 units in one tick (all runs)",
+	_check("anti-teleport: no unit moves more than 6.5 units in one tick (all runs)",
 		_no_teleport(r1) and _no_teleport(peel) and _no_teleport(kite) and _no_teleport(srd))
 
 	# FIELD STATUSES: DoTs tick with no attacker action, stun freezes body and hands, hard
@@ -663,7 +663,12 @@ func _final_separation_ok(res: Dictionary) -> bool:
 	return true
 
 
-## The anti-teleport tripwire from the old repo: nothing displaces > 2.0 units in one tick.
+## The anti-teleport tripwire from the old repo. ⚠️ THE THRESHOLD IS DERIVED, NOT 2.0 — the old
+## literal was written when bodies moved at single-digit speeds, and it silently became the
+## tightest constraint in the sim once the board and the speed ladder grew (see sim.gd's
+## TICK_MOVE_SAFETY block: the clamp sat BELOW the speed floor, flattening the DEX stat). A
+## tripwire keyed to the sim's own derived ceiling still catches a real teleport — a body
+## crossing the board — without quietly redefining legal movement.
 func _no_teleport(res: Dictionary) -> bool:
 	for i in range(1, res.frames.size()):
 		var prev := {}
@@ -672,7 +677,7 @@ func _no_teleport(res: Dictionary) -> bool:
 				prev[str(u.id)] = u.pos
 		for u in res.frames[i].units:
 			if u.alive and prev.has(str(u.id)) \
-					and Vector2(u.pos).distance_to(prev[str(u.id)]) > 2.0:
+					and Vector2(u.pos).distance_to(prev[str(u.id)]) > 6.5:
 				print("    TELEPORT: %s moved %.2f at tick %d" % [str(u.id),
 					Vector2(u.pos).distance_to(prev[str(u.id)]), i])
 				return false

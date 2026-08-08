@@ -103,16 +103,45 @@ const SYMMETRY_EPS := 0.01
 ## `pillar` and `shrine` drop to `hard` rather than being deleted: they still read as cover, still
 ## cost accuracy, and `ARENA_DESIGN.md` wants variety in the silhouette. They simply stop pretending
 ## to hide anyone.
+## ⚠️ RESIZED 2026-08-08 — "THE ACCENT LAYER IS DEBRIS, NOT ARCHITECTURE". The integrator's read of
+## eleven league frames, and `_probe_layout.gd` now puts a number on it: across the eleven boards,
+## **the median board had 71% of its pieces small AND isolated**, and on nine of eleven leagues the
+## cluster count EQUALLED the piece count — not one piece on those boards touched another. A
+## hundred-odd near-identical half-body props spread evenly over a floor is a rash, and every
+## existing guard passed it, because every existing guard measures quantity or difference-between-
+## boards and none measured SHAPE.
+##
+## `ARENA_DESIGN.md` §3 already had the rule in words and no number behind it: ⚠️ "FEWER AND
+## LARGER, ALWAYS. Five small pieces give a board where nothing fully blocks a lane and every
+## position is about as good as every other — busy, with no decision in it."
+##
+## So the props grow to architectural scale. Sizes below are stated in BODY DIAMETERS in the
+## trailing comment, because that is the unit the rule is written in and `2.0 * G` is not legible
+## as "one body". The threshold that matters: `_probe_layout.gd` calls a piece SMALL under two
+## bodies on its longest side, and only `barrel` and `crate` — the two TRADE kinds, which §2 caps
+## at one or two per board — are now under it.
+##
+## ⚠️ THE KIND NAMES ARE DELIBERATELY UNCHANGED, and that is a constraint I accepted rather than a
+## lack of ambition. `arena_3d.gd` carries a per-kind tint table calibrated last round out of
+## measured frames (0 of 9 kinds were correct before it), plus a texture per kind. A brand-new kind
+## arrives with no texture and an untuned tint — trading a measured value ladder for a bigger
+## vocabulary. The rect is what the sim and the silhouette read; the mesh is stretched to it. So
+## the vocabulary grows by SIZE and by ARRANGEMENT, both of which are mine, and not by name.
 const G := Sp.GEOMETRY_SCALE
 const KIND_TABLE := [
-	{"kind": "barrel", "grade": "soft", "size": Vector2(2.4 * G, 2.4 * G)},
-	{"kind": "crate", "grade": "soft", "size": Vector2(3.0 * G, 3.0 * G)},
-	{"kind": "planter", "grade": "soft", "size": Vector2(3.6 * G, 2.2 * G)},
-	{"kind": "bench", "grade": "soft", "size": Vector2(4.0 * G, 1.5 * G)},
-	{"kind": "fence", "grade": "soft", "size": Vector2(5.5 * G, 1.0 * G)},
-	{"kind": "boulder", "grade": "hard", "size": Vector2(3.2 * G, 2.6 * G)},
-	{"kind": "pillar", "grade": "hard", "size": Vector2(2.8 * G, 2.8 * G)},
-	{"kind": "shrine", "grade": "hard", "size": Vector2(2.0 * G, 2.0 * G)},
+	# TRADE — §2 allows one or two pieces per board, "only where a working yard would keep them".
+	# The only two kinds still under two bodies, so they are the only two that can ever measure as
+	# debris; every board that uses them stacks them against something.
+	{"kind": "barrel", "grade": "soft", "size": Vector2(2.4 * G, 2.4 * G)},   # 1.2 x 1.2 bodies
+	{"kind": "crate", "grade": "soft", "size": Vector2(3.0 * G, 3.0 * G)},    # 1.5 x 1.5
+	# FURNITURE — the things a built place stands out, long enough to read as a line.
+	{"kind": "planter", "grade": "soft", "size": Vector2(4.8 * G, 3.0 * G)},  # 2.4 x 1.5
+	{"kind": "bench", "grade": "soft", "size": Vector2(6.0 * G, 2.0 * G)},    # 3.0 x 1.0
+	{"kind": "fence", "grade": "soft", "size": Vector2(9.0 * G, 1.2 * G)},    # 4.5 x 0.6
+	# MASONRY — the building itself. A pillar is now a PIER: you can put a shoulder to it.
+	{"kind": "boulder", "grade": "hard", "size": Vector2(4.6 * G, 3.8 * G)},  # 2.3 x 1.9
+	{"kind": "pillar", "grade": "hard", "size": Vector2(4.2 * G, 4.2 * G)},   # 2.1 x 2.1
+	{"kind": "shrine", "grade": "hard", "size": Vector2(4.4 * G, 4.4 * G)},   # 2.2 x 2.2
 	# The two that break line of sight. Long on one axis and thin on the other, so they shelter a
 	# whole approach from one angle while leaving it open from another — which is what makes taking
 	# cover a DECISION rather than a place to stand.
@@ -229,9 +258,13 @@ const LAYOUTS := {
 		# property `ARENA_DESIGN.md` §5 calls non-negotiable, because an asymmetric board biases
 		# every measurement taken on it. Nothing caught it: `problems()` had only ever been run
 		# against the scatter path, which mirrors by construction. `_probe_layout.gd` catches it now.
+		# ⚠️ ONE STAND, NOT TWO STRAYS. This used to be two single accents; emitted with their
+		# partners that is four isolated small props, and the SAME four on all eleven leagues —
+		# which `_probe_layout.gd` measured as the single largest shared contribution to the
+		# debris count. A stand of three reads as a screen you can put a shoulder to; three
+		# separate posts over the same floor read as things somebody left out.
 		"accents": [
-			{"at": Vector2(0.5, 0.14), "grade": "hard"},
-			{"at": Vector2(0.5, 0.38), "grade": "soft"},
+			{"at": Vector2(0.50, 0.13), "grade": "hard", "n": 3, "dir": Vector2(1, 0), "gap": 0.45},
 		],
 	},
 
@@ -255,7 +288,7 @@ const LAYOUTS := {
 			{"at": Vector2(0.73, 0.70), "w": 0.72, "d": 0.55, "grade": "blocking"},
 		],
 		"accents": [
-			{"at": Vector2(0.5, 0.16), "grade": "hard"},
+			{"at": Vector2(0.50, 0.15), "grade": "hard", "n": 3, "dir": Vector2(1, 0), "gap": 0.45},
 		],
 	},
 
@@ -271,8 +304,8 @@ const LAYOUTS := {
 			{"at": Vector2(0.68, 0.32), "w": 1.0, "grade": "blocking"},
 		],
 		"accents": [
-			{"at": Vector2(0.30, 0.24), "grade": "hard"},
-			{"at": Vector2(0.5, 0.12), "grade": "soft"},
+			{"at": Vector2(0.28, 0.22), "grade": "hard", "n": 2, "dir": Vector2(1, 1), "gap": 0.4},
+			{"at": Vector2(0.50, 0.11), "grade": "soft", "n": 2, "dir": Vector2(1, 0), "gap": 0.4},
 		],
 	},
 
@@ -287,8 +320,8 @@ const LAYOUTS := {
 			{"at": Vector2(0.62, 0.70), "w": 1.9, "d": 0.34, "grade": "blocking"},
 		],
 		"accents": [
-			{"at": Vector2(0.5, 0.5), "grade": "hard"},
-			{"at": Vector2(0.18, 0.72), "grade": "soft"},
+			{"at": Vector2(0.50, 0.50), "grade": "hard", "n": 3, "dir": Vector2(0, 1), "gap": 0.4},
+			{"at": Vector2(0.18, 0.74), "grade": "soft", "n": 2, "dir": Vector2(1, 0), "gap": 0.4},
 		],
 	},
 }
@@ -335,147 +368,209 @@ const LAYOUTS := {
 # rather than by an author's memory. Every count is checked against BOTH ends of the density
 # law by `_probe_layout.gd`; none is authored to a round number.
 #
-# Element grammar — three shapes, all normalised 0..1 across the ground:
-#   {"t": "post", "at": V2, "grade": s, "kind": s}                 one piece + its partner
-#   {"t": "row",  "from": V2, "to": V2, "n": i, "grade", "kind"}   n evenly spaced + n partners
-#   {"t": "bar",  "at": V2, "w": f, "d": f}                        a blocking run + its partner
+# Element grammar — three shapes. `at` is always normalised 0..1 across the ground; `dir` is a
+# WORLD direction, so a diagonal is a real diagonal and not one the ground's aspect ratio shears.
+#   {"t": "post", "at": V2, "grade", "kind"}                      one piece + its partner
+#   {"t": "run",  "at": V2, "dir": V2, "n": i, "gap": f(bodies),  a STRUCTURE: n pieces centred
+#                 "grade", "kind"}                                on `at`, plus n partners
+#   {"t": "bar",  "at": V2, "w": f, "d": f, "grade", "kind"}      authored geometry — a wall, a
+#                                                                 gate jamb, a dais, and a partner
 #
-# ⚠️ "Architecture is the default; trade is the accent" (§2). `pillar`, `boulder`, `low_wall`
-# and `fence` are the building; `crate`/`barrel` appear at most as one pair on a board, and only
-# where a working yard would keep them.
+# ⚠️ `row` IS GONE AND `run` REPLACED IT, AND THE DIFFERENCE IS THE WHOLE FIX. `row` authored two
+# endpoints in NORMALISED coordinates and spread n pieces between them, so spacing was a fraction
+# of the ground: the same authored "colonnade" was a tight run on a small board and six body-widths
+# of bare floor between neighbours on a large one. See `DEFAULT_RUN_GAP`, which carries the
+# measurement. `run` authors the GAP in body diameters, so a structure is the same structure on
+# every ground.
+#
+# ⚠️ "Architecture is the default; trade is the accent" (§2). `pillar`, `boulder`, `shrine`,
+# `low_wall` and `fence` are the building; `crate` and `barrel` appear as at most ONE stand on a
+# board, and only where a working yard would keep them — never spread out, always stacked against
+# something, because they are the only two kinds still under two bodies and therefore the only two
+# that can measure as debris at all.
+#
+# ⚠️ A GATE IS TWO `bar` ENTRIES, NOT A NEW ELEMENT TYPE. Author the jambs either side of the
+# centre line at the SAME depth — x=0.43 and x=0.57 at y=0.15 — and the emitter's 180-degree
+# partner builds the matching gate at y=0.85 for free. A single bar at x=0.43 does NOT make a gate:
+# its partner lands at x=0.57 on the OTHER side of the board, which is a pair of stubs at opposite
+# corners. That mistake is invisible in the authored numbers and obvious in the frame.
 const LEAGUE_BOARDS := {
 	# —— THE APPROACH LEAGUES —— small grounds, few decisions, read in one glance.
+	#
+	# ⚠️ THE SMALL BOARDS ARE THE TIGHT ONES FOR COVER BUDGET, WHICH IS NOT INTUITIVE. The four
+	# family majors are a fixed FRACTION of the board (`MAJOR_WIDTH_FRACTION`), so they cost 2.43%
+	# of the floor at EVERY team size — leaving Wood roughly 1,100 square units of remaining
+	# allowance under the 6.5% ceiling against Tamers Apex's 4,300. A small board earns its
+	# character from ARRANGEMENT, not from quantity, and trying to give Wood a colonnade as well as
+	# its crib is how it ends up over the ceiling.
 	"Wood": {
-		"place": "the Timberyard Ring — four stacks and a pair of benches",
+		"place": "the Timberyard Ring — a crib of stacked timber down one side",
 		"mass": Vector2(0.92, 0.94),
 		"furniture": [
-			{"t": "post", "at": Vector2(0.20, 0.30), "grade": "soft", "kind": "bench"},
-			{"t": "post", "at": Vector2(0.20, 0.70), "grade": "soft", "kind": "planter"},
+			{"t": "run", "at": Vector2(0.20, 0.62), "dir": Vector2(0, 1), "n": 2, "gap": 0.5,
+				"grade": "soft", "kind": "bench"},
+			{"t": "run", "at": Vector2(0.13, 0.30), "dir": Vector2(0, 1), "n": 2, "gap": 0.35,
+				"grade": "soft", "kind": "barrel"},
 		],
 	},
 	"Copper": {
-		"place": "the Smelt Court — a colonnade down one wing",
+		"place": "the Smelt Court — a three-bay colonnade down one wing, barrels stacked at its foot",
 		"mass": Vector2(1.06, 0.88),
 		"furniture": [
-			{"t": "row", "from": Vector2(0.20, 0.15), "to": Vector2(0.44, 0.15), "n": 3,
+			{"t": "run", "at": Vector2(0.22, 0.12), "dir": Vector2(1, 0), "n": 3, "gap": 0.4,
 				"grade": "hard", "kind": "pillar"},
+			{"t": "run", "at": Vector2(0.14, 0.44), "dir": Vector2(0, 1), "n": 2, "gap": 0.35,
+				"grade": "soft", "kind": "barrel"},
 		],
 	},
 	"Tin": {
-		"place": "the Wash Court — two benched terraces at different depths",
+		"place": "the Wash Court — two planted terraces at different depths",
 		"mass": Vector2(0.86, 1.10),
 		"furniture": [
-			{"t": "row", "from": Vector2(0.17, 0.15), "to": Vector2(0.30, 0.15), "n": 2,
+			{"t": "run", "at": Vector2(0.20, 0.10), "dir": Vector2(1, 0), "n": 3, "gap": 0.4,
 				"grade": "soft", "kind": "planter"},
-			{"t": "row", "from": Vector2(0.17, 0.85), "to": Vector2(0.30, 0.85), "n": 2,
-				"grade": "soft", "kind": "bench"},
+			{"t": "run", "at": Vector2(0.27, 0.34), "dir": Vector2(1, 0), "n": 3, "gap": 0.5,
+				"grade": "soft", "kind": "fence"},
 		],
 	},
 	"Bronze": {
-		"place": "the Alloy Hall — a four-bay colonnade and a pair of fallen drums",
+		"place": "the Alloy Hall — a four-bay colonnade and a stack of fallen drums",
 		"mass": Vector2(1.14, 0.90),
 		"furniture": [
-			{"t": "row", "from": Vector2(0.17, 0.12), "to": Vector2(0.47, 0.12), "n": 4,
+			{"t": "run", "at": Vector2(0.24, 0.11), "dir": Vector2(1, 0), "n": 4, "gap": 0.4,
 				"grade": "hard", "kind": "pillar"},
-			{"t": "row", "from": Vector2(0.23, 0.42), "to": Vector2(0.39, 0.42), "n": 2,
+			{"t": "run", "at": Vector2(0.19, 0.40), "dir": Vector2(1, 1), "n": 2, "gap": 0.4,
 				"grade": "hard", "kind": "boulder"},
+			{"t": "run", "at": Vector2(0.30, 0.64), "dir": Vector2(1, 0), "n": 3, "gap": 0.45,
+				"grade": "soft", "kind": "bench"},
+			{"t": "bar", "at": Vector2(0.34, 0.20), "w": 0.10, "d": 0.030,
+				"grade": "soft", "kind": "bench"},
 		],
 	},
+	# ⚠️ IRON IS THE GATEHOUSE, AND THAT IS WHY IT GETS THE ONLY GATE BELOW THE SUMMIT.
+	# `ARENA_DESIGN.md` §6 records exactly this split: Bronze and Iron both field three, so both get
+	# the same ground, and the only thing that ever pulled them apart was silhouette FAMILY —
+	# Bronze horizontal masonry, Iron "things you pass THROUGH and stand ON". Two colonnades at
+	# different sizes read as the same place. A colonnade and a gatehouse do not.
 	"Iron": {
-		"place": "the Gatehouse — stepped blocks, no two at the same depth",
+		"place": "the Gatehouse — a wall with a gate in it, and tumbled blocks behind",
 		"mass": Vector2(0.78, 1.16),
 		"furniture": [
-			{"t": "post", "at": Vector2(0.13, 0.09), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.19, 0.17), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.25, 0.45), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.31, 0.53), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.37, 0.61), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.43, 0.69), "grade": "soft", "kind": "crate"},
-			{"t": "post", "at": Vector2(0.49, 0.77), "grade": "hard", "kind": "pillar"},
+			{"t": "bar", "at": Vector2(0.42, 0.36), "w": 0.13, "d": 0.024},
+			{"t": "bar", "at": Vector2(0.58, 0.36), "w": 0.13, "d": 0.024},
+			{"t": "run", "at": Vector2(0.24, 0.42), "dir": Vector2(1, 1), "n": 3, "gap": 0.4,
+				"grade": "hard", "kind": "boulder"},
+			{"t": "run", "at": Vector2(0.16, 0.66), "dir": Vector2(0, 1), "n": 2, "gap": 0.35,
+				"grade": "soft", "kind": "crate"},
 		],
 	},
-	# —— THE MIDDLE LEAGUES —— the ground is now big enough that arrangement, not size, carries
-	# the difference. Both are 4v4, which the doc's "Status" note flags as the exact trap Iron and
-	# Bronze fell into, so they are split by silhouette family: Silver is upright posts around an
-	# empty middle, Gold is one long diagonal run of low bars.
+	# —— THE MIDDLE LEAGUES —— the ground is now big enough that arrangement, not size, carries the
+	# difference. Both are 4v4, which the doc's "Status" note flags as the exact trap Iron and
+	# Bronze fell into, so they are split by silhouette family: Silver is an upright colonnade
+	# turning a corner, Gold is a stepped echelon of low runs lying flat.
 	"Silver": {
-		"place": "the Cloister — a perimeter colonnade around an open middle",
+		"place": "the Cloister — a colonnade turning a corner around an open middle",
 		"mass": Vector2(0.72, 1.04),
 		"furniture": [
-			{"t": "row", "from": Vector2(0.12, 0.07), "to": Vector2(0.60, 0.07), "n": 6,
+			{"t": "run", "at": Vector2(0.22, 0.09), "dir": Vector2(1, 0), "n": 5, "gap": 0.45,
 				"grade": "hard", "kind": "pillar"},
-			{"t": "row", "from": Vector2(0.12, 0.30), "to": Vector2(0.12, 0.70), "n": 3,
-				"grade": "hard", "kind": "pillar"},
+			{"t": "run", "at": Vector2(0.155, 0.22), "dir": Vector2(0, 1), "n": 4, "gap": 0.45,
+				"grade": "hard", "kind": "boulder"},
+			{"t": "run", "at": Vector2(0.30, 0.40), "dir": Vector2(1, 0), "n": 3, "gap": 0.45,
+				"grade": "soft", "kind": "bench"},
+			# ⚠️ THE ONLY `shrine` ON THE LADDER, AND IT IS HERE BECAUSE THE PROBE FOUND IT ORPHANED.
+			# Every other kind is placed by some league's furniture; `shrine` was reachable only if the
+			# family accent's rng happened to roll it out of the hard pool, and across all eleven
+			# leagues at the real arena seed it never did — authored, sized, textured and never on a
+			# board. A cloister is where a shrine belongs, so it stops being a lottery ticket.
+			{"t": "run", "at": Vector2(0.22, 0.72), "dir": Vector2(1, 0), "n": 2, "gap": 0.4,
+				"grade": "hard", "kind": "shrine"},
 		],
 	},
+	# ⚠️ GOLD IS THE BOARD THE INSTRUMENT AGREED WITH BEFORE ANYTHING WAS TOUCHED — 14% debris
+	# against a median of 71% — because it was already authored as a continuous run rather than as a
+	# scatter. It keeps its identity and simply gains the tight spacing every other board needed.
+	# `ARENA_DESIGN.md` §4: "use the mirror instead of fighting it — a stepped diagonal continues
+	# under 180-degree rotation".
 	"Gold": {
 		"place": "the Chequer — a stepped echelon of low runs that the mirror continues",
 		"mass": Vector2(1.20, 1.34),
 		"furniture": [
-			{"t": "row", "from": Vector2(0.10, 0.06), "to": Vector2(0.50, 0.94), "n": 10,
+			{"t": "run", "at": Vector2(0.20, 0.30), "dir": Vector2(1, 0.28), "n": 5, "gap": 0.4,
 				"grade": "soft", "kind": "fence"},
+			{"t": "run", "at": Vector2(0.34, 0.56), "dir": Vector2(1, 0.28), "n": 5, "gap": 0.4,
+				"grade": "soft", "kind": "fence"},
+			{"t": "run", "at": Vector2(0.12, 0.80), "dir": Vector2(1, 0), "n": 2, "gap": 0.4,
+				"grade": "soft", "kind": "planter"},
 		],
 	},
-	# —— THE GRAND CIRCUIT —— four leagues, one ground size (§7). Colour is the cheapest axis
-	# and the least memorable, so these four are pulled apart by ARRANGEMENT first: an open court
-	# with piers, a spine, a broken court at every depth, and a field of standing stones.
+	# —— THE GRAND CIRCUIT —— four leagues, one ground size (§7). Colour is the cheapest axis and
+	# the least memorable, so these four are pulled apart by ARRANGEMENT first: a court with a
+	# raised terrace, a spine, a broken court at every depth, and a field of standing stones behind
+	# a gate.
 	"Platinum": {
-		"place": "the Four Piers — a stand of piers, a planted terrace, two flanking stones",
+		"place": "the Four Piers — a stand of piers, a raised terrace and a planted walk",
 		"mass": Vector2(1.00, 1.00),
 		"furniture": [
-			{"t": "row", "from": Vector2(0.16, 0.11), "to": Vector2(0.44, 0.11), "n": 5,
+			{"t": "run", "at": Vector2(0.20, 0.09), "dir": Vector2(1, 0), "n": 5, "gap": 0.45,
 				"grade": "hard", "kind": "pillar"},
-			{"t": "row", "from": Vector2(0.16, 0.89), "to": Vector2(0.44, 0.89), "n": 4,
+			# The terrace. A `bar` at SOFT grade is the element doing something no prop in
+			# `KIND_TABLE` can — a broad low platform rather than a wall — and grade is what the
+			# sim reads, so calling it soft is the statement that this is something to stand on and
+			# shoot over, not something to hide behind.
+			{"t": "bar", "at": Vector2(0.30, 0.40), "w": 0.11, "d": 0.035,
+				"grade": "soft", "kind": "bench"},
+			{"t": "run", "at": Vector2(0.24, 0.44), "dir": Vector2(1, 0), "n": 4, "gap": 0.4,
 				"grade": "soft", "kind": "planter"},
-			{"t": "post", "at": Vector2(0.30, 0.50), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.50, 0.66), "grade": "soft", "kind": "bench"},
+			{"t": "run", "at": Vector2(0.13, 0.68), "dir": Vector2(0, 1), "n": 2, "gap": 0.35,
+				"grade": "soft", "kind": "crate"},
 		],
 	},
 	"Masters": {
-		"place": "the Spine — a cross-run on the centre line with a bay each side",
+		"place": "the Spine — a cross-wall on the centre line with a bay each side",
 		"mass": Vector2(1.22, 0.86),
 		"furniture": [
-			{"t": "bar", "at": Vector2(0.50, 0.30), "w": 0.26, "d": 0.030},
-			{"t": "row", "from": Vector2(0.13, 0.09), "to": Vector2(0.45, 0.09), "n": 6,
+			{"t": "bar", "at": Vector2(0.50, 0.28), "w": 0.24, "d": 0.022},
+			{"t": "run", "at": Vector2(0.19, 0.10), "dir": Vector2(1, 0), "n": 5, "gap": 0.45,
 				"grade": "hard", "kind": "pillar"},
-			{"t": "row", "from": Vector2(0.20, 0.44), "to": Vector2(0.42, 0.44), "n": 3,
+			{"t": "run", "at": Vector2(0.28, 0.45), "dir": Vector2(1, 0), "n": 2, "gap": 0.4,
 				"grade": "hard", "kind": "boulder"},
-			{"t": "row", "from": Vector2(0.21, 0.63), "to": Vector2(0.41, 0.63), "n": 3,
+			{"t": "run", "at": Vector2(0.22, 0.62), "dir": Vector2(1, 0), "n": 3, "gap": 0.45,
 				"grade": "soft", "kind": "bench"},
 		],
 	},
 	"Tamer Elite": {
-		"place": "the Broken Court — tumbled coursing, no two pieces sharing a depth",
+		"place": "the Broken Court — tumbled coursing, no two runs sharing a depth or an angle",
 		"mass": Vector2(0.80, 1.18),
 		"furniture": [
-			{"t": "post", "at": Vector2(0.12, 0.08), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.21, 0.14), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.33, 0.10), "grade": "soft", "kind": "crate"},
-			{"t": "post", "at": Vector2(0.45, 0.26), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.17, 0.42), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.27, 0.48), "grade": "soft", "kind": "planter"},
-			{"t": "post", "at": Vector2(0.39, 0.54), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.13, 0.60), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.23, 0.66), "grade": "soft", "kind": "bench"},
-			{"t": "post", "at": Vector2(0.35, 0.72), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.47, 0.78), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.19, 0.86), "grade": "soft", "kind": "planter"},
-			{"t": "post", "at": Vector2(0.31, 0.92), "grade": "hard", "kind": "boulder"},
-			{"t": "post", "at": Vector2(0.43, 0.38), "grade": "hard", "kind": "pillar"},
-			{"t": "post", "at": Vector2(0.49, 0.32), "grade": "soft", "kind": "barrel"},
+			{"t": "run", "at": Vector2(0.15, 0.10), "dir": Vector2(1, 0), "n": 3, "gap": 0.4,
+				"grade": "hard", "kind": "boulder"},
+			{"t": "run", "at": Vector2(0.30, 0.12), "dir": Vector2(1, 1), "n": 3, "gap": 0.4,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "run", "at": Vector2(0.18, 0.38), "dir": Vector2(1, -1), "n": 3, "gap": 0.4,
+				"grade": "hard", "kind": "boulder"},
+			{"t": "run", "at": Vector2(0.34, 0.55), "dir": Vector2(1, 0), "n": 4, "gap": 0.45,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "run", "at": Vector2(0.11, 0.70), "dir": Vector2(0, 1), "n": 2, "gap": 0.35,
+				"grade": "soft", "kind": "crate"},
+			{"t": "run", "at": Vector2(0.25, 0.86), "dir": Vector2(1, 0), "n": 3, "gap": 0.5,
+				"grade": "soft", "kind": "fence"},
 		],
 	},
 	"Tamers Apex": {
-		"place": "the Obelisk Field — three ranks of standing stones and a cross-wall",
+		"place": "the Obelisk Field — three ranks of standing stones behind a gate",
 		"mass": Vector2(1.10, 1.12),
 		"furniture": [
-			{"t": "bar", "at": Vector2(0.50, 0.18), "w": 0.22, "d": 0.028},
-			{"t": "row", "from": Vector2(0.11, 0.08), "to": Vector2(0.45, 0.08), "n": 6,
+			{"t": "bar", "at": Vector2(0.43, 0.24), "w": 0.11, "d": 0.020},
+			{"t": "bar", "at": Vector2(0.57, 0.24), "w": 0.11, "d": 0.020},
+			{"t": "run", "at": Vector2(0.26, 0.32), "dir": Vector2(1, 0), "n": 6, "gap": 0.45,
 				"grade": "hard", "kind": "pillar"},
-			{"t": "row", "from": Vector2(0.11, 0.34), "to": Vector2(0.45, 0.34), "n": 6,
+			{"t": "run", "at": Vector2(0.30, 0.48), "dir": Vector2(1, 0), "n": 5, "gap": 0.4,
 				"grade": "hard", "kind": "boulder"},
-			{"t": "row", "from": Vector2(0.15, 0.52), "to": Vector2(0.43, 0.52), "n": 5,
-				"grade": "hard", "kind": "pillar"},
+			{"t": "run", "at": Vector2(0.24, 0.64), "dir": Vector2(1, 0), "n": 6, "gap": 0.45,
+				"grade": "soft", "kind": "fence"},
+			{"t": "run", "at": Vector2(0.11, 0.86), "dir": Vector2(1, 0), "n": 2, "gap": 0.35,
+				"grade": "soft", "kind": "barrel"},
 		],
 	},
 }
@@ -519,6 +614,46 @@ static func _kind_size(kind_name: String) -> Vector2:
 	return Vector2(3.0 * G, 3.0 * G)
 
 
+## ⚠️ THE ONE CONSTANT THAT TURNS A ROW OF POSTS INTO A COLONNADE, and the absence of it is the
+## structural cause of the whole debris finding.
+##
+## The old `row` element authored its two ENDPOINTS in normalised coordinates and spread `n` pieces
+## evenly between them — so the spacing was a fraction of the ground, and grew with it. Measured on
+## the boards that shipped: Copper's authored "colonnade down one wing" ran three pillars from
+## x=0.20 to x=0.44 on a 275-wide ground, which is 33 units between centres for a 6.2-unit pillar —
+## **a 27-unit gap, six body-widths of bare floor between neighbours.** That is not a colonnade, it
+## is three separate posts, and the author could not see it because the authored numbers describe a
+## line and the rendered result is a scatter.
+##
+## `run` fixes the frame of reference: spacing is authored in BODY DIAMETERS of clear gap, so a
+## structure is the same structure on every ground, and the pieces stay close enough that an eye
+## binds them into one object. 0.5 bodies is the default — a body cannot pass through, so it reads
+## and paths as a single mass.
+const DEFAULT_RUN_GAP := 0.5
+
+
+## Emits `n` pieces in a line through `centre` along `dir` (a WORLD direction, so a diagonal is a
+## real diagonal rather than a normalised one that the ground's aspect ratio would shear), each
+## with its 180-degree partner. Returns how many pieces were actually emitted.
+##
+## ⚠️ THE PIECES ARE SPACED EDGE-TO-EDGE, NOT CENTRE-TO-CENTRE. `PIECE_GAP` (1.0 world unit) is the
+## generator's minimum clear gap between any two pieces, so the run's own gap is floored just above
+## it — a run authored tighter than `PIECE_GAP` would have every piece after the first rejected by
+## `_overlaps_any` and the board would silently come out short.
+static func _emit_run(out: Array, centre: Vector2, dir: Vector2, n: int, gap_bodies: float,
+		size: Vector2, grade: String, kind: String, g: Vector2, bands: Array) -> int:
+	var d := dir.normalized() if dir.length() > 0.0001 else Vector2.RIGHT
+	var extent: float = absf(d.x) * size.x + absf(d.y) * size.y
+	var step: float = extent + maxf(PIECE_GAP + 0.2, gap_bodies * Sp.BODY_RADIUS * 2.0)
+	var count: int = maxi(1, n)
+	var emitted := 0
+	for i in count:
+		var t: float = float(i) - float(count - 1) * 0.5
+		var c: Vector2 = centre + d * (t * step)
+		emitted += _emit_pair(out, Rect2(c - size * 0.5, size), grade, kind, kind, g, bands)
+	return emitted
+
+
 ## Lays the league's furniture over whatever family is already in `out`. Pure geometry off the
 ## authored table — no rng at all, so a board is the same board on every replay by construction
 ## rather than by seeding discipline.
@@ -545,28 +680,31 @@ static func _build_furniture(league_name: String, g: Vector2, bands: Array, out:
 			var sz := _kind_size(kind)
 			var c: Vector2 = (e["at"] as Vector2) * g
 			_emit_pair(out, Rect2(c - sz * 0.5, sz), str(e.get("grade", "soft")), kind, kind, g, bands)
-		elif t == "row":
+		elif t == "run":
+			# ⚠️ THE CEILING GUARD IS INSIDE `_emit_run` VIA THE CALLER'S BUDGET, not per piece —
+			# a run is ONE structure and half a colonnade is a worse board than no colonnade. The
+			# whole run is skipped if it would not fit under the density ceiling.
 			var kind2: String = str(e.get("kind", "pillar"))
 			var sz2 := _kind_size(kind2)
-			var n: int = maxi(1, int(e.get("n", 2)))
-			var a: Vector2 = e["from"]
-			var b: Vector2 = e["to"]
-			for i in n:
-				if out.size() + 2 > ceiling:
-					return
-				var f: float = 0.0 if n == 1 else float(i) / float(n - 1)
-				var c2: Vector2 = a.lerp(b, f) * g
-				_emit_pair(out, Rect2(c2 - sz2 * 0.5, sz2), str(e.get("grade", "hard")),
-					kind2, kind2, g, bands)
+			var n: int = maxi(1, int(e.get("n", 3)))
+			if out.size() + 2 * n > ceiling:
+				continue
+			_emit_run(out, (e["at"] as Vector2) * g, e.get("dir", Vector2.RIGHT), n,
+				float(e.get("gap", DEFAULT_RUN_GAP)), sz2, str(e.get("grade", "hard")),
+				kind2, g, bands)
 		elif t == "bar":
+			# A `bar` is authored geometry rather than a kind, so it is the element a board reaches
+			# for when it needs a WALL, a GATE JAMB or a DAIS — shapes no prop in `KIND_TABLE` can
+			# make. Grade defaults to `blocking` (the wall case); a board that wants a platform to
+			# stand on rather than a wall to hide behind says so.
 			var w: float = float(e.get("w", 0.2)) * g.x
 			var d: float = maxf(Sp.BODY_RADIUS * 2.0, float(e.get("d", 0.03)) * g.y)
 			var c3: Vector2 = (e["at"] as Vector2) * g
-			var ka: String = MAJOR_BLOCKING_KINDS[bar_i % MAJOR_BLOCKING_KINDS.size()]
-			var kb: String = MAJOR_BLOCKING_KINDS[(bar_i + 1) % MAJOR_BLOCKING_KINDS.size()]
+			var bg: String = str(e.get("grade", "blocking"))
+			var ka: String = str(e.get("kind", MAJOR_BLOCKING_KINDS[bar_i % MAJOR_BLOCKING_KINDS.size()]))
+			var kb: String = str(e.get("kind", MAJOR_BLOCKING_KINDS[(bar_i + 1) % MAJOR_BLOCKING_KINDS.size()]))
 			bar_i += 1
-			_emit_pair(out, Rect2(c3 - Vector2(w, d) * 0.5, Vector2(w, d)), "blocking",
-				ka, kb, g, bands)
+			_emit_pair(out, Rect2(c3 - Vector2(w, d) * 0.5, Vector2(w, d)), bg, ka, kb, g, bands)
 
 
 ## Builds a named composition: the FAMILY skeleton (`LAYOUTS`) warped by the LEAGUE's own mass
@@ -643,12 +781,25 @@ static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerat
 		# `EDGE_MARGIN`, where `_emit_pair` silently dropped them. A knob whose range depends on
 		# which pieces it happens to touch is a knob nobody can use.
 		var c2: Vector2 = (a["at"] as Vector2) * g
-		# ⚠️ THE PARTNER SHARES THE RECT AND ONLY DIFFERS IN MESH. Rolling the partner's SIZE is
-		# what made the authored boards asymmetric; rolling its KIND is what `ARENA_DESIGN.md` §5
-		# asks for ("prefer odd arrangements... too symmetrical kept recurring"). Stepped by index
-		# rather than rolled, so the pair is GUARANTEED two different props instead of probably two.
-		var kind_b: String = str((pool[(pick + 1) % pool.size()] as Dictionary)["kind"])
-		_emit_pair(out, Rect2(c2 - sz * 0.5, sz), grade, str(kind["kind"]), kind_b, g, bands)
+		# ⚠️ AN ACCENT IS NOW A STAND OF PIECES, NOT ONE PIECE, AND THAT IS WHERE HALF THE DEBRIS
+		# CAME FROM. The four families each authored two single accents; emitted with their
+		# partners that is FOUR ISOLATED SMALL PROPS ON EVERY BOARD IN THE GAME, before a league
+		# adds anything of its own — and the family accents were the same four on all eleven, so
+		# the one part of the layout that was truly shared was also the part that read as litter.
+		# `n` defaults to 2 so an un-migrated family gets a stack rather than a stray.
+		var n_a: int = maxi(1, int(a.get("n", 2)))
+		# ⚠️ THE PARTNER SHARES THE RECT AND ONLY DIFFERS IN MESH — except within a run, where both
+		# halves keep ONE kind on purpose. Rolling the partner's SIZE is what made the authored
+		# boards asymmetric; rolling its KIND is what `ARENA_DESIGN.md` §5 asks for. But a stand of
+		# three DIFFERENT props is a pile, and a stand of three of the same is a colonnade, so the
+		# per-piece variety §5 wants comes from the renderer's position-hashed yaw and scale here,
+		# not from mixing the kinds inside one structure.
+		if n_a > 1:
+			_emit_run(out, c2, a.get("dir", Vector2.RIGHT), n_a,
+				float(a.get("gap", DEFAULT_RUN_GAP)), sz, grade, str(kind["kind"]), g, bands)
+		else:
+			var kind_b: String = str((pool[(pick + 1) % pool.size()] as Dictionary)["kind"])
+			_emit_pair(out, Rect2(c2 - sz * 0.5, sz), grade, str(kind["kind"]), kind_b, g, bands)
 	_build_furniture(league_name, g, bands, out)
 	return out
 

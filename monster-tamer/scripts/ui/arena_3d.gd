@@ -73,9 +73,83 @@ const KitLib = preload("res://scripts/sim/kit.gd")
 ## against the board so the pieces stay legible. We render the ground shrunk and the creatures
 ## enlarged; the SIM is unaffected, because this factor is applied only on the way to the screen.
 const WORLD_SCALE := 0.34
+## ⚠️ AND THIS IS WHY TWO WORKSTREAMS QUOTED PROP SIZES THAT DIFFERED BY EXACTLY 3x, BOTH CORRECT.
+## `arena_layout.gd` authors a pillar at 4.2 * GEOMETRY_SCALE = 9.24 SIM units and documents it as
+## "2.1 bodies", against a sim body diameter of `2 * Sp.BODY_RADIUS` = 4.4. `_probe_venue.gd`
+## measures the same pillar at 0.71 bodies, against `UNIT_HEIGHT` = 4.4. The two denominators are
+## the same number; the two NUMERATORS are not, because the sim rect reaches the screen multiplied
+## by WORLD_SCALE while the creature is drawn at a fixed `UNIT_HEIGHT`. 2.1 x 0.34 = 0.71, and
+## 1 / 0.34 = 2.94 is the whole of the "3x" disagreement.
+##
+## ⚠️ IT IS A UNIT MISMATCH, NOT A BUG, AND THE RENDERER IS NOT WRONG — but the consequence is
+## real and it is the round's finding 1. Creatures are deliberately drawn ~2.94x oversized against
+## the board, so ANYTHING sized in sim units is drawn at a third of its footprint relative to the
+## monster standing beside it. A prop authored as "two bodies wide" so it would read as
+## architecture arrives on screen 0.7 creatures wide. Growing a prop in `arena_layout.gd` buys
+## only a third of what its comment promises, and the layout side cannot see that from its own
+## instrument.
+##
+## ⚠️ THE OBVIOUS FIX IS WRONG. Drawing props at the creature's exaggeration would put the drawn
+## silhouette ~3x outside the sim's rect, so cover would visually block sightlines it does not
+## sim-block and bodies would clip through it — the renderer would start asserting something about
+## the fight, which is the one thing it must never do. The axis that IS free is HEIGHT: nothing in
+## the sim reads prop height, so `PROP_HEIGHT_BODIES` can make a piece read as a pier without
+## moving one number the sim uses. That is where the next round's accent-layer work should go.
 const UNIT_HEIGHT := 4.4
 const WALL_H := 1.4
 const STAND_TIERS := 5
+
+## ── HOW DARK THE VENUE SHELL IS ALLOWED TO BE ───────────────────────────────────────────────
+## Multipliers on the league's `ground` tone for the barrier and the stands. They exist because the
+## shell used to be the LIGHTEST large shape in frame and the value ladder wants it under the
+## floor; they are named constants now because the round that measured the frame ROW BY ROW found
+## they had been pushed past "subordinate" into "absent".
+##
+## ⚠️ 0.85 / 0.62 MADE 37-47% OF EVERY HERO FRAME CARRY NO CONTENT, AND NO CHECK COULD SEE IT.
+## `_probe_frame.gd` counted pixels at or under 0.045 luma — literal black — and reported 2-9%, a
+## comfortable 11/11 green, while the integrator looking at the same frames called nearly half the
+## picture empty. Both were right. A dead band is not black; it is a band with nothing readable in
+## it, and at 0.85/0.62 the stands measured 0.054-0.090 luma and the barrier 0.060-0.132 against a
+## floor at 0.147-0.268. The shell was three to four times darker than the ground it rings, which
+## is not "falling into dark" — it is not being drawn.
+##
+## ⚠️ THE CONSTRAINT THAT SETS THESE NUMBERS IS THE VALUE LADDER, NOT TASTE. `_probe_venue.gd`
+## requires stands < walls < floor < cover < creatures, so the shell CANNOT simply be lifted to
+## where the eye stops calling it empty — it has to be lifted as a GROUP, keeping the order, and
+## it has to stop below the floor.
+##
+## ⚠️ AND THE FIRST ATTEMPT WAS A FLAT MULTIPLIER PAIR (1.30 / 1.15) AND IT BROKE THE LADDER FROM
+## 9/11 TO 4/11 IN ONE STEP. The reason is worth keeping, because it is the same shape of mistake
+## three other constants in this file carry a warning about: THE FLOORS ARE NOT THE SAME VALUE.
+## They run 0.147 (Masters) to 0.269 (Tin) — nearly two to one — so one multiplier that lands the
+## shell comfortably under Tin's floor lands it ON TOP of Copper's and Iron's. Measured: Copper
+## walls 0.175 against a floor of 0.149, Iron 0.216 against 0.183. A constant cannot express
+## "under the floor" when the floor is a variable.
+##
+## So the shell is authored as a RATIO OF ITS OWN LEAGUE'S FLOOR, resolved at build time from
+## `_floor_average()` (the ground art times the league tone — the thing actually drawn, which is
+## neither the texture nor the tint alone). Under the floor is then true by construction at every
+## league, and the residual dead band at the dark-floored leagues is correctly attributed to the
+## FLOOR being dark rather than hidden inside a shell constant.
+##
+## ⚠️ THE RATIOS BUY BACK MOST OF THE DEAD BAND AND DELIBERATELY NOT ALL OF IT. At Platinum and
+## Tamer Elite the floor itself sits at 0.157-0.185, so a shell strictly beneath it cannot clear
+## the 0.12 the eye needs; those two leagues stay flagged, and the honest lever for them is the
+## cast light `_probe_venue.gd` already names, not another shell nudge.
+## ⚠️ THESE ARE ALBEDO RATIOS AND THE FRAME DOES NOT RENDER THEM ONE-FOR-ONE — measured, not
+## assumed. The first pass reasoned that "both sides are albedo, both are lit by the same lamps, so
+## the albedo ratio is the rendered ratio", set 0.72 / 0.60, and the frame came back at 0.52-0.58
+## of the floor: the ladder was safe and the dead band was barely bought back. The shell's surfaces
+## are VERTICAL and the key rakes at -40 elevation, so they collect materially less of it than the
+## horizontal floor does. Measured across Wood / Copper / Tin the gap is a consistent ~1.35x, which
+## is why these are set 1.35x above the rendered targets (walls ~0.70 of floor, stands ~0.58) rather
+## than at them. If the key's elevation ever moves, this pair has to be re-measured, not re-derived.
+const WALL_FLOOR_RATIO := 0.96
+const STAND_FLOOR_RATIO := 0.80
+## Bounds on the resolved multiplier, so a league with no readable ground art (where the floor
+## average falls back to a formula) can never drive the shell to black or to white.
+const SHELL_TONE_MIN := 0.55
+const SHELL_TONE_MAX := 2.20
 
 ## ── PROP PROPORTION: THE CREATURE IS THE YARDSTICK ─────────────────────────────────────────────
 ##
@@ -1157,6 +1231,7 @@ func _build_world() -> void:
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
 	e.background_color = look["fog"]
+	_apply_backdrop(e, look)
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = look["amb"]
 	e.ambient_light_energy = float(look["amb_e"])
@@ -1171,7 +1246,30 @@ func _build_world() -> void:
 	# nobody can see is the same legibility failure wearing the opposite sign.
 	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	e.tonemap_white = 1.0
-	e.tonemap_exposure = 1.0
+	# ⚠️ THE VENUE IS GLOBALLY UNDER-EXPOSED AND EXPOSURE IS THE ONLY HONEST LEVER FOR IT. This was
+	# 1.0, and four separate checks were failing on the same underlying fact: 37-47% of every hero
+	# frame carried rows with a mean under 0.12 luma; the venue shell could not be lifted out of
+	# that band without crossing the floor in the value ladder; four leagues' creatures failed to
+	# out-value their ground; and the majors' new cast shadows read as holes rather than shade.
+	#
+	# ⚠️ AND THE DIAGNOSIS CAME FROM A CONTRADICTION, NOT FROM TASTE. Lifting the shell with a flat
+	# multiplier bought the dead band back (0/11 -> 9/11) and broke the ladder (9/11 -> 4/11);
+	# re-deriving the shell as a ratio of each league's own floor restored the ladder (9/11) and
+	# gave most of the dead band back (0/11 -> 4/11). The two checks trade one-for-one, which is
+	# the signature of a scale problem rather than a balance problem: no redistribution of a fixed
+	# amount of light can satisfy both, because the ladder constrains RATIOS and the dead band
+	# constrains ABSOLUTE values.
+	#
+	# Exposure is the one control that moves the absolute values while leaving every ratio alone.
+	# The ladder, body-vs-floor, cover relief and contact shadow are all ratios or log-ratios, so
+	# they are invariant to it by construction; only `dead-rows%`, `void%` and the `floor <= 0.62`
+	# ceiling respond. That invariance is a PREDICTION and it is checked — if a ratio column moves
+	# when this constant moves, the FILMIC curve is compressing the top end and the number is too
+	# high, which is the failure to watch for rather than a bright frame.
+	#
+	# ⚠️ DO NOT REACH FOR `tonemap_white` INSTEAD. It was tried at 1.6 (see the note above) and it
+	# maps 1.6 down to white, i.e. it changes the CURVE, which does move the ratios.
+	e.tonemap_exposure = 1.28
 
 	# Contact shadow and crevice darkening. `ART_DIRECTION.md` §Status names ambient occlusion as
 	# one of the two biggest remaining quality jumps; this is it. It is also what stops a prop
@@ -1203,7 +1301,12 @@ func _build_world() -> void:
 	e.fog_enabled = true
 	e.fog_light_color = look["fog"]
 	e.fog_density = 0.085 / diag
-	e.fog_sky_affect = 0.0
+	# ⚠️ SET AFTER `_apply_backdrop`, AND THE ORDER IS LOAD-BEARING. This line used to be a bare
+	# `0.0` and it was correct then: the background was a flat fill of the fog colour, so fogging it
+	# only re-fogged what it already was. With a painted sky behind the venue, 0.0 would leave the
+	# painting sitting in a hole in the middle of the depth cue — sharp and near, with a fogged
+	# stadium in front of it. The backdrop declares what it needs; a league without one keeps 0.0.
+	e.fog_sky_affect = BACKDROP_FOG_AFFECT if e.background_mode == Environment.BG_SKY else 0.0
 	e.fog_aerial_perspective = 0.0
 
 	# ⚠️ NO `adjustment_enabled`. It was tried and it is a TRAP in 4.7: switching it on without an
@@ -1216,7 +1319,70 @@ func _build_world() -> void:
 	add_child(env)
 
 	var key := DirectionalLight3D.new()
-	key.rotation_degrees = Vector3(-52, -34, 0)
+	# ── ⚠️ THE LAMP GEOMETRY IS WHY COVER READ AS "A FLAT PASTED RECTANGLE", AND IT IS MEASURED.
+	#
+	# The report was that a cover piece shows the player essentially only its TOP FACE, so a
+	# 1.18-body wall reads as paint on the floor. `_probe_frame.gd` puts a number on it: RELIEF, the
+	# ratio between a piece's camera-facing face and its top face in the rendered frame. Before this
+	# change **56 of 76 league/kind groups measured under 0.20 stops** — i.e. the two faces were the
+	# same value and the edge between them was invisible. A vertical luminance profile straight
+	# through a Wood major confirmed it with no interpretation at all: 0.29 on the top, 0.29 on the
+	# front, 0.29 on the floor beyond. One flat field of colour.
+	#
+	# ⚠️ AND THE CAUSE WAS THE LAMP GEOMETRY, NOT THE MESHES OR THE TEXTURES. Three separate faults
+	# stacked, all of them here:
+	#
+	#   1. THE KEY WAS ALMOST OVERHEAD (52 degrees). A near-overhead lamp gives a horizontal face
+	#      sin(52) = 0.79 of its light and a vertical one at best cos(52) = 0.62 — so every TOP in
+	#      the scene, including the floor, was the brightest plane in the picture and every wall was
+	#      dimmer than the ground it stood on. That is the definition of "no relief".
+	#   2. ITS SHADOWS FELL AWAY FROM THE CAMERA AND HID BEHIND THE OBJECTS THAT CAST THEM. At
+	#      rotation (-52, -34) the light travels (+0.34, -0.79, -0.51): the -Z component points at
+	#      the far wall, which is exactly where the camera cannot see. Every prop in the venue was
+	#      casting a correct shadow into its own occluded footprint. A short shadow is a weak
+	#      contact cue; an INVISIBLE one is no cue at all, and it is why nothing looked like it was
+	#      standing ON anything.
+	#   3. THE FILL AND THE RIM BOTH LIT THE FAR HEMISPHERE. Fill sat at yaw 148 and rim at 196 —
+	#      both behind the subject — so the whole camera-facing side of every object in the arena
+	#      received the KEY AND THE AMBIENT AND NOTHING ELSE, while every top face collected all
+	#      four lamps. The two faces the eye compares were being lit by different numbers of lights.
+	#
+	# The replacement is the standard architectural raking setup, and each number answers one of the
+	# three faults above:
+	#   KEY  40 degrees elevation, yaw -70 — low enough that a WALL (0.72) out-values the FLOOR
+	#        (0.64) and the camera-facing face (0.26) falls clearly below both, which is the
+	#        three-value read that makes a box look like a box. Shadows lengthen from 0.78h to
+	#        1.19h and now travel to screen RIGHT, in full view.
+	#   FILL from the camera's own side (yaw 41, low) — the lamp that was missing entirely. It is
+	#        what keeps the camera-facing faces off black now the key has moved off them.
+	#   RIM  unchanged at yaw 196: it was the one lamp already doing its job.
+	#
+	# ⚠️ AND IT WAS A/B'd AGAINST THE PROJECT'S OWN PRIMARY METRIC BEFORE IT SHIPPED, because moving
+	# the key is the single most invasive change available in this file and "it looks better" is not
+	# evidence. `_probe_venue.gd`'s VALUE pass (body luminance against floor luminance, the number
+	# three previous rounds were tuned to) was run over all eleven leagues under the OLD rotations
+	# and the NEW ones, same seed, same fights:
+	#
+	#   Wood 1.68->1.91 · Copper 2.17->2.44 · Tin 1.69->1.77 · Bronze 1.40->1.57 · Iron 1.92->2.06
+	#   Silver 0.86->0.97 · Gold 0.96->1.03 · Platinum 1.25->1.36 · Masters 1.47->1.65
+	#   Tamer Elite 0.92->1.05 · Tamers Apex 0.82->0.93
+	#
+	# **Eleven leagues out of eleven improved**, which is what a raking key predicts: the floor is a
+	# horizontal plane and loses the most when the lamp comes down, while a creature is nearly
+	# vertical and loses the least.
+	#
+	# ⚠️ FOUR LEAGUES STILL FAIL THAT CHECK (Silver, Gold, Tamer Elite, Tamers Apex) AND THEY FAILED
+	# IT BEFORE THIS CHANGE TOO — 0.86 / 0.96 / 0.92 / 0.82 under the old lamps. Do not attribute
+	# them here. The `LEAGUE_LOOK` Platinum note already names the real diagnosis and it is borne out
+	# by the probe's own body column: those leagues' CASTS are dark (0.157-0.244 against Wood's
+	# 0.482), not their grounds bright, and the lever is `fill`/the cast light, not another
+	# tone-down.
+	#
+	# ⚠️ DO NOT RAISE THE KEY BACK TOWARD OVERHEAD TO BRIGHTEN THE FRAME. The floor is a horizontal
+	# plane covering a third of the picture, so elevation is very nearly a floor-brightness control
+	# — and the floor being the brightest plane in the venue is the exact fault three rounds of
+	# `LEAGUE_LOOK.ground` tone-downs were compensating for. Reach for `ground` or the cast light.
+	key.rotation_degrees = Vector3(-40, -70, 0)
 	key.light_color = look["key"]
 	key.light_energy = float(look["key_e"])
 	# ⚠️ SPECULAR IS KEPT LOW ON EVERY DIRECTIONAL LIGHT IN THIS SCENE, AND THE FLOOR IS WHY. The
@@ -1237,7 +1403,28 @@ func _build_world() -> void:
 	# was unaffected — which is exactly why this looked like a per-league art problem and was not.)
 	# Shadow-map texel size grows with range, so the depth offset that hides acne has to grow with
 	# it too.
-	var shadow_range: float = clampf(Vector2(bw, bd).length() * 1.15, 80.0, 260.0)
+	# ⚠️ AND THE RANGE IS MEASURED FROM THE CAMERA, NOT ACROSS THE BOARD — WHICH IS WHY MOST OF THE
+	# ARENA HAD NO SHADOWS AT ALL. `directional_shadow_max_distance` is a distance from the CAMERA's
+	# own position, and this camera is a 26-degree long lens: `_apply_camera_now` solves
+	# `r = span / tan(fov/2)`, i.e. `tan(13°) = 0.231`, so it sits **four and a half times the span
+	# away from what it is looking at**. On Wood that is ~76 units back for a board 29 units across.
+	# Sizing the range to the board's own diagonal therefore ended the shadow map BEFORE THE BOARD
+	# EVEN STARTED at every league (Wood clamped to 80 against a nearest-corner distance of ~65 and a
+	# far corner past 100), and the symptom is exactly the round's complaint: props with no contact
+	# shadow, sitting on the floor like stickers. It was invisible in review because the number
+	# looked principled — it was scaled to the board, it just was not scaled to the thing the engine
+	# measures from.
+	#
+	# ⚠️ AND NO PROBE CAUGHT IT EITHER, because every instrument so far sampled the props and the
+	# floor and compared them with each other. A missing shadow is not a property of any surface —
+	# it is the ABSENCE of a dark shape on a third one. It took looking at a key-light-only frame
+	# and asking why nothing threw anything.
+	#
+	# The honest range is "how far can the far edge of the board be from the camera": the maximum
+	# camera pullback plus the board's own half-diagonal, with a margin.
+	var diag_w: float = Vector2(bw, bd).length()
+	var cam_back: float = (diag_w * 0.5 * 1.05) / tan(deg_to_rad(CAM_FOV * 0.5))
+	var shadow_range: float = clampf((cam_back + diag_w) * 1.15, 80.0, 600.0)
 	key.directional_shadow_max_distance = shadow_range
 	# ⚠️ ONE ORTHOGONAL SPLIT, NOT FOUR PARALLEL ONES — and this is a consequence of the camera,
 	# not a preference. Cascaded splits give the near cascade most of the resolution, which is
@@ -1251,12 +1438,37 @@ func _build_world() -> void:
 	key.shadow_bias = maxf(0.06, shadow_range / 4096.0 * 2.6)
 	key.shadow_normal_bias = 1.0
 	key.shadow_blur = 1.1
+	# ⚠️ SHADOWS WERE READING AS HOLES IN THE FLOOR, NOT AS SHADE — and this is a NEW fault, created
+	# by the fix that gave the arena shadows at all. The shadow fill in this scene is the ambient
+	# term alone (`amb` at `amb_e` ~0.30, a dark blue), so a raking key at energy 2.0 put the lit
+	# floor 1.3-1.7 STOPS above the shadowed floor. That is 2.5-3.2x, and against a warm board it
+	# does not read as a cast shadow — it reads as a black rectangle cut out of the ground, which
+	# is exactly how the majors' long new shadows looked in the hero frames.
+	#
+	# ⚠️ AND THIS IS THE RIGHT KNOB RATHER THAN RAISING THE AMBIENT, WHICH WAS THE OBVIOUS MOVE.
+	# Ambient lifts every unlit surface in the venue INCLUDING THE FLOOR'S LIT SIDE, so it moves
+	# `floor` in the value ladder and re-opens three rounds of `LEAGUE_LOOK.ground` tuning.
+	# `shadow_opacity` touches only pixels the shadow map darkens: the lit frame is bit-identical,
+	# the value ladder cannot move, and only the contact-shadow column in `_probe_frame.gd`
+	# responds. One lever, one column.
+	#
+	# 0.78 is set from the measurement, not from taste: majors measured 1.31-1.71 stops of contact
+	# shadow and the probe's bar for "this object is standing on something" is 0.22. Multiplying the
+	# shadow's darkening by 0.78 lands them at ~0.75-0.95 — still three to four times the bar, so
+	# nothing that passed stops passing, and the shape reads as shade instead of as a pit.
+	key.shadow_opacity = 0.78
 	add_child(key)
 
 	var fill := DirectionalLight3D.new()
-	fill.rotation_degrees = Vector3(-28, 148, 0)
+	# ⚠️ FROM THE CAMERA'S SIDE, WHICH IS THE WHOLE POINT AND WHERE IT WAS NOT. See fault 3 in the
+	# key's header: at yaw 148 this lamp lit the far hemisphere alongside the rim, so no light in
+	# the venue except the key ever touched a surface the player was looking at. Yaw 41 puts it
+	# opposite the key horizontally AND on the near side, so it lifts both the +X faces the key
+	# leaves black and the +Z faces the camera actually sees. Energy up a little because it is now
+	# doing real work rather than adding a second highlight to the tops.
+	fill.rotation_degrees = Vector3(-24, 41, 0)
 	fill.light_color = look["fill"]
-	fill.light_energy = 0.45
+	fill.light_energy = 0.50
 	fill.light_specular = 0.0
 	fill.shadow_enabled = false
 	add_child(fill)
@@ -1455,6 +1667,67 @@ func _build_deploy_zones(bw: float, bd: float) -> void:
 	add_child(line)
 
 
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+## THE BACKDROP — the eleven painted venues the 3D arena had never once drawn
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## ⚠️ THE REPORT WAS "~45% OF THE HERO FRAME IS BLACK VOID", and measured honestly it is close
+## enough to true to act on. Counting only pixels at or under 0.045 luma the figure is 9-15%, so
+## the frame is not literally black — but taking the rows whose mean luminance is under 0.12 (the
+## band that carries nothing a player can read) it is **28-44% of frame height**, split ~16-24%
+## above the venue and ~12-20% below it, and 38-45% of all pixels sit under 0.09 luma. The integrator
+## was describing what the eye does, and the eye is right.
+##
+## ⚠️ AND THE CAUSE IS ARITHMETIC, NOT ART DIRECTION. `_camera_target()`'s ARENA framing solves for
+## whichever of the board's width and depth needs the wider shot. A 5v5 ground is 54 x 30 world
+## units and the camera's 38-degree pitch foreshortens the depth by sin(38) = 0.62, so the board
+## covers about 18 units of vertical extent inside a frame sized to fit 54 units of WIDTH on a 16:9
+## screen — which needs 35 units of vertical. Slightly over half the frame is board; the rest is
+## whatever is behind and beyond it, and until now that was `BG_COLOR`, a flat fill of `look.fog`.
+##
+## ⚠️ THE ART ALREADY EXISTED AND NOTHING WAS DRAWING IT. `assets/arenas/` holds eleven painted
+## 1400x788 venue backdrops, one per league, and `Art.backdrop_for()` has always returned them —
+## `grep backdrop scripts/` finds exactly one consumer, `arena_view.gd`, the RETIRED 2D arena. The
+## 3D venue was built without ever being wired to them.
+##
+## As a panorama sky rather than a quad, for three reasons:
+##   - it fills the void ABOVE and BELOW the venue in one change, where a backdrop wall behind the
+##     stands only ever fixes the top;
+##   - it needs no radius, no height and no per-board sizing, so it cannot fall out of step with a
+##     ground that has already changed size twice this project;
+##   - it is behind everything by construction, so it can never occlude the fight — the failure
+##     mode a near-side backdrop wall has and the one that would be least forgivable here.
+##
+## ⚠️ IT MUST NOT LIGHT ANYTHING AND IT MUST NOT COMPETE. `ambient_light_source` stays
+## `AMBIENT_SOURCE_COLOR`, so adding a sky changes zero lamps and cannot move a single value the
+## previous rounds measured. `BACKDROP_ENERGY` holds it well under the board, and `fog_sky_affect`
+## — deliberately 0.0 while the background was a flat colour that already WAS the fog colour — now
+## pulls the painting toward the league's own distance colour so it sits behind the venue rather
+## than behind a window. If it ever reads as a poster, that pair is the control, in that order.
+##
+## ⚠️ AN EQUIRECTANGULAR MAPPING OF A 16:9 PAINTING IS A STRETCH AND THAT IS ACCEPTED. It is soft,
+## far away, fogged and never in focus; the alternative is authoring eleven true panoramas, which is
+## an art request and not a renderer change. If those are ever painted, only the asset changes.
+const BACKDROP_ENERGY := 0.30
+const BACKDROP_FOG_AFFECT := 0.62
+
+
+func _apply_backdrop(e: Environment, look: Dictionary) -> void:
+	var tex: Texture2D = Art.backdrop_for(league_name, _league_names())
+	if tex == null:
+		# ⚠️ A LEAGUE WITH NO BACKDROP KEEPS THE FLAT FILL, WHICH IS THE HONEST DEGRADE. An
+		# unpainted venue should read as unfinished, never as another league's stadium.
+		return
+	var sm := PanoramaSkyMaterial.new()
+	sm.panorama = tex
+	sm.energy_multiplier = BACKDROP_ENERGY
+	var sky := Sky.new()
+	sky.sky_material = sm
+	e.sky = sky
+	e.background_mode = Environment.BG_SKY
+	e.fog_sky_affect = BACKDROP_FOG_AFFECT
+
+
 func _build_venue(bw: float, bd: float) -> void:
 	var wall_mat := StandardMaterial3D.new()
 	var wtex: Texture2D = Art.load_or_null("res://assets/arena/wall-timber.jpg")
@@ -1471,11 +1744,23 @@ func _build_venue(bw: float, bd: float) -> void:
 	# ground takes (a touch darker still) keeps the value ladder in the right order.
 	var lk := _look()
 	var gt: Color = lk["ground"]
+	# The barrier as it would be drawn at a multiplier of 1.0 — its own texture average (or its
+	# fallback colour) times the league tone. Solved against the FLOOR, never against a constant:
+	# see the WALL_FLOOR_RATIO header for the flat-multiplier attempt that broke the ladder.
+	var wall_base: Color = Color(gt.r, gt.g, gt.b)
+	if wtex == null:
+		wall_base = Color(wall_mat.albedo_color.r * gt.r, wall_mat.albedo_color.g * gt.g,
+			wall_mat.albedo_color.b * gt.b)
+	else:
+		var wavg: Color = _tex_average("res://assets/arena/wall-timber.jpg")
+		if wavg.a >= 0.5:
+			wall_base = Color(wavg.r * gt.r, wavg.g * gt.g, wavg.b * gt.b)
+	var wall_k: float = _shell_tone(wall_base, WALL_FLOOR_RATIO)
 	wall_mat.albedo_color = Color(
-		wall_mat.albedo_color.r * gt.r * 0.85,
-		wall_mat.albedo_color.g * gt.g * 0.85,
-		wall_mat.albedo_color.b * gt.b * 0.85) if wtex == null \
-		else Color(gt.r * 0.85, gt.g * 0.85, gt.b * 0.85)
+		wall_mat.albedo_color.r * gt.r * wall_k,
+		wall_mat.albedo_color.g * gt.g * wall_k,
+		wall_mat.albedo_color.b * gt.b * wall_k) if wtex == null \
+		else Color(gt.r * wall_k, gt.g * wall_k, gt.b * wall_k)
 
 	var wall_xforms: Array = [
 		_box_xform(Vector3(0, WALL_H * 0.5, -bd * 0.5 - 0.4), Vector3(bw + 1.6, WALL_H, 0.8)),
@@ -1500,7 +1785,16 @@ func _build_venue(bw: float, bd: float) -> void:
 	# the fight, so they are where "everything past the wall falling into dark" (ART_DIRECTION.md)
 	# actually happens.
 	if ctex != null:
-		stand_mat.albedo_color = Color(gt.r * 0.62, gt.g * 0.62, gt.b * 0.66)
+		var cavg: Color = _tex_average("res://assets/arena/stands-crowd.jpg")
+		var stand_base: Color = Color(gt.r, gt.g, gt.b)
+		if cavg.a >= 0.5:
+			stand_base = Color(cavg.r * gt.r, cavg.g * gt.g, cavg.b * gt.b)
+		# Below the barrier by construction (STAND_FLOOR_RATIO < WALL_FLOOR_RATIO), so the outer
+		# ring stays the darkest band in the ladder without a second constant to keep in step.
+		var stand_k: float = _shell_tone(stand_base, STAND_FLOOR_RATIO)
+		# The +6% on blue is unchanged: the crowd sits in the venue's own cool shadow, and it is a
+		# hue nudge at constant value, not a lift.
+		stand_mat.albedo_color = Color(gt.r * stand_k, gt.g * stand_k, gt.b * stand_k * 1.06)
 
 	# ⚠️ TIER COUNT SCALES WITH THE BOARD, THE FIRST FIVE STEPS DO NOT — see `STAND_TIERS_MAX`.
 	# Rows 0-4 keep the exact rise/depth `spectators.gd` seats its crowd against; rows 5+ are the
@@ -1670,6 +1964,8 @@ func _multimesh_cylinders(xforms: Array, mat: Material) -> MultiMeshInstance3D:
 func _build_obstacles() -> void:
 	var box_groups: Dictionary = {}     # kind -> Array[Transform3D]
 	var cyl_groups: Dictionary = {}     # kind -> Array[Transform3D]  (the round kinds below)
+	var coping: Array = []              # the crown course — see `_cover_architecture`
+	var piers: Array = []               # the vertical members that break the skyline
 	for o in _obstacles:
 		var kind: String = str(o.get("kind", "crate"))
 		var r: Rect2 = o["rect"]
@@ -1683,6 +1979,7 @@ func _build_obstacles() -> void:
 		# "brick loaf" defect.
 		var h := prop_height(grade)
 		var xf := Transform3D(Basis().scaled(Vector3(w, h, d)), centre + Vector3(0, h * 0.5, 0))
+		_cover_architecture(kind, grade, centre, w, d, h, coping, piers)
 		if kind in ROUND_KINDS:
 			if not cyl_groups.has(kind):
 				cyl_groups[kind] = []
@@ -1705,6 +2002,137 @@ func _build_obstacles() -> void:
 			var n2 := _multimesh_cylinders(cyl_groups[kind], _rim(_obstacle_material(kind)))
 			n2.name = "Prop_%s_cyl" % kind
 			add_child(n2)
+
+	# ⚠️ TWO BATCHES FOR THE WHOLE BOARD, NOT TWO PER PIECE. Both are `Prop_`-prefixed so
+	# `_probe_venue.gd`'s layer diff counts them as cover rather than as a new unmeasured layer —
+	# an addition the instruments cannot see is an addition nobody can defend.
+	if not coping.is_empty():
+		var cn := _multimesh_boxes(coping, _masonry_material(COPING_TINT))
+		cn.name = "Prop_coping"
+		cn.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		add_child(cn)
+	if not piers.is_empty():
+		var pn := _multimesh_boxes(piers, _masonry_material(PIER_TINT))
+		pn.name = "Prop_pier"
+		pn.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		add_child(pn)
+
+
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+## COVER AS ARCHITECTURE — a crown course and vertical members, on top of the kind's own model
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## ⚠️ THE COMPLAINT WAS "THE MAJORS READ AS FLAT PASTED RECTANGLES", AND THE HONEST FINDING IS THAT
+## HALF OF IT WAS A LIGHTING FAULT AND HALF OF IT IS A GEOMETRY ONE. The lighting half is fixed
+## above (shadows were being clipped before they reached the board — see the key's shadow-range
+## note) and it is the larger half by far: with contact shadows landing, `_probe_frame.gd` scores
+## every kind on the Wood board between 0.48 and 1.71 stops of shadow separation where it previously
+## had none at all.
+##
+## ⚠️ BUT THE FACE-AGAINST-FACE NUMBER DID NOT MOVE, AND THAT PART IS REAL. Measured on a
+## key-light-only frame — no ambient, no fill, no rim, so nothing could be blamed on a wash — a
+## Wood major renders 0.276 on its top face and 0.257 on the face pointed at the camera: **0.10
+## stops, where the lamp geometry alone predicts 1.3**. Whatever the renderer is doing between the
+## N·L term and the pixel (FILMIC, the fog term, the material's own rim) collapses face-to-face
+## contrast to almost nothing at this scale. That is worth knowing and it is not worth fighting: a
+## value step you cannot get from a lamp you can simply BUILD.
+##
+## So the piece gets the two members that make masonry read as masonry from any angle and under any
+## light, because they are geometry and not shading:
+##
+##   COPING — a crown course capping the piece, a hair proud of it. It puts a hard horizontal edge
+##            exactly where the top face meets the front face (the seam that was invisible), it is
+##            tinted a step off the wall's own value, and it throws its own small shadow down the
+##            face beneath it.
+##   PIERS  — vertical members standing a fifth taller than the wall, at its ends and along its run.
+##            These are what break the FLOOR PLANE: a silhouette that steps up and down cannot read
+##            as paint, and it is the difference between "a rectangle" and "a built thing".
+##
+## ⚠️ NEITHER MAY LIE ABOUT WHERE COVER IS, and the two are constrained differently:
+##   PIERS are strictly INSET — they are placed inside the sim's own rect on both axes, so the
+##     drawn silhouette never leaves the rectangle `Spatial.cover_between` tests.
+##   COPING overhangs by `COPING_OVERHANG`. That is deliberate (a flush cap reads as a stripe, not
+##     a cap) and it is the same 2-4% order as the section overlap `_prop_batch` already uses, far
+##     below the precision the cover test resolves.
+##   HEIGHT is the free axis — `PROP_HEIGHT_BODIES` says so, and a pier at `PIER_RISE` x the grade
+##     height still lands under the 1.7-creature ceiling `ARENA_DESIGN.md` §4 sets for drawn cover.
+##
+## ⚠️ AND ROUND KINDS GET NEITHER. A square cap on a boulder is not architecture, it is a mistake —
+## and `ROUND_KINDS` is the list a teammate adds new round props to, so this degrades correctly for
+## kinds that do not exist yet.
+## ⚠️ SMALL SOFT DEBRIS GETS NEITHER EITHER. A crate with a coping stone is a joke; the accent layer
+## reads as a rash for reasons this cannot fix (its own note is in `_prop_variation`).
+const COPING_OVERHANG := 1.035   # how far proud of the wall the crown course sits
+const COPING_DEPTH := 0.13       # fraction of the piece's height the course occupies
+const PIER_RISE := 1.20          # pier height as a multiple of the piece's own
+const PIER_SPACING_BODIES := 1.6  # one pier per this many creature-widths of run
+## Crown catches the light, so it sits a step ABOVE the kind's own value; the piers are in the
+## wall's shade and sit a step below. Both are taken into the league's tone by `_masonry_material`,
+## so they cannot drift out of the value ladder the way the untinted kinds once did.
+const COPING_TINT := Color(0.82, 0.79, 0.72)
+const PIER_TINT := Color(0.55, 0.53, 0.50)
+## A piece shorter than this along its longest axis is furniture, not architecture.
+const ARCH_MIN_BODIES := 1.15
+
+
+func _cover_architecture(kind: String, grade: String, centre: Vector3, w: float, d: float,
+		h: float, coping: Array, piers: Array) -> void:
+	if kind in ROUND_KINDS:
+		return
+	var span: float = maxf(w, d)
+	if span < UNIT_HEIGHT * ARCH_MIN_BODIES:
+		return
+	# Soft cover is knee-high scatter; dressing it up would make the board read as more built than
+	# it is and would bury the grade distinction the player has to be able to see.
+	if grade == "soft":
+		return
+
+	var cap_h: float = maxf(0.16, h * COPING_DEPTH)
+	coping.append(_box_xform(
+		Vector3(centre.x, h - cap_h * 0.5, centre.z),
+		Vector3(w * COPING_OVERHANG, cap_h, d * COPING_OVERHANG)))
+
+	var along_x: bool = w >= d
+	var thick: float = minf(w, d)
+	var pier_w: float = clampf(thick * 1.15, UNIT_HEIGHT * 0.18, UNIT_HEIGHT * 0.40)
+	# ⚠️ THE PIER CANNOT BE WIDER THAN THE RUN IT STANDS IN. A short piece with a thick footprint
+	# would otherwise place two piers that overlap into one block, which reads as the piece simply
+	# having grown — the opposite of a broken silhouette.
+	pier_w = minf(pier_w, span * 0.30)
+	var count: int = clampi(int(round(span / (UNIT_HEIGHT * PIER_SPACING_BODIES))) + 1, 2, 7)
+	var pier_h: float = h * PIER_RISE
+	for i in range(count):
+		var t: float = (float(i) / float(count - 1)) - 0.5
+		var off: float = t * (span - pier_w)     # inset: the end piers stop at the footprint edge
+		var p := Vector3(
+			centre.x + (off if along_x else 0.0),
+			pier_h * 0.5,
+			centre.z + (0.0 if along_x else off))
+		piers.append(_box_xform(p, Vector3(
+			pier_w if along_x else thick, pier_h, thick if along_x else pier_w)))
+
+
+## Dressed stone for the members `_cover_architecture` adds. Takes the league's own ground tone the
+## same way `_prop_tint` does, so a crown course can never become the brightest object in a venue
+## the way the untinted `barrel` and `bench` once did.
+func _masonry_material(tint: Color) -> StandardMaterial3D:
+	var g: Color = _look()["ground"]
+	var gv: float = (g.r + g.g + g.b) / 3.0
+	var m := StandardMaterial3D.new()
+	var tex: Texture2D = Art.load_or_null("res://assets/arena/stone-block.jpg")
+	if tex != null:
+		m.albedo_texture = tex
+		m.uv1_triplanar = true
+		m.uv1_world_triplanar = true
+		m.uv1_scale = Vector3(0.45, 0.45, 0.45)
+	m.albedo_color = Color(tint.r * gv * PROP_LIFT, tint.g * gv * PROP_LIFT, tint.b * gv * PROP_LIFT)
+	m.metallic = 0.0
+	m.metallic_specular = 0.18
+	m.roughness = 0.88
+	m.rim_enabled = true
+	m.rim = 0.4
+	m.rim_tint = 0.5
+	return m
 
 
 ## ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1783,8 +2211,15 @@ const PROP_DIR := "res://assets/models/obstacles/"
 ##   MAY   180-degree yaw          — the footprint is identical under it, so the sim's rect holds
 ##   MAY   a per-section variant mesh (`<kind>_alt.glb`) — different object, same box
 ##   MAY   +-4% height             — coursing irregularity, far inside the grade's own band
-##   NEVER 90-degree yaw, non-uniform rescale, or a nudged origin — every one of those moves the
-##         drawn silhouette off the rectangle `Spatial.cover_between` is testing
+##   MAY   a 90-degree yaw ON A SQUARE SECTION ONLY — ⚠️ THIS RULE READ "NEVER 90-degree yaw" AND
+##         THE ABSOLUTE FORM WAS TOO STRONG. The reason behind it is sound and unchanged: a quarter
+##         turn swaps a rectangle's drawn extents, which moves the silhouette off the rect the sim
+##         is testing. When the two extents are EQUAL the swap is the identity, so the footprint is
+##         preserved exactly while the mesh inside it turns — and the accent layer, the one the
+##         mirror was failing to vary, is almost entirely square. The test is measured per section
+##         at the point of use, never assumed per kind.
+##   NEVER  a 90-degree yaw on a non-square section, non-uniform rescale, or a nudged origin — each
+##         of those does move the drawn silhouette off `Spatial.cover_between`'s rectangle
 ##
 ## Deterministic by construction: the seed is the section's own world position, so two runs of the
 ## same fight draw the same board (`SPATIAL_HANDOFF.md` §1 covers the sim; the renderer has no
@@ -1883,12 +2318,36 @@ func _prop_batch(kind: String, path: String, xforms: Array, suffix: String) -> b
 				var ox: float = xf.origin.x - want.x * 0.5 + seg.x * (float(cx) + 0.5)
 				var oz: float = xf.origin.z - want.z * 0.5 + seg.z * (float(cz) + 0.5)
 				var hsh: int = _piece_hash(Vector3(ox, 0.0, oz))
-				# ±4% height and a half-turn, both from the section's own position — see the
-				# `_piece_hash` header for what is allowed to vary and why nothing else is.
-				var hv: float = 1.0 + (float(hsh % 5) - 2.0) * 0.02
+				# ── ⚠️ THE VARIETY THE MIRROR WAS SUPPOSED TO PROVIDE AND DID NOT.
+				#
+				# The report: "103 pillars at 0.48 bodies and 51 boulders at 0.54 read as a rash of
+				# near-identical small shapes — and a 180-degree yaw on a near-symmetric small prop
+				# is INVISIBLE, so the mirror does nothing for variety either." That is exactly
+				# right, and it is a straightforward consequence of the rule above this function:
+				# only a half-turn was allowed, because a quarter-turn moves a rectangle's drawn
+				# silhouette off the sim's own rect.
+				#
+				# ⚠️ BUT IT DOES NOT WHEN THE RECT IS SQUARE, AND THE ACCENT LAYER IS ALMOST ALL
+				# SQUARE. A quarter-turn maps this section's drawn x-extent onto z and its z-extent
+				# onto x; when those are equal the union is byte-identical and
+				# `Spatial.cover_between` cannot tell the difference — while the MESH inside it
+				# turns through 90 degrees, which is the one rotation a small blocky prop actually
+				# reads. So the turn is gated on the SECTION's own measured squareness rather than
+				# permitted or banned globally.
+				var square: bool = absf(seg.x - seg.z) <= maxf(seg.x, seg.z) * 0.02
+				var turns: int = (hsh / 5) % (4 if square else 2)
+				# ⚠️ AND THE HEIGHT JITTER IS GRADE-AWARE NOW. ±2% was set as "coursing
+				# irregularity" and is genuinely invisible on a knee-high crate. Non-blocking cover
+				# can take far more without meaning anything different — its grade is "you shoot
+				# over it" either way — so the accent layer gets a spread the eye can actually see.
+				# BLOCKING keeps the tight band: `_probe_venue.gd` fails a blocking piece under 1.0
+				# creature heights, and 1.18 x 0.88 would cross it.
+				var blocking: bool = absf(want.y - prop_height("blocking")) < 0.01
+				var jitter: float = 0.02 if blocking else 0.055
+				var hv: float = 1.0 + (float(hsh % 5) - 2.0) * jitter
 				var basis := Basis().scaled(Vector3(s.x * lap, s.y * hv, s.z * lap))
-				if (hsh / 5) % 2 == 1:
-					basis = basis.rotated(Vector3.UP, PI)
+				if turns > 0:
+					basis = basis.rotated(Vector3.UP, PI * 0.5 * float(turns))
 				# Re-seat on the ground: the prop's own minimum, scaled, is the offset from centre.
 				placed.append(Transform3D(basis,
 					Vector3(ox, foot - ab.position.y * s.y * hv, oz)))
@@ -2051,12 +2510,228 @@ func _first_mesh(n: Node) -> Node:
 	return null
 
 
-## The kind's material tint, TAKEN INTO THE LEAGUE'S OWN VALUE RANGE. See `OBSTACLE_TINT` for why
-## the league factor belongs here and what it cost to leave it out.
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+## HUE SEPARATION — because value alone does not stop cover vanishing into its floor
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## ⚠️ THE REPORT WAS "AT MASTERS THE MAJORS HUE-MATCH THE RED-BRICK FLOOR AND NEARLY VANISH", and
+## it is exactly right: `low-wall-brick.jpg` is a red-orange brick and Masters' ground art is a
+## red-orange brick. `_probe_frame.gd` measures it as a hue distance between the piece's lit face
+## and the floor immediately beside it, and the two land within a few degrees of each other while
+## passing every luminance check in the project — because those checks only ever asked about VALUE.
+##
+## ⚠️ AND THE OLD `_prop_tint` MADE IT WORSE, NOT BETTER, WHICH IS THE PART WORTH REMEMBERING. It
+## multiplied the kind's tint by `LEAGUE_LOOK.ground` — the league's own FLOOR colour — so every
+## prop in the venue was being pushed toward the hue of the surface it needed to stand out from.
+## That was the right instinct (props must take the league's tone or they drift out of the value
+## ladder, which is the fault the `OBSTACLE_TINT` header records) applied on the wrong channel. The
+## league tone is a VALUE relationship, so it is applied as a value here: the ground colour's mean,
+## not its RGB. Every measured luminance the previous rounds tuned survives — `LEAGUE_LOOK.ground`
+## rows are near-neutral, so their mean is within a few percent of their per-channel effect — and
+## hue is freed to do the job value cannot.
+##
+## Then the collision is corrected where it actually occurs. Both the floor and the prop are
+## TEXTURES, so their colours are properties of the ART and cannot be reasoned about from the tint
+## alone; both are measured from the images themselves, once, at venue build. If the predicted
+## product lands too close to the floor, `_chroma_separated` re-solves the tint until it does not.
+##
+## ⚠️ THE CORRECTION MOVES CHROMA, NOT HUE, AND NOT VALUE — see `_chroma_separated` for the frame
+## that killed the hue version (pink walls at Wood) and `PROP_VALUE_MAX_SCALE` for the frame that
+## killed the value version (boulders out-valuing the creatures). Both were caught by looking at a
+## picture after the numbers had already agreed the change was good, which is the standing lesson
+## of this file.
+const HUE_MAX_TINT := 2.4        # a re-solved tint channel is clamped here; see `_chroma_separated`
+const PROP_MAX_SAT := 0.34       # the venue is muted; chroma belongs to the team and status channels
+
+## Average colour of a texture path, computed once per venue. ⚠️ CACHED BECAUSE `get_image()` ON A
+## COMPRESSED TEXTURE IS A DECOMPRESS: eleven kinds x every piece would be a decompress per prop.
+var _tex_avg_cache: Dictionary = {}
+
+
+func _tex_average(path: String) -> Color:
+	return _avg_of(Art.load_or_null(path), path)
+
+
+## ⚠️ KEYED BY A CALLER-SUPPLIED STRING, NOT BY A PATH, because the ground texture does NOT come
+## from a path this file can build: `Art.ground_for()` walks down the ladder to the nearest painted
+## league, so a league with no art of its own borrows a lower rung's. Reconstructing that slug here
+## would be a second copy of that rule, and the two would part company the first time a league was
+## painted.
+func _avg_of(tex: Texture2D, cache_key: String) -> Color:
+	if _tex_avg_cache.has(cache_key):
+		return _tex_avg_cache[cache_key]
+	var out := Color(0, 0, 0, 0)      # alpha 0 = "no answer", never a plausible-looking grey
+	if tex != null:
+		var img: Image = tex.get_image()
+		if img != null:
+			# ⚠️ A 1x1 RESIZE, NOT A PIXEL LOOP. `Image.resize` box-filters on the way down, which is
+			# the average, and it runs in the engine rather than in a GDScript double loop over a
+			# 1024x1024 texture (which is 1M `get_pixel` calls per kind).
+			var small: Image = img.duplicate()
+			if small.is_compressed():
+				small.decompress()
+			small.resize(1, 1, Image.INTERPOLATE_LANCZOS)
+			out = small.get_pixel(0, 0)
+			out.a = 1.0
+	_tex_avg_cache[cache_key] = out
+	return out
+
+
+## The floor's own average colour as DRAWN — the ground art times the league's tone. This is the
+## thing cover has to separate from, and it is neither the texture alone nor the tint alone.
+## The multiplier that lands a venue-shell surface at `ratio` of THIS league's drawn floor value.
+##
+## `base` is what the surface would be drawn as at a multiplier of 1.0 (its texture average times
+## the league tone, or the tone alone when there is no art). Both sides are albedo and both sides
+## are lit by the same lamps, so the albedo ratio is the rendered ratio to within the shading term
+## — which is why this can be solved once at build time instead of measured off a frame.
+func _shell_tone(base: Color, ratio: float) -> float:
+	var floor_l: float = _floor_average().get_luminance()
+	var base_l: float = maxf(0.001, base.get_luminance())
+	return clampf(ratio * floor_l / base_l, SHELL_TONE_MIN, SHELL_TONE_MAX)
+
+
+func _floor_average() -> Color:
+	var g: Color = _look()["ground"]
+	var t: Color = _avg_of(Art.ground_for(league_name, _league_names()), "ground:" + league_name)
+	if t.a < 0.5:
+		# No readable ground art: the floor IS the tone, which is what `_build_world` falls back to.
+		return Color(0.55 * g.r, 0.50 * g.g, 0.43 * g.b)
+	return Color(t.r * g.r, t.g * g.g, t.b * g.b)
+
+
+## Re-solve `tint` so the drawn cover separates from its floor on the CHROMA axis, at constant
+## value — the only axis with room left once the value ladder has claimed the other one.
+##
+## ⚠️ THIS WAS A HUE ROTATION FIRST AND THE HUE ROTATION WAS WRONG. Rotating a colour away from the
+## floor's hue is arithmetically clean and visually indefensible: Wood's floor is brown (hue ~0.08),
+## so a 0.17 rotation put the brick walls at hue 0.91 and the boulders at 0.25 — **PINK WALLS AND
+## GREEN ROCKS**, which is not a legibility fix, it is a colour accident. `ART_BIBLE_GUILD_COLOURS.md`
+## allows three colour systems and forbids a fourth; a venue that invents magenta masonry has broken
+## the rule far worse than the collision it was solving. It shipped as far as one captured frame and
+## no further, which is the entire argument for judging from frames rather than from tables.
+##
+## ⚠️ THE REPLACEMENT USES THE AXIS A REAL VENUE USES: chroma, not hue. Grey stone reads
+## effortlessly against a red-brick floor — not because its hue differs but because it has almost
+## none. So when the predicted cover colour sits too close to the floor in the opponent-colour
+## plane, its SATURATION is pulled away from the floor's, toward stone. Every rotation this can
+## produce stays inside the masonry-and-timber gamut, because desaturating a brick gives you a
+## paler brick and never gives you a pink one.
+##
+## ⚠️ AND IT MOVES AT CONSTANT VALUE, which is what makes it safe to use at all. `_probe_venue.gd`
+## needs stands < walls < floor < cover < creatures, and the cast sits only ~1.12-1.2x the floor, so
+## the value band available to cover is a few percent wide. A chroma move cannot spend any of it.
+const CHROMA_MIN_SEP := 0.115    # opponent-plane distance; see `_chroma_of`
+const CHROMA_PULL := 0.42        # how far toward stone a colliding kind is taken
+const CHROMA_SAT_MIN := 0.045    # never fully grey — a colourless prop reads as untextured
+
+
+## Two cheap opponent-colour axes. ⚠️ NOT HUE, and the difference is the whole point: hue is
+## undefined at low saturation and jumps wildly near it, which is why the first version of the
+## probe reported a `bench` at 0.003 hue distance and a `barrel` at 0.148 from art that looks
+## nearly identical. Distance in this plane behaves at every saturation, including zero.
+static func _chroma_of(c: Color) -> Vector2:
+	return Vector2(c.r - c.g, 0.5 * (c.r + c.g) - c.b)
+
+
+static func _chroma_separated(tint: Color, tex_avg: Color, floor_col: Color) -> Color:
+	if tex_avg.a < 0.5:
+		return tint
+	var predicted := Color(tex_avg.r * tint.r, tex_avg.g * tint.g, tex_avg.b * tint.b)
+	if _chroma_of(predicted).distance_to(_chroma_of(floor_col)) >= CHROMA_MIN_SEP:
+		return tint
+	# Toward stone when the floor carries the colour, and a little warmer when the floor is grey —
+	# in both cases AWAY from whatever the floor is doing, which is the only requirement.
+	var target_s: float
+	if floor_col.s >= predicted.s:
+		target_s = maxf(CHROMA_SAT_MIN, predicted.s - (predicted.s - CHROMA_SAT_MIN) * CHROMA_PULL)
+	else:
+		target_s = minf(PROP_MAX_SAT, predicted.s + (PROP_MAX_SAT - predicted.s) * CHROMA_PULL)
+	var target := Color.from_hsv(predicted.h, target_s, predicted.v)
+	return Color(
+		clampf(target.r / maxf(0.02, tex_avg.r), 0.0, HUE_MAX_TINT),
+		clampf(target.g / maxf(0.02, tex_avg.g), 0.0, HUE_MAX_TINT),
+		clampf(target.b / maxf(0.02, tex_avg.b), 0.0, HUE_MAX_TINT))
+
+
+## The kind's material tint, TAKEN INTO THE LEAGUE'S OWN VALUE RANGE and then separated in chroma from
+## the floor it stands on. See `OBSTACLE_TINT` for what the league factor is for, and the block
+## above for why it is applied as a VALUE and no longer as a colour.
 func _prop_tint(kind: String) -> Color:
 	var t: Color = OBSTACLE_TINT.get(kind, PROP_TINT_DEFAULT)
 	var g: Color = _look()["ground"]
-	return Color(t.r * g.r * PROP_LIFT, t.g * g.g * PROP_LIFT, t.b * g.b * PROP_LIFT)
+	var gv: float = (g.r + g.g + g.b) / 3.0
+	var scaled := Color(t.r * gv * PROP_LIFT, t.g * gv * PROP_LIFT, t.b * gv * PROP_LIFT)
+	var tex_path: String = str(OBSTACLE_TEX.get(kind, ""))
+	if tex_path == "":
+		return scaled
+	var tex_avg: Color = _tex_average(tex_path)
+	var floor_avg: Color = _floor_average()
+	scaled = _value_separated(scaled, tex_avg, floor_avg)
+	return _chroma_separated(scaled, tex_avg, floor_avg)
+
+
+## ── THE PER-LEAGUE VALUE CORRECTION THE `PROP_LIFT` HEADER ASKED FOR AND COULD NOT DO ──────────
+##
+## ⚠️ `PROP_LIFT`'s own note names this exactly: *"the sharp [instrument] would be a per-league prop
+## factor measured off each ground"*, and says it was not worth doing speculatively. It is worth
+## doing now, because the frame probe measured the damage. A prop takes the league's `ground`
+## MULTIPLIER but has never seen how bright that league's ground TEXTURE actually is, so the
+## prop-against-floor relationship the tints were calibrated for holds only at the league they were
+## calibrated on. Measured, at a bar of 0.16 stops: Masters `low_wall` 0.13 · Masters `boulder` 0.07
+## · Tamers Apex `fence` 0.09 · Tamers Apex `pillar` 0.08 — cover drawn at the same value as the
+## floor under it, in the leagues that matter most.
+##
+## Both terms are now READ FROM THE ART: the floor's average as drawn (texture x league tone) and
+## the kind's own texture average. When the predicted product lands too close to the floor, the
+## tint is scaled until it does not.
+##
+## ⚠️ IT FIRES ONLY ON A COLLISION, WHICH IS WHY IT DOES NOT UNDO THREE ROUNDS OF TUNING. A kind
+## already sitting clear of its floor is returned untouched; the correction is a floor under the
+## relationship, not a replacement for the authored values.
+##
+## ⚠️ AND IT PUSHES UP, NEVER DOWN. `OBSTACLE_TINT` records what happened when props were allowed
+## to sink: "planter at 0.75x, which is what [a stain on the floor] looks like". Cover is an object
+## standing on the ground and reads a little above it. The clamp is what stops that becoming a
+## bright slab on a very dark league — past 1.8x the authored tint, the honest answer is that the
+## league's ground art is too bright, not that its cover should glow.
+const PROP_OVER_FLOOR := 1.24     # predicted drawn value of cover against its own floor
+## ⚠️ 0.30 PREDICTED, TO BUY 0.16 RENDERED, AND THE GAP IS NOT SLACK — IT IS THE LAMP. This
+## prediction is an albedo product; the pixel has been through a strongly warm key, a cool fill, a
+## FILMIC curve and the fog term, all of which compress differences. Measured, a predicted 0.075 of
+## HUE separation rendered as 0.030. Calibrate this against `_probe_frame.gd`, never against the
+## arithmetic.
+const PROP_VALUE_MIN_SEP := 0.30
+## ⚠️ 1.8 -> 1.30 -> 1.18 -> 1.10, AND THE LAST CUT IS THE IMPORTANT ONE BECAUSE IT WAS A
+## REGRESSION CAUGHT BY LOOKING. At 1.18 the Wood boulders measured 0.96 stops above their floor
+## and rendered as bright cream lumps that OUT-VALUED THE CREATURES — the one thing
+## `ART_DIRECTION.md` never allows, fixed on one axis by breaking a more important rule on another.
+##
+## ⚠️ THE REAL LESSON IS THAT VALUE IS THE WRONG CHANNEL FOR THIS JOB, AND THE LADDER SAYS SO.
+## `_probe_venue.gd` requires stands < walls < floor < cover < creatures, and the cast sits only
+## ~1.12-1.2x the floor — so the whole band available to cover is a few percent wide. Asking value
+## to also carry 0.16 stops of separation is asking it to be in two places at once. HUE is where
+## the room is: `_hue_separated` moves a colour at constant S and V, so it cannot touch the ladder
+## at all. Value is left as a small nudge for the case where a kind is literally the same value as
+## its floor, and it is capped where it cannot reach the cast.
+const PROP_VALUE_MAX_SCALE := 1.10
+
+
+static func _luma_of(c: Color) -> float:
+	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+
+
+static func _value_separated(tint: Color, tex_avg: Color, floor_col: Color) -> Color:
+	if tex_avg.a < 0.5:
+		return tint
+	var fv: float = _luma_of(floor_col)
+	var pv: float = _luma_of(Color(tex_avg.r * tint.r, tex_avg.g * tint.g, tex_avg.b * tint.b))
+	if fv < 0.01 or pv < 0.004:
+		return tint
+	if absf(log(pv / fv) / log(2.0)) >= PROP_VALUE_MIN_SEP:
+		return tint
+	var k: float = clampf((fv * PROP_OVER_FLOOR) / pv, 1.0, PROP_VALUE_MAX_SCALE)
+	return Color(tint.r * k, tint.g * k, tint.b * k)
 
 
 func _obstacle_material(kind: String) -> StandardMaterial3D:

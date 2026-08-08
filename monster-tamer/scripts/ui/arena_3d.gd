@@ -20,11 +20,12 @@
 ## misses the fight. The camera below FOLLOWS the living units' own spread — center and zoom both
 ## re-fit every frame from their actual positions — rather than fitting a static formula.
 ##
-## ⚠️ THIS RENDERER RUNS STANDALONE WHILE STREAM A (`spatial_sim.gd`) IS MID-REWRITE. The frame
-## contract promises `intent`/`reason` per unit and a `projectiles` array; as of this pass the sim
-## does not populate them yet. Every read of those fields is guarded (`.get(..., default)`) and
-## degrades to a working, honest screen with the field simply absent — never a crash, never a lie
-## about data that isn't there.
+## ⚠️ SUPERSEDED 2026-08-08 — THE RENDERER SWITCH LANDED. This paragraph used to say the screen
+## ran standalone while `spatial_sim.gd` was mid-rewrite, with `intent`/`reason` and `projectiles`
+## promised but unpopulated. All three are now real: this screen runs `scripts/sim/sim.gd` with the
+## `combat_tree` brains, which emit intent, reason, posture and in-flight projectiles every tick.
+## The guarded `.get(..., default)` reads stay — they are still the correct shape for a stream
+## that will keep growing — but they are no longer papering over an absent producer.
 extends Node3D
 
 const TacticsScript = preload("res://scripts/tactics.gd")
@@ -34,6 +35,22 @@ const CreatureAnimScript = preload("res://scripts/ui/creature_anim.gd")
 const CreatureRigScript = preload("res://scripts/ui/creature_rig.gd")
 const SPATIAL_SIM_PATH := "res://scripts/spatial_sim.gd"
 const ARENA_LAYOUT_PATH := "res://scripts/arena_layout.gd"
+
+## ── THE RENDERER SWITCH (2026-08-08) ────────────────────────────────────────────────────────
+## This screen ran `spatial_sim.gd` + `ai/monster_tree.gd` — both carrying SUPERSEDED banners —
+## while the rewritten stack (`scripts/sim/`, `scripts/ai/combat_tree.gd`) only ever ran in the
+## watch scene and the probes. `USE_NEW_SIM` closes that gap; it is a SEAM, not a deletion, so
+## the legacy engine stays one constant away for as long as the comparison is worth having.
+##
+## ⚠️ THE NEW SIM DOES NOT SPEAK THE OLD FRAME CONTRACT, so the switch is a sim swap PLUS a
+## translation (`_adapt_result`). Everything below the translation — 2000 lines of nameplates,
+## cast bars, VFX, camera and log — is untouched and still reads the legacy field names.
+## The translation is a pure RE-KEYING of what the stream already states: string unit ids become
+## the array indices this file addresses nodes by, ticks become seconds, status records become
+## their kinds, and the event list becomes the flat log. It invents no fact about the fight.
+const USE_NEW_SIM := true
+const NewSim = preload("res://scripts/sim/sim.gd")
+const KitLib = preload("res://scripts/sim/kit.gd")
 
 ## ⚠️ GROUND UNITS ARE NOT WORLD UNITS, DELIBERATELY.
 ## `ARENA_BLUEPRINT` sizes a 5v5 ground at 160x88 — realistic for a stadium, and far too large to
@@ -404,7 +421,10 @@ func _resolve_fight() -> void:
 	if career2 != null and not committed.is_empty():
 		fight_seed = hash([int(career2.week), int(career2.league_index),
 			int(cup2.current_round) if cup2 != null else 0])
-	if ResourceLoader.exists(SPATIAL_SIM_PATH):
+	if USE_NEW_SIM:
+		result = await _run_new_sim(fight_seed)
+		used_spatial = true
+	elif ResourceLoader.exists(SPATIAL_SIM_PATH):
 		var SimScript = load(SPATIAL_SIM_PATH)
 		var sim = SimScript.new(team_a, team_b, fight_seed,
 			committed.get("planA", {}), committed.get("planB", {}), orders,
@@ -429,6 +449,404 @@ func _resolve_fight() -> void:
 
 
 var _obstacles: Array = []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# THE NEW STACK — build it, run it, translate its stream into the contract this screen speaks
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ THE TWO CONTRACTS, WRITTEN DOWN, because the whole switch hangs on the differences:
+#
+#   field            legacy (`spatial_sim.gd:_record_frame`)  new (`sim/sim.gd:_emit_frame`)
+#   ───────────────  ──────────────────────────────────────  ─────────────────────────────────
+#   frame clock      `t`, seconds                            `tick`, int  (× `Sim.DT`)
+#   unit key         `id`, int index into `all_units`         `id`, String ("a00"/"b03")
+#   statuses         [String]                                 [{kind, left}]   ← RICHER
+#   movement         `moveDir`                                `move_dir`
+#   states           idle/advance/retreat/attack/stunned/cast  idle/advance/cast/dead
+#   per-unit extras  targetId, weary                           team, max_hp, max_mp, posture
+#   shots            `shots` (impact records)                  `events` (17 kinds)
+#   projectiles      {id, from, to, progress, kind}            {from, target_id, pos, move,
+#                                                               will_hit, aim}   ← RICHER
+#   result           winner/duration/log/survivors/ground      winner/ticks/frames/decision_logs
+#
+# WHERE THE NEW STREAM IS RICHER (follow-up wins, none taken this pass so the switch stays one
+# change): per-status REMAINING SECONDS (the plate could count a stun down instead of showing a
+# bare chip); `posture` (the tree's own words for what it is doing, which is a better ticker line
+# than `intent`); `will_hit` on a projectile in flight (a doomed shot could read differently
+# BEFORE it lands — the single most legible thing an autobattler can show); `max_hp`/`max_mp` on
+# the frame itself, which would retire this file's one honest read of static roster data.
+#
+# WHERE THE NEW STREAM IS MISSING SOMETHING THIS SCREEN USED — stated, never worked around:
+#   • `weary` — the care loop (`innate_fx.gd`: potency-scaled innates, the weary flag, startWard)
+#     is NOT wired into `sim/sim.gd` at all. The pseudo-status chip now never lights. Raising a
+#     monster once again changes its numbers and nothing else on the field.
+#   • GRADED COVER — `sim/sim.gd` hands obstacles to navigation and nothing else. The soft/hard
+#     accuracy debuff (`Spatial.cover_between`) has no consumer, so cover is currently pathing
+#     furniture only. `SPATIAL_COMBAT_DESIGN.md`'s graded cover is unbuilt on the new stack.
+#   • `targetId` — absent. Nothing reads it here, so nothing broke; noted so a future focus-line
+#     overlay knows it must be added sim-side rather than guessed at.
+#   • `manmark` — `combat_tree` has a "marked" priority but it reads `ordered_id`, a blackboard
+#     key `sim.gd` documents as "arrives when the tactics screen wires in (v1: keys absent)".
+#     The order therefore degrades to the team default here rather than silently doing nothing
+#     under a different name.
+#
+# ⚠️⚠️ AND THE ONE THAT COSTS A WHOLE FIGHT IF YOU MISS IT: THE TWO ENGINES USE DIFFERENT
+# COORDINATE ORIGINS. `Spatial.deploy_positions`/`deploy_zone`/`clamp_to_ground` — and therefore
+# this file's `_to_world`, the deployment board and every obstacle rect — put the board's CORNER
+# at (0,0) and span [0,W]x[0,H]. `sim/nav_service.build()` lays its floor CENTRED on the origin,
+# spanning [-W/2,W/2]x[-H/2,H/2] (`_watch_sim.gd` deploys at x=±38 on a 110-wide ground, which is
+# what makes it visible). Feeding corner-frame positions to the new sim puts every unit clean off
+# the navmesh: `map_get_path` returns empty, nobody moves, and the fight runs to the 1800-tick cap
+# looking exactly like a broken AI. MEASURED HERE: the first run of this switch produced 1800
+# frames (the cap) instead of the legacy 252. The offset below is the entire fix — sim-side is
+# centred, renderer-side is corner, and the translation happens on the boundary in both directions.
+
+
+## Build, run and translate. Returns a LEGACY-shaped result dict so `_resolve_fight` and every
+## consumer below it (playback, report_ui, cup continuation) need no change.
+func _run_new_sim(fight_seed: int) -> Dictionary:
+	var us: Array = _new_sim_inputs()
+	# ⚠️ ONLY `blocking`-grade obstacles carve the navmesh. `nav_service.build()` carves EVERY
+	# rect it is handed, and the graded-cover design is explicit that soft/hard pieces are
+	# furniture you walk through and shoot worse across — carving them would make five barrels
+	# into five walls. The legacy sim made the same split at its own bake; it has to be made
+	# HERE now because the new sim takes the list as given.
+	var off: Vector2 = ground_size * 0.5
+	var nav_obstacles: Array = []
+	for ob in _obstacles:
+		if str((ob as Dictionary).get("grade", "blocking")) == Sp.COVER_BLOCKS_LOS_GRADE:
+			var r: Rect2 = (ob as Dictionary)["rect"]
+			nav_obstacles.append({"rect": Rect2(r.position - off, r.size)})
+	var sim = NewSim.new()
+	sim.setup(fight_seed, us, ground_size, nav_obstacles)
+	# The probe pair spans the board along the deploy axis — the same shape `_watch_sim.gd` uses.
+	var half_x: float = ground_size.x * 0.5 - 4.0
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-half_x, 0), Vector2(half_x, 0))
+	if not ok:
+		# Honest failure: a navmesh that never synced would otherwise produce a fight where every
+		# unit stands still, which reads as a rendering bug and is not one.
+		push_error("arena_3d: navigation never became ready — the fight cannot resolve")
+		return {"winner": "draw", "duration": 0.0, "log": [], "frames": [],
+			"survivorsA": team_a.size(), "survivorsB": team_b.size(),
+			"groundSize": ground_size, "obstacles": _obstacles}
+	var raw: Dictionary = sim.run()
+	sim.nav.free_rids()   # the teardown every discarded sim owes (nav_service.gd)
+	var adapted: Dictionary = _adapt_result(raw)
+	# ⚠️ ONE LINE THAT WOULD HAVE CAUGHT THE COORDINATE BUG IMMEDIATELY. A fight that runs to the
+	# 1800-tick cap with an empty log is a sim that never engaged; a headless probe reading only
+	# `frames.size()` cannot tell that from a long fight. Mirrors `_watch_sim.gd`'s own WATCH line.
+	print("ARENA: winner=%s ticks=%d frames=%d events=%d survivors=%d/%d" % [
+		str(adapted.winner), int(raw.get("ticks", 0)), (adapted.frames as Array).size(),
+		(adapted.log as Array).size(), int(adapted.survivorsA), int(adapted.survivorsB)])
+	return adapted
+
+
+## `all_units` order IS the address space of this whole file — `nodes[k]`, `all_units[k]` and
+## every frame record share the index. The new sim sorts its units by STRING id, so the ids are
+## authored `a00…`/`b00…` with zero padding so that sort reproduces exactly this order. The
+## assert in `_adapt_result` proves it rather than trusting it.
+func _new_sim_inputs() -> Array:
+	var committed: Dictionary = TacticsScript.committed
+	var team_size: int = maxi(team_a.size(), team_b.size())
+	var pos_a: Array = Sp.deploy_positions(team_size, "A")
+	var pos_b: Array = Sp.deploy_positions(team_size, "B")
+	var deploy_a: Dictionary = committed.get("deployA", {})
+	var off: Vector2 = ground_size * 0.5   # corner-frame -> centre-frame (see the ⚠️⚠️ above)
+	var out: Array = []
+	for k in range(all_units.size()):
+		var m = all_units[k]
+		var side := "A" if k < team_a.size() else "B"
+		var slot: int = k if side == "A" else k - team_a.size()
+		var src: Array = pos_a if side == "A" else pos_b
+		var p: Vector2 = src[slot] if slot < src.size() else src[src.size() - 1]
+		if side == "A" and deploy_a.has(m):
+			# The dragged chip is a real start — clamped to the legal zone by the SAME rule the
+			# legacy sim enforced sim-side (`Sp.deploy_zone` owns what is legal, not the board).
+			var zone: Rect2 = Sp.deploy_zone(team_size, "A")
+			var want: Vector2 = deploy_a[m]
+			p = Vector2(clampf(want.x, zone.position.x, zone.position.x + zone.size.x),
+				clampf(want.y, zone.position.y, zone.position.y + zone.size.y))
+		var names: Array = []
+		for mv in m.moveset:
+			names.append(str((mv as Dictionary).get("name", "")))
+		out.append({
+			"id": ("a%02d" % slot) if side == "A" else ("b%02d" % slot),
+			"team": side,
+			"pos": p - off,
+			"stats": m.stats,
+			# `Sp.speed_of` is the arena's own scale-aware speed curve — the same one the legacy
+			# sim moved bodies with, so the fight closes at the pace the board was sized for.
+			"speed": Sp.speed_of(float(m.stats.get("DEX", 10.0))),
+			"kit": KitLib.build(names, GameData.moves),
+			"tactics": _new_sim_tactics(m, side),
+		})
+	return out
+
+
+## THE ORDERS TRANSLATION. `tactics.gd`'s vocabulary is camelCase and mirrors `core.ts`; the
+## tree's is snake_case. ⚠️ THIS IS WHERE THE POSITIONAL INTENT FINALLY BECOMES REAL — the
+## deployment board has stored `positionalIntent` (hold/push/wings/dive/guard) and `guardedAlly`
+## for months against a sim that read neither (`tactics.gd`'s own header says so). `combat_tree`
+## takes exactly those five values, so the switch turns the eighth built-and-unreachable feature
+## on by wiring rather than by writing anything new.
+func _new_sim_tactics(m, side: String) -> Dictionary:
+	var committed: Dictionary = TacticsScript.committed
+	var plan: Dictionary = committed.get("planA" if side == "A" else "planB", {})
+	var orders: Dictionary = committed.get("ordersA" if side == "A" else "ordersB", {})
+	var own: Dictionary = orders.get(m, {})
+	var t: Dictionary = {}
+
+	var tp := str(own.get("targetPriority", plan.get("targetPriority", "")))
+	match tp:
+		"casters": t["target_priority"] = "casters"
+		"tanks": t["target_priority"] = "tanks"
+		# "manmark" has no live consumer (see the contract note above) — it degrades to the
+		# documented team default rather than to a different-but-plausible-looking behaviour.
+		_: t["target_priority"] = "weakest"
+
+	var intent := str(own.get("positionalIntent", plan.get("positionalIntent", "")))
+	t["positional"] = intent if intent in ["hold", "push", "wings", "dive", "guard"] else "push"
+	if t["positional"] == "guard":
+		var charge = own.get("guardedAlly")
+		var ci: int = all_units.find(charge) if charge != null else -1
+		if ci >= 0 and ci < team_a.size():
+			t["guard_ally"] = "a%02d" % ci
+		elif ci >= team_a.size():
+			t["guard_ally"] = "b%02d" % (ci - team_a.size())
+		else:
+			# A guard with nobody to guard is a posture with no meaning — fall to holding the
+			# line, which is what "stay near where you deployed" already means.
+			t["positional"] = "hold"
+
+	# `cautious` is `tactics.gd`'s compressed stand-in for the preserve axis; the tree's own
+	# survival axis is `when_hurt`, and falling back IS what refusing to trade down looks like
+	# on a field with positions. aggressive/balanced remain the engine default, as the UI says.
+	t["when_hurt"] = "fall_back" if str(own.get("temperament", "balanced")) == "cautious" else "fight_on"
+	# Mirror the flank so the two sides' wings do not converge on the same corner.
+	t["wing_side"] = 1.0 if side == "A" else -1.0
+	return t
+
+
+## ── THE TRANSLATION ────────────────────────────────────────────────────────────────────────
+## Pure re-keying of the new stream into the legacy contract. Every value below is READ from the
+## stream; the only computed things are index-from-id, seconds-from-ticks, and the legacy state
+## words `attack`/`stunned`, both of which the stream states as facts (a strike event with this
+## unit as `from`; an `incapacitates` status in its own list) and neither of which is a guess
+## about the fight.
+func _adapt_result(raw: Dictionary) -> Dictionary:
+	var off: Vector2 = ground_size * 0.5   # centre-frame -> corner-frame (see the ⚠️⚠️ above)
+	var idx_of: Dictionary = {}
+	for k in range(all_units.size()):
+		var side := "A" if k < team_a.size() else "B"
+		var slot: int = k if side == "A" else k - team_a.size()
+		idx_of[("a%02d" % slot) if side == "A" else ("b%02d" % slot)] = k
+
+	var raw_frames: Array = raw.get("frames", [])
+	# ⚠️ PROVE THE ADDRESS SPACE, DO NOT ASSUME IT. `nodes[k]`, `all_units[k]` and every frame
+	# record must share one index. The sim sorts by string id, so this holds only while the
+	# zero-padded ids sort into roster order — an eleventh monster on a side ("a10" vs "a9")
+	# is exactly the kind of thing that would break it silently, which is why it is padded AND
+	# checked rather than either alone.
+	if not raw_frames.is_empty():
+		var first: Array = raw_frames[0].get("units", [])
+		assert(first.size() == all_units.size(),
+			"sim returned %d units for a roster of %d" % [first.size(), all_units.size()])
+		for i in range(first.size()):
+			assert(int(idx_of.get(str(first[i].get("id", "")), -1)) == i,
+				"sim unit order does not match the roster order at index %d" % i)
+			# ⚠️ AND PROVE THE FRAME. Corner-frame positions must land inside [0,W]x[0,H]; the
+			# centre/corner mix-up above is invisible to every "did it run" check and produces a
+			# fight rendered off the edge of the board, so it gets a tripwire of its own.
+			var fp: Vector2 = (first[i].get("pos", Vector2.ZERO) as Vector2) + off
+			assert(fp.x >= 0.0 and fp.x <= ground_size.x and fp.y >= 0.0 and fp.y <= ground_size.y,
+				"unit %d deploys off the board at %s (ground %s)" % [i, fp, ground_size])
+	var out_frames: Array = []
+	var log: Array = [{"kind": "start", "t": 0.0}]
+	var last_alive_a := team_a.size()
+	var last_alive_b := team_b.size()
+
+	for rf in raw_frames:
+		var t: float = float(int(rf.get("tick", 0))) * NewSim.DT
+		var events: Array = rf.get("events", [])
+		# Who STRUCK this tick — the legacy `attack` state, taken from the event list rather
+		# than derived from motion.
+		var struck: Dictionary = {}
+		for e in events:
+			if str(e.get("kind", "")) in ["strike", "cast_done", "proj_hit", "miss", "cast_miss"]:
+				struck[str(e.get("from", ""))] = true
+
+		var units_out: Array = []
+		var alive_a := 0
+		var alive_b := 0
+		for rec in (rf.get("units", []) as Array):
+			var uid := str(rec.get("id", ""))
+			var k: int = int(idx_of.get(uid, -1))
+			var alive: bool = bool(rec.get("alive", true))
+			if alive:
+				if uid.begins_with("a"):
+					alive_a += 1
+				else:
+					alive_b += 1
+			var kinds: Array = []
+			var incap := false
+			for s in (rec.get("statuses", []) as Array):
+				var kind := str((s as Dictionary).get("kind", ""))
+				kinds.append(kind)
+				if bool((GameData.field_status.get(kind, {}) as Dictionary).get("incapacitates", false)):
+					incap = true
+			var state := str(rec.get("state", "idle"))
+			if alive:
+				if incap:
+					state = "stunned"
+				elif state != "cast" and struck.has(uid):
+					state = "attack"
+			units_out.append({
+				# centre-frame -> corner-frame; facing/move_dir are DIRECTIONS and never shift.
+				"id": k, "pos": (rec.get("pos", Vector2.ZERO) as Vector2) + off,
+				"facing": rec.get("facing", Vector2(1, 0)),
+				"moveDir": rec.get("move_dir", Vector2.ZERO),
+				# `weary` is not on the new stream at all (see the contract note) — emitted false
+				# so the chip is honestly absent rather than randomly present.
+				"weary": false,
+				"castMove": str(rec.get("castMove", "")),
+				"castFrac": float(rec.get("castFrac", 0.0)),
+				"hp": float(rec.get("hp", 0)), "mp": float(rec.get("mp", 0)),
+				"alive": alive, "state": state, "statuses": kinds,
+				"targetId": -1,
+				"intent": str(rec.get("intent", "")), "reason": str(rec.get("reason", "")),
+			})
+		last_alive_a = alive_a
+		last_alive_b = alive_b
+
+		var shots: Array = []
+		# A projectile move emits `proj_launch` AND `cast_done` on the same tick — the damage is
+		# committed at launch but ARRIVES later, so only the arrival (`proj_hit`) may draw an
+		# impact. Without this the shot would flash twice: once in the shooter's face.
+		var launched: Dictionary = {}
+		for e in events:
+			if str(e.get("kind", "")) == "proj_launch":
+				launched["%s|%s" % [str(e.get("from", "")), str(e.get("move", ""))]] = true
+		for e in events:
+			var kind := str(e.get("kind", ""))
+			var from_i: int = int(idx_of.get(str(e.get("from", "")), -1))
+			var to_i: int = int(idx_of.get(str(e.get("to", "")), -1))
+			match kind:
+				"strike", "miss":
+					shots.append({"fromId": from_i, "toId": to_i, "kind": "melee",
+						"hit": kind == "strike", "dmg": int(e.get("dmg", 0)),
+						"crit": bool(e.get("crit", false)), "move": "Attack", "arc": "front"})
+				"cast_done", "proj_hit", "cast_miss":
+					var mvn := str(e.get("move", ""))
+					if kind == "cast_done" and launched.has("%s|%s" % [str(e.get("from", "")), mvn]):
+						continue
+					shots.append({"fromId": from_i, "toId": to_i,
+						"kind": _shot_kind_of(mvn),
+						"hit": kind != "cast_miss", "dmg": int(e.get("dmg", 0)),
+						"crit": bool(e.get("crit", false)), "move": mvn, "arc": "front"})
+			var le := _adapt_event(e, t)
+			if not le.is_empty():
+				log.append(le)
+
+		var projs: Array = []
+		for p in (rf.get("projectiles", []) as Array):
+			var pd: Dictionary = p
+			# The new stream carries no projectile id, so one is MINTED from the shot's own
+			# identity (shooter + target + move) — stable across frames, which is all
+			# `_find_projectile` needs to interpolate a streak between two frames.
+			var pid: int = hash("%s>%s|%s" % [str(pd.get("from", "")), str(pd.get("target_id", "")),
+				str(pd.get("move", ""))])
+			projs.append({"id": pid, "from": (pd.get("pos", Vector2.ZERO) as Vector2) + off,
+				"to": (pd.get("aim", pd.get("pos", Vector2.ZERO)) as Vector2) + off,
+				"progress": 0.0,
+				"kind": _shot_kind_of(str(pd.get("move", "")))})
+
+		out_frames.append({"t": t, "units": units_out, "shots": shots, "projectiles": projs})
+
+	var duration: float = float(int(raw.get("ticks", 0))) * NewSim.DT
+	var winner := str(raw.get("winner", ""))
+	if winner == "":
+		winner = "draw"
+	log.append({"kind": "end", "winner": winner, "duration": duration, "t": duration})
+	_write_back_final(out_frames)
+	return {"winner": winner, "duration": duration, "log": log,
+		"survivorsA": last_alive_a, "survivorsB": last_alive_b,
+		"groundSize": ground_size, "obstacles": _obstacles, "frames": out_frames,
+		"decisionLogs": raw.get("decision_logs", {})}
+
+
+## A move's CHANNEL is what the VFX and projectile art key off. It comes from the authored move
+## (already loaded into `_move_by_name` for the ability-VFX cascade), never from a guess.
+func _shot_kind_of(move_name: String) -> String:
+	var mv: Dictionary = _move_by_name.get(move_name, {})
+	return str(mv.get("channel", "melee"))
+
+
+## Event → legacy log record. The log dispatch (`_log_event`) addresses monsters by SPECIES NAME,
+## so ids are resolved through `all_units` here — the one place the two vocabularies meet.
+func _adapt_event(e: Dictionary, t: float) -> Dictionary:
+	var from_n := _name_of_sim_id(str(e.get("from", "")))
+	var to_n := _name_of_sim_id(str(e.get("to", "")))
+	match str(e.get("kind", "")):
+		"strike":
+			return {"kind": "hit", "attacker": from_n, "target": to_n, "move": "Attack",
+				"dmg": int(e.get("dmg", 0)), "crit": bool(e.get("crit", false)), "t": t}
+		"cast_done", "proj_hit":
+			return {"kind": "hit", "attacker": from_n, "target": to_n,
+				"move": str(e.get("move", "")), "dmg": int(e.get("dmg", 0)),
+				"crit": bool(e.get("crit", false)), "t": t}
+		"miss":
+			return {"kind": "miss", "attacker": from_n, "target": to_n, "move": "Attack", "t": t}
+		"cast_miss":
+			return {"kind": "miss", "attacker": from_n, "target": to_n,
+				"move": str(e.get("move", "")), "t": t}
+		"status_applied":
+			return {"kind": "status_apply", "unit": to_n, "status": str(e.get("status", "")), "t": t}
+		"status_expire":
+			return {"kind": "status_expire", "unit": to_n, "status": str(e.get("status", "")), "t": t}
+		"heal":
+			return {"kind": "heal", "caster": from_n, "unit": to_n, "move": str(e.get("move", "")),
+				"amount": int(e.get("amount", 0)), "t": t}
+		"buff":
+			return {"kind": "buff", "caster": from_n, "unit": to_n,
+				"move": str(e.get("move", "")), "t": t}
+		"cleanse":
+			return {"kind": "cleanse", "by": from_n, "unit": to_n, "move": str(e.get("move", "")),
+				"broke": e.get("broke", []), "t": t}
+		"interrupt":
+			# ⚠️ The new `interrupt` event names the KICKER and the victim but not the cast it
+			# denied. The log line says so rather than inventing a move name.
+			return {"kind": "interrupt", "unit": to_n, "move": "its cast",
+				"reason": "%s kicked it" % from_n, "t": t}
+		"death":
+			return {"kind": "death", "unit": _name_of_sim_id(str(e.get("id", ""))), "t": t}
+	return {}
+
+
+func _name_of_sim_id(sim_id: String) -> String:
+	if sim_id == "":
+		return "?"
+	var slot: int = sim_id.substr(1).to_int()
+	var k: int = slot if sim_id.begins_with("a") else team_a.size() + slot
+	return str(all_units[k].species_name) if k >= 0 and k < all_units.size() else "?"
+
+
+## ⚠️ THE NEW SIM DOES NOT TOUCH THE MONSTER OBJECTS — it works entirely on its own dicts, which
+## is correct (injected state, nothing global) but leaves every `MonsterInstance.alive` reading
+## true forever. `_skip()`'s topple loop, the report screen and the career all read those, so the
+## final frame is written back once here. This is bookkeeping the OLD sim did as a side effect of
+## mutating the roster; doing it explicitly is the honest version of the same thing.
+func _write_back_final(out_frames: Array) -> void:
+	if out_frames.is_empty():
+		return
+	for rec in (out_frames[out_frames.size() - 1].get("units", []) as Array):
+		var k: int = int(rec.get("id", -1))
+		if k < 0 or k >= all_units.size():
+			continue
+		var m = all_units[k]
+		m.hp = maxf(0.0, float(rec.get("hp", 0.0)))
+		m.mp = float(rec.get("mp", 0.0))
+		m.alive = bool(rec.get("alive", false))
 
 
 func _show_resolving(v: bool) -> void:

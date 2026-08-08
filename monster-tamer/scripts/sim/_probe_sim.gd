@@ -252,8 +252,157 @@ func _go() -> void:
 	_check("determinism holds with projectiles in play",
 		_hash_frames(ph) == _hash_frames(ph2) and _hash_frames(pm) == _hash_frames(pm2))
 
+	# ═══ PER-MOVE PROJECTILES: authored speed / width / PIERCE (#34) ══════════════════════════
+	# `tools/authorprojectiles.ts` authors {speed, width, pierce} per MOVE (kit.gd reads it, this
+	# pins that sim.gd consumes it). The whole axis must be INERT at its defaults — that is what
+	# makes it safe to add to a pool where 101 of 141 moves author nothing.
+	var pz: Dictionary = await _run_pierce(11, 0, 0.0, 55.0)
+	_check("pierce: the control run is non-vacuous (the mark is being shot)",
+		_proj_hits_on(pz, "b1") > 0)
+	_check("pierce: pierce 0 / width 0 NEVER touches the body in the way (the default is inert)",
+		_proj_hits_on(pz, "b0", "b1") == 0)
+	var pp: Dictionary = await _run_pierce(11, 1, 0.6, 55.0)
+	_check("pierce: an authored pierce DOES hit the body on the line (the shot passes through)",
+		_proj_hits_on(pp, "b0", "b1") > 0)
+	_check("pierce: the mark still takes its own hit — piercing is extra, never a redirect",
+		_proj_hits_on(pp, "b1") > 0)
+	_check("pierce: one shot touches one body at most once (no double-dip across flight ticks)",
+		_pierce_never_double_dips(pp, "b0"))
+	# The authored speed must actually drive the flight, not the channel fallback: the same
+	# scenario at 3x the speed has to arrive sooner. This is the check that would have caught
+	# kit.gd authoring the field and sim.gd quietly ignoring it.
+	var slow: Dictionary = await _run_pierce(11, 0, 0.0, 30.0)
+	var fast: Dictionary = await _run_pierce(11, 0, 0.0, 120.0)
+	_check("projectile: the AUTHORED speed drives flight time (120 u/s arrives sooner than 30)",
+		_first_flight_ticks(fast) > 0 and _first_flight_ticks(slow) > _first_flight_ticks(fast))
+	# ⚠️ THE PIERCE PATH DRAWS ZERO RNG BY DESIGN (it re-uses the shot's own dice against each
+	# body's own armour). If that ever regresses into a per-body roll, the draw count becomes
+	# geometry-dependent and this twin-run is what says so.
+	var pp2: Dictionary = await _run_pierce(11, 1, 0.6, 55.0)
+	_check("determinism holds with PIERCING shots in play (the sweep draws no rng)",
+		_hash_frames(pp) == _hash_frames(pp2))
+
+	# ═══ THE SUSTAIN BRAKE — dampening + the no-kill ratchet arm ══════════════════════════════
+	# Both landed on evidence from scripts/sim/_sweep_comps.gd (4 archetypes x 4, 5 seeds). The
+	# checks below pin the SHAPE of each brake, and the fact that neither touches a fight that
+	# is progressing — which is the whole reason they were safe to add.
+	var dsim = Sim.new()
+	_check("dampening: full strength through the grace window (tick 0 and the arm tick are 1.00)",
+		is_equal_approx(dsim.dampening(0), 1.0) and is_equal_approx(dsim.dampening(Sim.DAMPEN_ARM_TICKS), 1.0))
+	_check("dampening: bites the tick AFTER the grace window, never before",
+		dsim.dampening(Sim.DAMPEN_ARM_TICKS + 1) < 1.0)
+	_check("dampening: monotonically non-increasing across the whole tick range",
+		_dampen_monotonic(dsim))
+	_check("dampening: floors at DAMPEN_FLOOR and never goes below it (a healer stays worth fielding)",
+		is_equal_approx(dsim.dampening(Sim.MAX_TICKS), Sim.DAMPEN_FLOOR)
+			and dsim.dampening(Sim.MAX_TICKS * 10) >= Sim.DAMPEN_FLOOR)
+	# ⚠️ THE OVERCORRECTION GUARD. The measured resolving matchups in the sweep run 194..322
+	# ticks; every one of them must finish INSIDE the grace window, i.e. dampening must still
+	# read 1.00 when a healthy fight ends. If this fails, the brake has started taxing fights
+	# that were never broken and the sweep table must be re-read before touching the constant.
+	_check("dampening: a healthy-length fight (322 ticks, the sweep's slowest resolver) is untouched",
+		is_equal_approx(dsim.dampening(322), 1.0))
+	# The stream CARRIES it (rule 3: the renderer derives nothing) and matches the curve exactly.
+	var damp_stream_ok := true
+	for f in r1.frames:
+		if not f.has("dampening") or not is_equal_approx(float(f["dampening"]), dsim.dampening(int(f.tick))):
+			damp_stream_ok = false
+			break
+	_check("dampening: every frame carries the live value and it matches the curve",
+		damp_stream_ok)
+	# Applied to HEALING: the same heal cast at the same target HP heals less late than early.
+	# White-box so the measurement pins the RULE, not one fight's accident.
+	var heal_pair: Dictionary = await _damped_heal_pair()
+	_check("dampening: an identical heal lands smaller under dampening than in the grace window",
+		int(heal_pair.get("late", -1)) >= 0 and int(heal_pair.late) < int(heal_pair.early))
+	# THE RATCHET'S SECOND ARM SIGNAL — damage landing with nobody dying now grows the leash.
+	# Before this, the arm condition was silence alone and the sweep's four stall rows (3%..20%
+	# engagement) were invisible to it.
+	var ratchet: Dictionary = await _no_kill_ratchet()
+	_check("ratchet: a fight with damage landing but NO death still arms the leash (no-kill clock)",
+		float(ratchet.get("grown", 0.0)) > 0.0)
+	# ⚠️ The release is HALF, not zero — but read the algebra, not the headline. The death is
+	# detected in the SAME _step() that already grew the leash by one STAGNATION_LEASH_RATE
+	# (growth runs before the death pass), so the value that gets halved is `before + rate`.
+	# Asserting a naive `before * 0.5` fails here, and it failed here first — the ordering is
+	# the thing worth pinning, because a future reorder of _step() would silently change it.
+	var released: float = float(ratchet.get("after_death", -1.0))
+	var pre: float = float(ratchet.get("before_death", 0.0))
+	_check("ratchet: a death releases the leash by HALF, never to zero (the pressure ratchets)",
+		released > 0.0 and released < pre
+			and is_equal_approx(released, (pre + Sim.STAGNATION_LEASH_RATE) * 0.5))
+
 	print("SIM PROBE %s (%d failures)" % ["PASS" if _fails == 0 else "FAIL", _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
+
+
+## The dampening curve never rises, sampled every tick across a full-length fight and beyond.
+func _dampen_monotonic(sim) -> bool:
+	var prev := 1.0
+	for t in range(0, Sim.MAX_TICKS + 200):
+		var v: float = sim.dampening(t)
+		if v > prev + 0.0000001:
+			print("    DAMPEN: rose at tick %d (%.4f -> %.4f)" % [t, prev, v])
+			return false
+		prev = v
+	return true
+
+
+## White-box: heal the SAME wounded unit twice with the same move, once inside the grace window
+## and once past it, and return both amounts. The target is re-wounded to an identical HP before
+## each heal, so the only difference between the two is the tick.
+func _damped_heal_pair() -> Dictionary:
+	var sim = Sim.new()
+	sim.setup(7, _units_5v5({"target_priority": "nearest", "positional": "push"}),
+		Vector2(110, 62), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-40, 0), Vector2(40, 0))
+	if not ok:
+		return {}
+	var moves: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/data.json"))["moves"]
+	var mend: Array = Kit.build(["Mend"], moves)
+	var healer = sim._unit("a0")
+	var patient = sim._unit("a1")
+	var out := {}
+	for phase in ["early", "late"]:
+		sim.tick_now = 0 if phase == "early" else Sim.MAX_TICKS
+		patient.hp = 10.0
+		patient.max_hp = 500.0     # headroom so neither heal clips on the HP ceiling
+		var events: Array = []
+		sim._resolve_friendly(healer, mend[0], events)
+		for e in events:
+			if str(e.kind) == "heal":
+				out[phase] = int(e.amount)
+	return out
+
+
+## White-box: two HOLD lines far enough apart that neither closes, with one ranged caster per
+## side so damage keeps landing — the exact shape the sweep found the old silence-only arm
+## condition was blind to. Steps past the no-kill window and reads the leash, then forces a
+## death and reads it again.
+func _no_kill_ratchet() -> Dictionary:
+	var sim = Sim.new()
+	sim.setup(9, _units_5v5({"target_priority": "nearest", "positional": "hold"}),
+		Vector2(110, 62), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-40, 0), Vector2(40, 0))
+	if not ok:
+		return {}
+	# Nobody may die: top every unit up each step, so the ONLY clock that can arm is the
+	# no-kill one. `last_damage_tick` is held current by hand for the same reason — this
+	# isolates the new signal from the pre-existing silence signal.
+	for i in Sim.STAGNATION_NO_KILL_TICKS + 60:
+		for u in sim.units:
+			u.hp = u.max_hp
+		sim.last_damage_tick = sim.tick_now
+		sim._step()
+		if sim.winner != "":
+			break
+	var grown: float = sim.stagnation_level
+	var before: float = grown
+	# Force a death and step once: the release must be a HALVING, not a reset to zero.
+	sim._unit("b0").hp = 0.0
+	sim.last_damage_tick = sim.tick_now
+	sim._step()
+	return {"grown": grown, "before_death": before, "after_death": sim.stagnation_level}
 
 
 func _team_a_y_spread(res: Dictionary, tick: int) -> float:
@@ -1096,6 +1245,92 @@ func _run_proj(seed_val: int, acc: int) -> Dictionary:
 	if not ok:
 		return {}
 	return sim.run()
+
+
+## ── PER-MOVE PROJECTILES: authored speed, width and PIERCE (#34) ─────────────────────────────
+## Three bodies on one line. The caster's mark is the FAR one (lowest max_hp, `weakest`), so the
+## near body is genuinely INCIDENTAL — something the shot passes through rather than something it
+## was aimed at, which is the only geometry that tests pierce rather than target selection.
+## Everything holds position so the line stays a line for the whole flight.
+##   a0 caster (-14, 0) ──── b_wall (0, 0) ──── b_mark (12, 0)
+func _pierce_units(pierce: int, width: float, speed: float) -> Array:
+	var proj := {"speed": speed, "width_radii": width, "pierce": pierce}
+	return [
+		{"id": "a0", "team": "A", "pos": Vector2(-14, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 45, "INT": 90, "WIS": 80},
+			"kit": [{"name": "Lance", "kind": "cast", "power": 30, "accuracy": 100,
+				"cast_time": 0.6, "cooldown": 2.0, "mana": 3, "channel": "magic",
+				"range": 40.0, "projectile": proj}],
+			"tactics": {"target_priority": "weakest", "positional": "hold"}},
+		# The body in the way: huge pool so it is never the `weakest` pick, and it stands still.
+		{"id": "b0", "team": "B", "pos": Vector2(0, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 400, "INT": 10, "WIS": 10},
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+		# The mark: the weakest body on the field, and the far one.
+		{"id": "b1", "team": "B", "pos": Vector2(12, 0), "speed": 8.0,
+			"stats": {"STR": 10, "CON": 20, "INT": 10, "WIS": 10},
+			"tactics": {"target_priority": "nearest", "positional": "hold"}},
+	]
+
+
+func _run_pierce(seed_val: int, pierce: int, width: float, speed: float) -> Dictionary:
+	var sim = Sim.new()
+	sim.setup(seed_val, _pierce_units(pierce, width, speed), Vector2(96, 52), [])
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-14, 0), Vector2(12, 0))
+	if not ok:
+		return {}
+	return sim.run()
+
+
+## Ticks from the first proj_launch to the first proj_hit that follows it — the observed flight
+## time of one shot, which is the only place an authored speed is visible in the stream.
+## 0 means "never measured", so a caller can tell an empty run from a fast one.
+func _first_flight_ticks(res: Dictionary) -> int:
+	var t_launch := -1
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if t_launch < 0 and str(e.kind) == "proj_launch":
+				t_launch = i
+			elif t_launch >= 0 and str(e.kind) == "proj_hit":
+				return i - t_launch
+	return 0
+
+
+## proj_hits landed on `uid` — counted ONLY while `mark` is still alive.
+##
+## ⚠️ THE `mark` GUARD IS LOAD-BEARING AND THE FIRST VERSION OF THIS PROBE GOT IT WRONG. Once the
+## weakest body dies, the wall becomes the weakest body and the caster shoots it for real. Those
+## hits are correct target selection, not pierce, and counting them made the pierce-0 control
+## look like a leak. An incidental hit is only incidental while something else is the mark.
+func _proj_hits_on(res: Dictionary, uid: String, mark: String = "") -> int:
+	var n := 0
+	for f in res.frames:
+		if mark != "":
+			var mark_alive := false
+			for u in f.units:
+				if str(u.id) == mark and bool(u.alive):
+					mark_alive = true
+			if not mark_alive:
+				break
+		for e in f.events:
+			if str(e.kind) == "proj_hit" and str(e.get("to", "")) == uid:
+				n += 1
+	return n
+
+
+## A pierced body must never be touched TWICE by the same shot — the flight spans several ticks
+## and the swept segments abut, so a body near the line is exactly what would double-dip.
+## One launch may therefore produce at most one incidental hit per body.
+func _pierce_never_double_dips(res: Dictionary, uid: String) -> bool:
+	var launches := 0
+	var hits := 0
+	for f in res.frames:
+		for e in f.events:
+			if str(e.kind) == "proj_launch":
+				launches += 1
+			elif str(e.kind) == "proj_hit" and str(e.get("to", "")) == uid:
+				hits += 1
+	return launches > 0 and hits <= launches
 
 
 func _pos_at(res: Dictionary, uid: String, i: int) -> Vector2:

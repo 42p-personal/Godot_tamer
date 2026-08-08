@@ -1128,3 +1128,51 @@ actual arena question, resolves in **254 ticks (25s)** with seven deaths and six
 kinds firing. Worth remembering when the balance pass comes: with the support layer live,
 defensive stacking is strong enough that mirror comps stall, and that is a design question
 (does sustain need a brake?) rather than a bug.
+
+## Integration round: the renderer switch, and what it uncovered (2026-08-08)
+
+Four parallel workstreams landed together (audio, renderer switch, balance sweep, per-move
+projectiles). All four arrived with their own probes green. Integrating them found three
+things none of those probes could see.
+
+**1. ⚠️ THE BATTLE SCREEN HAS NEVER COMPILED, AND 175 GREEN CHECKS SAID NOTHING.**
+`deployment_board.gd:_compute_zones()` read `team_size_` — the *parameter* of `setup()` — from
+a scope it does not exist in. That is a hard parse error, and it took `tactics_ui.gd` down with
+it ("Failed to compile depended scripts"). Tournament → tactics → battle is the only route to
+the battle screen, so the cup path has been dead **since the initial commit**.
+
+It survived because every probe in the battery exercises the sim *directly* and none of them
+touches `arena_3d.gd`; and because `_probe_compile.gd` tested `load(path) == null`, while a
+script that fails to compile still returns a **non-null broken `Script`**. The probe printed
+`OK:` on the same line the engine printed `Compilation failed`. It now checks
+`can_instantiate()`, which is the question it always meant to ask.
+
+⚠️ **The general lesson, and it is the expensive one: a probe that tests the sim is not a probe
+that tests the GAME.** `scripts/_probe_arena_switch.gd` (new) boots the real `arena3d.tscn`
+through the real entry state the tactics screen leaves behind, at **both 1v1 and 5v5** — the
+5v5 case deliberately, because the game is a 5v5 game and a 1v1 exercises none of the id
+ordering (`a00`..`a04` sorting into roster order) or deploy spread the switch is risky for.
+
+**2. The renderer switch itself is sound, and its own ⚠️ was the real one.** The two engines use
+different coordinate origins (legacy corner-frame `[0,W]`, new sim centre-frame `[-W/2,W/2]`).
+Getting that backwards puts every unit off the navmesh, nobody paths, and the fight runs to the
+1800-tick cap *looking exactly like broken AI*. The probe pins the tell directly: a fight that
+resolves well inside the cap, with every unit deploying inside the board.
+
+**3. The authored projectile axis was inert — kit.gd wrote it, sim.gd never read it.**
+`kit.gd` attached `{speed, width_radii, pierce}` per move while `sim.gd` still keyed flight off
+its own channel table, so 40 authored moves flew at the old flat 90/55. Now consumed.
+
+⚠️ **PIERCE DRAWS ZERO RNG, AND THAT IS THE DESIGN, NOT AN OPTIMISATION.** Rolling fresh dice per
+incidental body would insert a *geometry-dependent* number of draws into the stream — the one
+thing the determinism contract cannot absorb. Instead the shot carries the three dice it was
+loosed with and each body it passes applies its own armour to them. One arrow, one release,
+three sets of ribs. Verified by a twin-run with piercing shots in play.
+
+**And the sweep moved, for a reason worth writing down.** 9 of 16 matchups stayed
+byte-identical; 7 lengthened or shortened. Cause: **25 of the 40 authored moves are SLOWER than
+the flat channel constant they replaced** (11/20 ranged, 14/20 magic), so damage arrives later
+and ranged-leaning comps stretch. Largest single shift was pressure vs balanced, 202 → 328
+ticks. This is the authored content doing its job, not a regression — and critically, the stall
+picture is unchanged: still **4 of 16 matchups over 90s, and the same four** (both sustain and
+both control mirrors/crossings). The dampening and no-kill-ratchet findings stand as recorded.

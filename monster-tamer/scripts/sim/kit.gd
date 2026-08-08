@@ -23,6 +23,22 @@ const Derive = preload("res://scripts/derive.gd")
 
 const GEOMETRY_SCALE := 2.2   # authored move.range is board units; the world is scaled (spatial.gd)
 
+## ── PER-MOVE PROJECTILES (#34) ───────────────────────────────────────────────────────────────
+## A shot's flight is the most visible thing about it in a game whose battle loop is WATCHING,
+## and until now it was two numbers keyed by CHANNEL — the same conflation `authorranges.ts` was
+## written to undo one axis earlier. DEX's channel is `ranged` whether the move is a longbow or
+## a stiletto, so a thrown knife at 2.8 reach and Deadeye at 9.2 flew identically, and every INT
+## spell in the pool was one 55 u/s blob. `tools/authorprojectiles.ts` now authors speed, width
+## and pierce per move, seeded per LINE; this reads them.
+##
+## ⚠️ THE CHANNEL CONSTANTS SURVIVE AS THE FALLBACK, VERBATIM. An unauthored move gets exactly
+## the numbers sim.gd used before this field existed (ranged 90 / magic 55, width 0, no pierce),
+## so adding the axis cannot regress a single fight on its own.
+const CHANNEL_PROJECTILE_SPEED := {"ranged": 90.0, "magic": 55.0}
+## Targets whose casts never fly: sim.gd `_execute_cast` resolves friendly casts on their own
+## path and RETURNS before the channel check. Touch and aura, not shots.
+const FRIENDLY_TARGETS := ["self", "ally", "team"]
+
 ## Effect keys the sim turns into timed mods on FRIENDLY targets (sim.gd MOD_OF_EFFECT) …
 ## (`thorns` joined in the AOE LAYER round — flat melee reflect worn as a timed mod)
 const FRIENDLY_MOD_KEYS := ["atkBuff", "defBuff", "accBuff", "dodgeBuff", "ward", "guard",
@@ -46,7 +62,7 @@ static func build(move_names: Array, moves: Array) -> Array:
 		if skip != "":
 			push_warning("kit: '%s' skipped — %s" % [name, skip])
 			continue
-		out.append({
+		var entry := {
 			"name": str(mv.name),
 			"kind": "cast",
 			"move": mv,                                   # the data move, verbatim
@@ -57,8 +73,41 @@ static func build(move_names: Array, moves: Array) -> Array:
 			"mana": Derive.field_mp_cost(mv),
 			"range": float(mv.get("range", 6.0)) * GEOMETRY_SCALE,
 			"min_range": 0.0,
-		})
+		}
+		_attach_projectile(entry, mv)
+		out.append(entry)
 	return out
+
+
+## Attach the authored projectile block to a kit entry — or nothing at all, when the move does
+## not fly. `entry.projectile` = {speed (world u/s), width_radii (BODY RADII, so the unit is in
+## the name and nobody multiplies twice), pierce (ADDITIONAL bodies passed through)}.
+##
+## ⚠️ THE FLIGHT GATE IS THE CHANNEL, AND IT STAYS THE CHANNEL. sim.gd takes the projectile
+## branch on `PROJECTILE_SPEED.has(chan)`; this is a SECOND lock on the same door, not a
+## replacement for it. A move with no `projectile` key is not "instant" by that fact — it is
+## instant because its channel is melee or voice, and the two tests must agree.
+##
+## ⚠️ `width_radii` AND `move.effects.pierce` ARE DIFFERENT QUANTITIES THAT SHARE A WORD.
+## `effects.pierce` is armour penetration as a fraction of mitigation (Void Lance 0.5) and is
+## read by the CONTRACTED resolve_strike. `projectile.pierce` is how many extra bodies the shot
+## flies through. They are nested apart on purpose; never merge them.
+static func _attach_projectile(entry: Dictionary, mv: Dictionary) -> void:
+	var chan := str(mv.get("channel", "magic"))
+	if not CHANNEL_PROJECTILE_SPEED.has(chan):
+		return                                        # melee / voice / support: no flight
+	if str(mv.get("target", "enemy")) in FRIENDLY_TARGETS:
+		return                                        # friendly casts resolve before the branch
+	var authored = mv.get("projectile")
+	var a: Dictionary = authored if authored is Dictionary else {}
+	entry["projectile"] = {
+		# Fallback is the pre-#34 channel constant, verbatim — an unauthored move flies exactly
+		# as it did before, so this plumbing on its own cannot move a fight.
+		"speed": float(a.get("speed", CHANNEL_PROJECTILE_SPEED[chan])),
+		# 0.0 is a POINT: it only ever touches the body it homed on, which is today's behaviour.
+		"width_radii": float(a.get("width", 0.0)),
+		"pierce": int(a.get("pierce", 0)),
+	}
 
 
 ## "" to accept, else the loud reason naming the unexpressed effect keys.

@@ -163,8 +163,16 @@ func _find_last_used_for_size(size_: int) -> Dictionary:
 
 func _compute_zones() -> void:
 	# ⚠️ Shared definition with the sim — see Spatial.deploy_zone. This used to be an inline copy.
-	zone_a = Sp.deploy_zone(team_size_, "A")
-	zone_b = Sp.deploy_zone(team_size_, "B")
+	# ⚠️ AND IT READ `team_size_` — `setup()`'s PARAMETER — from in here, where it is out of
+	# scope. That is a hard parse error, so `deployment_board.gd` has never compiled, and it took
+	# `tactics_ui.gd` down with it ("Failed to compile depended scripts"): the tactics screen is
+	# the only route from the tournament screen to the battle screen, so the cup path has been
+	# dead since the initial commit. Nothing caught it because `_probe_compile.gd` only tests
+	# `load(...) == null`, and a failed load still returns a non-null broken Script — see the
+	# probe, which now checks `can_instantiate()` instead. The member below is assigned from that
+	# same parameter one line before this is called, so the values are identical.
+	zone_a = Sp.deploy_zone(team_size, "A")
+	zone_b = Sp.deploy_zone(team_size, "B")
 
 
 func _compute_aura_flags() -> void:

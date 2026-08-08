@@ -325,7 +325,41 @@ export interface Move {
   range?: number // world units the move can reach
   castTime?: number // seconds the caster is rooted committing to it
   spatial?: MoveSpatial // field-engine-only movement mechanics (v0.93)
+  /**
+   * How this move TRAVELS, when it travels at all (decision #34). Authored by
+   * `tools/authorprojectiles.ts`, seeded per LINE. Field engine only — battle.ts
+   * never reads it, so it cannot move a golden.
+   *
+   * ⚠️ Omitted means the CHANNEL DEFAULT the field sim already used (ranged 90,
+   * magic 55, width 0, no pierce), so an unauthored move behaves exactly as it
+   * did before this field existed. Present only on `ranged`/`magic` moves —
+   * melee and voice are instant and author nothing.
+   */
+  projectile?: MoveProjectile
   desc: string
+}
+
+/**
+ * A shot's physical character. See `tools/authorprojectiles.ts` for the per-line
+ * seeds and the reasoning behind each.
+ */
+export interface MoveProjectile {
+  /** World units per second. Directly comparable to the channel constants 90/55. */
+  speed: number
+  /**
+   * The shot's own radius, in BODY RADII (a monster is 1.0). Added to a body's
+   * radius for the clip test, so width is what lets a shot hit someone it was
+   * not aimed at. 0 is a point — exactly the pre-#34 behaviour.
+   */
+  width: number
+  /**
+   * How many ADDITIONAL bodies the shot passes through before expending.
+   *
+   * ⚠️ NOT `MoveEffects.pierce`, which is armour penetration as a fraction of
+   * mitigation (Void Lance 0.5). Same word, different quantity; they are nested
+   * apart deliberately and must never be merged.
+   */
+  pierce: number
 }
 
 // ── SPATIAL MECHANICS (v0.93, field engine only) ────────────────────────────

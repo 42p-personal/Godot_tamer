@@ -48,6 +48,13 @@
 ## (decision #20, no double jeopardy): the acc roll resolves at launch — a failed roll launches
 ## a shot aimed at where the target STOOD at launch, so the viewer watches it sail through empty
 ## ground; a passed roll homes and hits on arrival. Projectile advancement draws ZERO rng.
+## ⚠️ PER-MOVE PROJECTILES AND PIERCE DRAW ZERO RNG EITHER. The authored {speed, width, pierce}
+## block (kit.gd, from `tools/authorprojectiles.ts`) changes only how FAST and how WIDE a shot
+## flies. A shot that passes through a body re-resolves against that body's own armour using the
+## SAME acc/crit/variance the shot was loosed with — carried on the projectile, not re-rolled —
+## because a per-body draw would insert a geometry-dependent number of draws into the stream,
+## which is the one thing this contract cannot absorb. `pierce` defaults to 0 and an unauthored
+## move falls back to the verbatim channel constant, so the axis is inert until data turns it on.
 ## ⚠️ AOE LAYER RNG CONTRACT (allEnemies casts): a completed allEnemies cast is a BURST from the
 ## caster — it never takes the projectile branch (a burst has no single flight path) — and it
 ## draws PER TARGET, in unit-id order (`units` is id-sorted): acc/crit/variance for that
@@ -58,6 +65,11 @@
 ## spatial_sim.gd:1077-1086: an AoE reaches only what the move's own range covers, measured
 ## from the caster). Fights without an allEnemies cast draw exactly as before the layer landed.
 ## tauntForce application and thorns reflect draw ZERO rng.
+## ⚠️ THE SUSTAIN BRAKES DRAW ZERO RNG AND CHANGE NO DRAW ORDER. `dampening()` is a pure
+## function of the tick counter, and the stagnation ratchet's second arm signal is a pure
+## comparison of two tick counters — neither touches the stream, so every fight that resolves
+## inside DAMPEN_ARM_TICKS with kills landing is byte-identical to before they existed
+## (verified: nine of sixteen matchups in _sweep_comps.gd are unchanged to the tick).
 extends RefCounted
 
 const BT = preload("res://scripts/ai/bt.gd")
@@ -122,6 +134,62 @@ const HOLD_RADIUS_BASE := 8.0        # must match the tree's hold default
 const STAGNATION_ARM_TICKS := 150    # 15s of silence arms the pressure
 const STAGNATION_LEASH_RATE := 0.1   # leash growth per stagnant tick (1 u/s per side)
 
+## ⚠️ THE RATCHET WAS BLIND TO HALF OF ITS OWN PROBLEM, AND THE SWEEP FOUND IT.
+## The arm condition above is SILENCE. scripts/sim/_sweep_comps.gd measured a second stall
+## shape it cannot see: two hold-heavy lines standing 76 units apart, trickling ranged damage
+## at each other forever. Damage lands constantly, so `last_damage_tick` keeps refreshing and
+## the leash never grows — but nobody is dying either. The sweep's engagement column separates
+## the two cleanly (share of ticks the sides are within melee reach):
+##     RESOLVING matchups   56% .. 87% engaged, 5.0 .. 8.3 deaths, 20s .. 33s
+##     STALLING  matchups    3% .. 20% engaged, 2.0 .. 7.0 deaths, all at or near the cap
+## Every stall in the 4x4 is a POSTURE stall first. So the ratchet arms on either signal now:
+## silence, OR no DEATH for STAGNATION_NO_KILL_TICKS. That is not a new philosophy — the block
+## above already states that deaths are the one signal a fight genuinely progressed; this makes
+## the ARM condition agree with the RESET condition instead of using two different clocks.
+const STAGNATION_NO_KILL_TICKS := 200   # 40s without a kill is not a fight, whatever is landing
+										#  — deliberately the same grace as DAMPEN_ARM_TICKS, so
+										#  both brakes start together and there is ONE number a
+										#  reader has to hold: "40 seconds of no progress"
+
+## ═══ DAMPENING — THE SUSTAIN BRAKE ══════════════════════════════════════════════════════════
+## Healing, absorbs and HoTs lose effectiveness as a match drags. WoW arena's own answer, under
+## its own name, for exactly this failure — and WoW arena is this project's stated reference.
+##
+## ⚠️ MEASURED, NOT ASSUMED. scripts/sim/_sweep_comps.gd (4 archetypes x 4, 3 seeds, 48 fights)
+## before this constant existed:
+##     sustain vs sustain   1800/1800/1800 ticks — AT CAP, ZERO deaths, heal/dmg ratio 0.98
+##     sustain vs pressure   277 ticks, 6.3 deaths     pressure mirror   235 ticks, 8.0 deaths
+##     sustain vs balanced   905 ticks (one seed at the cap)
+## Five-a-side sustain healed EXACTLY as fast as five-a-side damage arrived, so the mirror could
+## not resolve at any length. It is a STRUCTURAL draw, not a tuning miss: moderating the stat
+## floors moved it barely at all (docs/COMBAT_SPATIAL_LOG.md, 2026-08-08).
+##
+## ⚠️ TWO CANDIDATE BRAKES WERE MEASURED AND REJECTED, so nobody re-proposes them:
+##  • HEALER MANA. The sweep prints the lowest mana fraction any healer reached: **0.00** in the
+##    sustain mirror. The healers were ALREADY running dry and healing anyway — regen refills
+##    them fast enough that being broke is not a brake. Mana is spent, not scarce.
+##  • THE EXISTING STAGNATION RATCHET. It arms on SILENCE (STAGNATION_ARM_TICKS of no landed
+##    damage), and the mirror was never silent — 6.7 dmg/s landed for the full 180s. Damage was
+##    landing constantly and nobody was dying. A silence clock cannot see that fight at all.
+## What both misses have in common: the failure is not "no damage", it is "no PROGRESS". So the
+## brake is keyed on MATCH TIME, the one clock that always runs.
+##
+## ⚠️ MONOTONIC IN FIGHT TIME, AND IT NEVER RESETS — deliberately unlike the stagnation ratchet,
+## which resets on a death. Two reasons. (1) LEGIBILITY, which is load-bearing in a game the
+## player cannot intervene in: "after 40 seconds healing gets weaker, and keeps getting weaker"
+## is one sentence a viewer can hold and predict. A brake that released on every kill would make
+## the back half of a long fight unpredictable. (2) A resetting brake re-stalls: the sustain
+## mirror would grind to one kill, release, and grind again.
+##
+## The curve: nothing at all for the first DAMPEN_ARM_TICKS, then healing falls DAMPEN_RATE per
+## tick to a floor of DAMPEN_FLOOR. Chosen so a HEALTHY fight is never touched — the longest
+## non-degenerate fight in the pre-change sweep was 489 ticks, where the multiplier is 0.87 —
+## while the degenerate ones are closed well inside the cap.
+const DAMPEN_ARM_TICKS := 400    # 40s of grace; every resolving matchup in the sweep is shorter
+const DAMPEN_RATE := 0.0018      # per tick past the arm point (1.8% of healing per second)
+const DAMPEN_FLOOR := 0.15       # healing never reaches zero — a healer stays worth fielding
+								 #  (floor reached at tick 872, i.e. 87s in)
+
 var nav: NavService
 var rng: RandomNumberGenerator
 var units: Array = []           # ordered by id — the determinism order
@@ -130,6 +198,7 @@ var tick_now := 0
 var winner := ""
 var last_damage_tick := 0       # last tick any strike/cast landed — pauses stagnation growth
 var stagnation_level := 0.0     # the pressure ratchet: grows in silence, resets ONLY on a death
+var last_progress_tick := 0     # last tick anything DIED — the no-kill arm clock (see above)
 var projectiles: Array = []     # in-flight shots (#34), in LAUNCH order (launches happen in
 								#  unit-id order per tick, so append order is deterministic)
 
@@ -267,7 +336,11 @@ func _step() -> void:
 	for e in events:
 		if str(e.kind) in ["strike", "cast_done", "proj_hit"]:
 			last_damage_tick = tick_now
-	if tick_now - last_damage_tick > STAGNATION_ARM_TICKS:
+	# TWO ARM SIGNALS, one ratchet (see STAGNATION_NO_KILL_TICKS): no damage landing at all, or
+	# damage landing with nothing to show for it. Either way the leash grows until it drags the
+	# lines together; a death still releases it below.
+	if (tick_now - last_damage_tick > STAGNATION_ARM_TICKS
+			or tick_now - last_progress_tick > STAGNATION_NO_KILL_TICKS):
 		stagnation_level += STAGNATION_LEASH_RATE
 	# Deaths and victory.
 	var alive_a := 0
@@ -276,8 +349,18 @@ func _step() -> void:
 		if u.alive and u.hp <= 0:
 			u.alive = false
 			events.append({"kind": "death", "id": u.id})
-			stagnation_level = 0.0   # a death IS progress — the ratchet releases
+			# A death IS progress, so the ratchet RELEASES — but only halfway, and that is a
+			# measured correction. Zeroing it made the leash a sawtooth: the sustain mirror
+			# scored 3.7 kills, each one dropped the leash to nothing, the lines drifted back
+			# apart and the clock spent another 20s re-arming, so engagement never rose above
+			# 14% and the fight still hit the cap. Halving keeps the release legible (a kill
+			# visibly buys the survivors room) while the pressure RATCHETS — the fifth stall is
+			# tighter than the first. ⚠️ Costs nothing in a healthy fight: the leash never arms
+			# there, so this is 0.0 * 0.5 and every resolving matchup in the sweep is
+			# byte-identical across the change.
+			stagnation_level *= 0.5
 			last_damage_tick = tick_now
+			last_progress_tick = tick_now
 		if u.alive:
 			if u.team == "A":
 				alive_a += 1
@@ -388,6 +471,16 @@ func _fill_bb(u: Dictionary) -> void:
 	## (expired, or the taunter fell: battle.ts:982, the compulsion breaks). Zero rng, pure read.
 	bb.set_value("taunted_by", _taunt_source_of(u))
 	# orders arrive here when the tactics screen wires in (v1: keys absent).
+
+
+## THE DAMPENING MULTIPLIER — see the DAMPEN_* block for the measurement that justifies it.
+## A pure function of the tick counter: zero rng, no state, no iteration order, so it cannot
+## touch determinism. `at` defaults to now; the probe calls it at chosen ticks to pin the curve.
+func dampening(at: int = -1) -> float:
+	var t: int = tick_now if at < 0 else at
+	if t <= DAMPEN_ARM_TICKS:
+		return 1.0
+	return maxf(DAMPEN_FLOOR, 1.0 - DAMPEN_RATE * float(t - DAMPEN_ARM_TICKS))
 
 
 ## Dictionary key order is insertion order in Godot, which depends on hit history - SORT before
@@ -725,7 +818,9 @@ func _resolve_friendly(u: Dictionary, kentry: Dictionary, events: Array) -> void
 	for r in _friendly_recipients(u, kentry):
 		if power > 0.0:
 			var mult: float = HEALBLOCK_MULT if _has_rule_flag(r, "blockHeal") else 1.0
-			var heal: float = round(power * 1.2 * mult)
+			# DAMPENING (the sustain brake) multiplies the field heal rule's output. It stacks
+			# multiplicatively with healblock — two different reasons a heal is worth less.
+			var heal: float = round(power * 1.2 * mult * dampening())
 			var before: float = float(r.hp)
 			r.hp = minf(float(r.max_hp), float(r.hp) + heal)
 			events.append({"kind": "heal", "from": u.id, "to": r.id,
@@ -747,6 +842,15 @@ func _resolve_friendly(u: Dictionary, kentry: Dictionary, events: Array) -> void
 			if fxd.has(key):
 				# defBuff is NEGATIVE defMitDebuff (more mitigation), the legacy sign convention.
 				var v := float(fxd[key])
+				# DAMPENING reaches the other two forms of the SAME currency — an absorb shield
+				# and a heal-over-time are healing paid in advance and healing paid in
+				# instalments. Damping only the direct heal would just move the sustain comp
+				# onto wards (the measured mirror already leaned on Bastion/Interpose/Ward
+				# Against Ruin). ⚠️ Deliberately NOT damped: `guard` (flat damage reduction, not
+				# a pool), `defBuff` (mitigation), `regenBuff` (MANA regen) — dampening is about
+				# restoring HP, and widening it past that would be a second, unmeasured change.
+				if key in ["ward", "hpRegenBuff"]:
+					v *= dampening()
 				mod[MOD_OF_EFFECT[key]] = -v if key == "defBuff" else v
 				applied = true
 		if applied and not _has_mod_from(r, str(mod["src"])):
@@ -834,33 +938,16 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 				"power": float(kentry.get("power", 30)), "accuracy": float(kentry.get("accuracy", 100)),
 				"type": "damage", "channel": str(kentry.get("channel", "magic")), "effects": {},
 				"status": kentry.get("status", null)})
-			# Mitigation follows the CHANNEL rule: physical (melee/ranged) vs CON, everything
-			# else vs WIS — the documented split, not a per-move choice.
-			var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
-			var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))
 			# bonusVsStatus arms BEFORE the strike (the status it detonates is consumed after).
 			var bvs_armed: bool = _bonus_status_armed(mv, tgt)
-			# Timed mods feed the contracted inputs: atkMultBonus/accMod on the attacker,
-			# defMitDebuff/dodgeMod/guard/ward on the defender — resolve_strike does the math.
-			var out: Dictionary = Damage.resolve_strike({
-				"move": mv,
-				"rolls": {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()},
-				"now": tick_now * DT,
-				"atk": float(u.stats.get(str(kentry.get("stat", "INT")), 10)),
-				"atkMult": 1.0 + _sum_mods(u, "atkMultBonus"),
-				"attackerHpFrac": float(u.hp) / float(u.max_hp),
-				"attackerWard": _sum_mods(u, "ward"),
-				"accPenalty": _acc_penalty_of(u), "accMod": _sum_mods(u, "accMod"),
-				"dodgeMod": _sum_mods(tgt, "dodgeMod"), "flankBonus": 0.0, "behindMult": 1.0,
-				"falloff": 1.0,
-				"defMit": Damage.mitigation_for(def_stat),
-				"defMitDebuff": _sum_mods(tgt, "defMitDebuff"), "defDmgTakenMod": 1.0,
-				"defStatusDmgTaken": _dmg_taken_of(tgt),
-				"defGuard": _sum_mods(tgt, "guard"), "defWard": _sum_mods(tgt, "ward"),
-				"defBlocking": false, "defHasAttacked": tgt.has_attacked,
-				"defHasBonusStatus": bvs_armed, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
-				"defMaxHp": tgt.max_hp,
-			})
+			# ⚠️ THE ROLLS ARE HOISTED INTO A LOCAL so a piercing shot can CARRY them (#34).
+			# Draw order is UNCHANGED — a dictionary literal evaluates its values left to right,
+			# exactly as this one statement does — so this hoist is not an rng change. What it
+			# buys: a shot that passes through a second body re-resolves against that body's OWN
+			# armour using these SAME three dice. One shot, one set of dice, zero new draws.
+			var rolls := {"acc": rng.randf(), "crit": rng.randf(), "variance": rng.randf()}
+			var out: Dictionary = Damage.resolve_strike(
+				_strike_inputs(u, tgt, mv, str(kentry.get("stat", "INT")), rolls, bvs_armed))
 			u.cds[str(kentry.name)] = int(float(kentry.get("cooldown", 4.0)) / DT)
 			# ⚠️ THE 4TH DRAW — the hit-gated status roll, taken HERE for BOTH the instant and
 			# the projectile path so its stream position never moves (see the header note).
@@ -874,12 +961,30 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 				# A power-0 magic/ranged control move flies too — its status rides the bolt,
 				# which is the causally readable version of "the hex reached you".
 				var will_hit := bool(out.get("hit", false))
+				# ⚠️ THE AUTHORED BLOCK WINS, THE CHANNEL CONSTANT IS THE FALLBACK. kit.gd
+				# attaches {speed, width_radii, pierce} per move; an unauthored move (or a
+				# hand-built test kit, which carries no `projectile` at all) gets exactly the
+				# channel number this branch used before the field existed, width 0 and pierce
+				# 0 — i.e. today's behaviour, verbatim. The two gates must agree: this branch is
+				# still taken on the CHANNEL, never on the presence of the block (kit.gd says so).
+				var pj: Dictionary = kentry.get("projectile", {})
 				projectiles.append({
 					"from": u.id, "target_id": tgt.id, "pos": u.pos,
-					"speed": float(PROJECTILE_SPEED[chan]), "kname": str(kentry.name),
+					"speed": float(pj.get("speed", PROJECTILE_SPEED[chan])),
+					"kname": str(kentry.name),
 					"move": mv, "out": out, "will_hit": will_hit, "aim_pos": tgt.pos,
 					"bvs_armed": bvs_armed, "status_roll": status_roll,
 					"launched_at": tick_now,
+					# THE PIERCE STATE. `width` is in BODY RADII (kit.gd owns the unit and the
+					# name says so); `pierce_left` counts ADDITIONAL bodies the shot may still
+					# pass through; `hit_ids` stops one shot touching one body twice across two
+					# flight ticks. All three are inert at their defaults.
+					"width": float(pj.get("width_radii", 0.0)),
+					"pierce_left": int(pj.get("pierce", 0)),
+					"hit_ids": [],
+					# Carried so the pierce path can re-resolve without a second copy of the
+					# formula inputs and without a single new draw.
+					"rolls": rolls, "stat": str(kentry.get("stat", "INT")),
 				})
 				events.append({"kind": "proj_launch", "from": u.id, "to": tgt.id,
 					"move": str(kentry.name), "will_hit": will_hit})
@@ -963,6 +1068,39 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 ## ARRIVAL, with the rolls that were drawn at launch). `evt_kind` is the damage event emitted
 ## ("cast_done" for instant, "proj_hit" for arrival). Draws zero rng — the status roll arrives
 ## pre-drawn (-1.0 = no draw happened, so nothing to apply).
+## THE CONTRACTED FORMULA'S INPUT BLOCK, BUILT IN ONE PLACE. Every caller hands the same shape
+## to `Damage.resolve_strike` — the ONE damage formula — so the pierce path cannot drift into a
+## second, subtly-different copy of it. Pure: reads state, draws no rng (`rolls` arrive already
+## drawn, by the caller, in the documented stream position).
+##
+## Mitigation follows the CHANNEL rule: physical (melee/ranged) vs CON, everything else vs WIS —
+## the documented split, not a per-move choice. Timed mods feed the contracted inputs:
+## atkMultBonus/accMod on the attacker, defMitDebuff/dodgeMod/guard/ward on the defender.
+func _strike_inputs(u: Dictionary, tgt: Dictionary, mv: Dictionary, stat: String,
+		rolls: Dictionary, bvs_armed: bool) -> Dictionary:
+	var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
+	var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))
+	return {
+		"move": mv,
+		"rolls": rolls,
+		"now": tick_now * DT,
+		"atk": float(u.stats.get(stat, 10)),
+		"atkMult": 1.0 + _sum_mods(u, "atkMultBonus"),
+		"attackerHpFrac": float(u.hp) / float(u.max_hp),
+		"attackerWard": _sum_mods(u, "ward"),
+		"accPenalty": _acc_penalty_of(u), "accMod": _sum_mods(u, "accMod"),
+		"dodgeMod": _sum_mods(tgt, "dodgeMod"), "flankBonus": 0.0, "behindMult": 1.0,
+		"falloff": 1.0,
+		"defMit": Damage.mitigation_for(def_stat),
+		"defMitDebuff": _sum_mods(tgt, "defMitDebuff"), "defDmgTakenMod": 1.0,
+		"defStatusDmgTaken": _dmg_taken_of(tgt),
+		"defGuard": _sum_mods(tgt, "guard"), "defWard": _sum_mods(tgt, "ward"),
+		"defBlocking": false, "defHasAttacked": tgt.has_attacked,
+		"defHasBonusStatus": bvs_armed, "defHpFrac": float(tgt.hp) / float(tgt.max_hp),
+		"defMaxHp": tgt.max_hp,
+	}
+
+
 func _apply_strike_outcome(u: Dictionary, tgt: Dictionary, mv: Dictionary, kname: String,
 		out: Dictionary, bvs_armed: bool, status_roll: float, evt_kind: String, events: Array) -> void:
 	tgt.hp -= int(out.get("toHp", 0))
@@ -1006,14 +1144,70 @@ func _advance_projectiles(events: Array) -> void:
 		# shot whose mark died mid-flight still completes its arc there (and fizzles on landing).
 		var aim: Vector2 = tgt.pos if bool(p.will_hit) else Vector2(p.aim_pos)
 		var step: float = float(p.speed) * DT
-		var to_aim: Vector2 = aim - Vector2(p.pos)
+		var from_pos: Vector2 = Vector2(p.pos)
+		var to_aim: Vector2 = aim - from_pos
 		if to_aim.length() <= step:
 			p.pos = aim
+			# The bodies ON THE WAY resolve before the mark does — they are physically first.
+			_pierce_sweep(p, from_pos, aim, events)
 			_projectile_land(p, tgt, events)
 		else:
-			p.pos = Vector2(p.pos) + to_aim / to_aim.length() * step
+			p.pos = from_pos + to_aim / to_aim.length() * step
+			_pierce_sweep(p, from_pos, Vector2(p.pos), events)
 			kept.append(p)
 	projectiles = kept
+
+
+## PIERCE (#34): the bodies a wide shot passes THROUGH on its way to the mark.
+##
+## ⚠️ THIS DRAWS ZERO RNG, AND THAT IS THE WHOLE DESIGN, NOT AN OPTIMISATION. The alternative —
+## rolling fresh accuracy/crit/variance per incidental body — would insert a variable number of
+## draws into the stream at a position that depends on the geometry of the fight, which is the
+## one thing the determinism contract cannot absorb. Instead the shot CARRIES the three dice it
+## was loosed with and each body it passes applies its OWN armour to them. That is also the more
+## honest fiction: one arrow, one release, three sets of ribs.
+##
+## Two deliberate limits, both so a shot stays legible:
+##  • ONLY A WILL-HIT SHOT PIERCES. An aimed miss (#20) missed — it sails through empty ground
+##    to where the target used to be, and a shot that failed to find its mark spraying the line
+##    behind it would make a miss read like a reward.
+##  • ONE BODY, ONCE, EVER (`hit_ids`). Flight spans several ticks and the segments abut, so a
+##    body sitting near the line would otherwise be clipped on two consecutive ticks.
+## `pierce_left` counts ADDITIONAL bodies, so the default 0 means the sweep does nothing at all
+## and every unauthored shot behaves exactly as it did before this function existed.
+func _pierce_sweep(p: Dictionary, seg_a: Vector2, seg_b: Vector2, events: Array) -> void:
+	if int(p.get("pierce_left", 0)) <= 0 or not bool(p.will_hit):
+		return
+	var shooter = _unit(str(p.from))
+	if shooter == null:
+		return
+	# The shot's own half-width (authored in BODY RADII) plus the body's radius: the standard
+	# capsule-vs-circle test, so "width 0" is a POINT that only ever touches what it homed on.
+	var reach: float = float(p.get("width", 0.0)) * BODY_RADIUS + BODY_RADIUS
+	var seen: Array = p.hit_ids
+	# `units` is id-ordered — the determinism order — so incidental bodies resolve in a fixed
+	# sequence regardless of where they happen to stand.
+	for other in units:
+		if int(p.pierce_left) <= 0:
+			break
+		if not other.alive or str(other.team) == str(shooter.team):
+			continue
+		if str(other.id) == str(p.target_id) or seen.has(str(other.id)):
+			continue
+		if Geometry2D.get_closest_point_to_segment(other.pos, seg_a, seg_b).distance_to(other.pos) > reach:
+			continue
+		seen.append(str(other.id))
+		p.pierce_left = int(p.pierce_left) - 1
+		var bvs: bool = _bonus_status_armed(p.move, other)
+		var out2: Dictionary = Damage.resolve_strike(
+			_strike_inputs(shooter, other, p.move, str(p.stat), p.rolls, bvs))
+		if bool(out2.get("hit", false)):
+			_apply_strike_outcome(shooter, other, p.move, str(p.kname), out2, bvs,
+				float(p.status_roll), "proj_hit", events)
+		else:
+			# The same dice that beat the mark can still be short of a dodgier body on the way.
+			events.append({"kind": "cast_miss", "from": str(p.from), "to": str(other.id),
+				"move": str(p.kname)})
 
 
 ## Landing: an aimed miss expends in empty ground (cast_miss, HERE, where the sail-through is
@@ -1320,7 +1514,12 @@ func _emit_frame(events: Array) -> void:
 		pr.append({"from": str(p.from), "target_id": str(p.target_id), "pos": p.pos,
 			"move": str(p.kname), "will_hit": bool(p.will_hit),
 			"aim": ptgt.pos if bool(p.will_hit) else Vector2(p.aim_pos)})
-	frames.append({"tick": tick_now, "units": us, "events": events, "projectiles": pr})
+	# `dampening` rides the frame as STATE, not an event: it is a continuously-varying global
+	# condition, and the renderer must never re-derive it from the tick counter (rule 3 — the
+	# renderer derives NOTHING). 1.0 for the whole of a normal-length fight, so a presentation
+	# layer can simply hide the read until it drops below 1.
+	frames.append({"tick": tick_now, "units": us, "events": events, "projectiles": pr,
+		"dampening": dampening()})
 	for u in units:
 		u["prev_pos"] = u.pos
 

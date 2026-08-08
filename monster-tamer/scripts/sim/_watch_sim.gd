@@ -101,6 +101,7 @@ var _shots: Array = []          # Array[MeshInstance3D], the pooled projectile b
 var _shot_trails: Array = []    # Array[MeshInstance3D], the stretched tail behind each shot
 
 var _vfx: Node3D = null   # BattleVfx, or null if anything about it is missing (degrade, never crash)
+var _audio: Node3D = null # BattleAudio, same contract: null means the fight is silent, not broken
 var _crowd: Node3D = null
 
 
@@ -119,6 +120,15 @@ func _ready() -> void:
 		if vfx_script != null:
 			_vfx = vfx_script.new()
 			add_child(_vfx)
+	# Audio — procedurally synthesised at boot, and an OPTIONAL dependency exactly like the VFX
+	# above. Nothing here is licensed or downloaded; see scripts/audio/synth.gd. A missing file,
+	# a failed load or a bank that will not render leaves `_audio` null and the fight silent,
+	# which is the game we already had rather than a crash on the way in.
+	if ResourceLoader.exists("res://scripts/audio/battle_audio.gd"):
+		var audio_script = load("res://scripts/audio/battle_audio.gd")
+		if audio_script != null:
+			_audio = audio_script.new()
+			add_child(_audio)
 	_build_shot_pool()
 	_run_fight()
 
@@ -526,6 +536,8 @@ func _restart_replay() -> void:
 	_done = false
 	_paused = false
 	_last_hit.clear()
+	if _audio != null:
+		_audio.reset()   # a cast rise from the previous run must not survive into tick 0 again
 	_shake = 0.0
 	if _end_layer != null and is_instance_valid(_end_layer):
 		_end_layer.queue_free()
@@ -757,6 +769,21 @@ func _present_event(e: Dictionary) -> void:
 	var caster = _rigs.get(str(e.get("from", "")))
 	var vpos: Vector3 = victim.position if victim != null else Vector3.ZERO
 	var cpos: Vector3 = caster.position if caster != null else vpos
+	# ── AUDIO ──────────────────────────────────────────────────────────────────────────────────
+	# The whole audio interface: the raw event, where the actor is, where it LANDED. The layer
+	# reads nothing else about the fight — same rule the renderer follows, for the same reason.
+	# Two kinds need their position resolved differently: a death names its unit as `id`, and an
+	# AoE happens at a point on the ground rather than on a body.
+	if _audio != null:
+		var apos := vpos
+		if kind == "death":
+			var drig = _rigs.get(str(e.get("id", "")))
+			if drig != null:
+				apos = drig.position
+		elif kind == "aoe":
+			var c := Vector2(e.centre)
+			apos = Vector3(c.x, 1.0, c.y)
+		_audio.on_event(e, cpos, apos)
 	match kind:
 		"strike":
 			if int(e.get("dmg", 0)) > 0:
@@ -916,6 +943,11 @@ func _hide_corpse(uid: String) -> void:
 func _crowd_react(intensity: float) -> void:
 	if _crowd != null and _crowd.has_method("react"):
 		_crowd.react(intensity)
+	# The seats and the sound swell on the SAME call — one crowd, not two systems that happen to
+	# agree. Every existing call site (crit, interrupt, death, 3-target AoE, taunt) now carries
+	# its own roar for free, weighted by the intensity that was already chosen for the visual.
+	if _audio != null:
+		_audio.crowd_swell(intensity)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1107,6 +1139,12 @@ func _build_hud() -> void:
 
 
 func _update_speed_label() -> void:
+	# Every playback-control path routes through here, so the audio layer follows the transport
+	# from one place. ⚠️ It must sit ABOVE the null-label guard — the HUD being absent is not a
+	# reason for a paused replay to keep making noise.
+	if _audio != null:
+		_audio.set_speed(_speed)
+		_audio.set_muted(_paused)
 	if _speed_lbl == null:
 		return
 	_speed_lbl.text = "⏸ paused" if _paused else "▶ %dx" % int(_speed)

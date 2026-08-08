@@ -526,6 +526,11 @@
       "mana": 16,
       "variance": 0.15,
       "range": 2.8,
+      "projectile": {
+        "speed": 130,
+        "width": 0.2,
+        "pierce": 0
+      },
       "desc": "Steps through the shadow behind them. The only reliable way past a front line.",
       "id": "DEX-0",
       "stat": "DEX",
@@ -546,6 +551,11 @@
         "firstStrikeMult": 1.5
       },
       "range": 2.8,
+      "projectile": {
+        "speed": 120,
+        "width": 0.21,
+        "pierce": 0
+      },
       "desc": "Devastating on someone who has not swung yet — worthless once they have seen you.",
       "id": "DEX-1",
       "stat": "DEX",
@@ -591,6 +601,11 @@
         "duration": 2
       },
       "range": 2.4,
+      "projectile": {
+        "speed": 85,
+        "width": 0.16,
+        "pierce": 0
+      },
       "desc": "Blinds everything close and covers the exit — the setup Ambush wants.",
       "id": "DEX-3",
       "stat": "DEX",
@@ -608,6 +623,11 @@
       "mana": 16,
       "variance": 0.15,
       "range": 2.7,
+      "projectile": {
+        "speed": 130,
+        "width": 0.21,
+        "pierce": 0
+      },
       "desc": "Cuts the leg out from under them. They keep fighting; they stop leaving.",
       "id": "DEX-4",
       "stat": "DEX",
@@ -630,6 +650,11 @@
         "duration": 2
       },
       "range": 2.5,
+      "projectile": {
+        "speed": 140,
+        "width": 0.22,
+        "pierce": 0
+      },
       "desc": "Quiet, precise, and it ends the casting. What the Assassin line exists to do.",
       "id": "DEX-5",
       "stat": "DEX",
@@ -654,6 +679,11 @@
         "execute": 0.35
       },
       "range": 2.8,
+      "projectile": {
+        "speed": 109,
+        "width": 0.2,
+        "pierce": 0
+      },
       "desc": "Two or three finding strikes, lethal against anything already failing.",
       "id": "DEX-6",
       "stat": "DEX",
@@ -687,6 +717,11 @@
         "duration": 3
       },
       "range": 9,
+      "projectile": {
+        "speed": 91,
+        "width": 0.2,
+        "pierce": 2
+      },
       "desc": "One or two venom-tipped shots, and the venom may pass to a neighbour.",
       "id": "DEX-7",
       "stat": "DEX",
@@ -709,6 +744,11 @@
         "duration": 4
       },
       "range": 8.9,
+      "projectile": {
+        "speed": 95,
+        "width": 0.22,
+        "pierce": 0
+      },
       "desc": "A cheap second dose. Poison is the point; the dart barely matters.",
       "id": "DEX-8",
       "stat": "DEX",
@@ -733,6 +773,11 @@
         }
       },
       "range": 9.2,
+      "projectile": {
+        "speed": 87,
+        "width": 0.24,
+        "pierce": 0
+      },
       "desc": "Digs at a poisoned wound until the venom does the rest.",
       "id": "DEX-9",
       "stat": "DEX",
@@ -761,6 +806,11 @@
         "duration": 3
       },
       "range": 9,
+      "projectile": {
+        "speed": 86,
+        "width": 0.2,
+        "pierce": 0
+      },
       "desc": "Two quick shots that open a wound — bleed here, poison everywhere else in the line.",
       "id": "DEX-10",
       "stat": "DEX",
@@ -783,6 +833,11 @@
         "duration": 1
       },
       "range": 8.3,
+      "projectile": {
+        "speed": 95,
+        "width": 0.26,
+        "pierce": 0
+      },
       "desc": "DEX's one hard control: a neurotoxin that drops them where they stand.",
       "id": "DEX-11",
       "stat": "DEX",
@@ -807,6 +862,11 @@
         }
       },
       "range": 8.4,
+      "projectile": {
+        "speed": 87,
+        "width": 0.28,
+        "pierce": 0
+      },
       "desc": "Feeble on clean blood, ruinous on poisoned — the payoff the whole line builds toward.",
       "id": "DEX-12",
       "stat": "DEX",
@@ -836,6 +896,11 @@
         "duration": 4
       },
       "range": 7.2,
+      "projectile": {
+        "speed": 72,
+        "width": 0.38,
+        "pierce": 0
+      },
       "desc": "Poison that jumps between bodies. It rewards an enemy that stands together.",
       "id": "DEX-13",
       "stat": "DEX",
@@ -859,6 +924,11 @@
         ]
       },
       "range": 11,
+      "projectile": {
+        "speed": 61,
+        "width": 0.46,
+        "pierce": 0
+      },
       "desc": "One or two quick shots. Cheap enough to throw all day.",
       "id": "DEX-14",
       "stat": "DEX",
@@ -936,6 +1006,11 @@
       "mana": 18,
       "variance": 0.15,
       "range": 10,
+      "projectile": {
+        "speed": 78,
+        "width": 0.47,
+        "pierce": 0
+      },
       "desc": "Suppressing fire that drags them out of position and holds them there.",
       "id": "DEX-18",
       "stat": "DEX",
@@ -959,6 +1034,11 @@
         ]
       },
       "range": 11,
+      "projectile": {
+        "speed": 40,
+        "width": 0.42,
+        "pierce": 0
+      },
       "desc": "Everything in the quiver, all at once, aimed roughly. Anywhere from a scratch to a slaughter.",
       "id": "DEX-19",
       "stat": "DEX",
@@ -982,6 +1062,11 @@
         ]
       },
       "range": 8.9,
+      "projectile": {
+        "speed": 50,
+        "width": 0.74,
+        "pierce": 1
+      },
       "desc": "One shot, several bodies. It bounces, and it does not much care whose.",
       "id": "DEX-20",
       "stat": "DEX",
@@ -999,6 +1084,11 @@
       "mana": 34,
       "variance": 0.25,
       "range": 8.4,
+      "projectile": {
+        "speed": 54,
+        "width": 0.82,
+        "pierce": 0
+      },
       "desc": "A bombardment onto a chosen patch of ground — it punishes standing together.",
       "id": "DEX-21",
       "stat": "DEX",
@@ -1016,6 +1106,11 @@
       "mana": 32,
       "variance": 0.2,
       "range": 8.5,
+      "projectile": {
+        "speed": 59,
+        "width": 0.76,
+        "pierce": 0
+      },
       "desc": "Nails several of them to the spot at once.",
       "id": "DEX-22",
       "stat": "DEX",
@@ -1033,6 +1128,11 @@
       "mana": 44,
       "variance": 0.05,
       "range": 9.2,
+      "projectile": {
+        "speed": 90,
+        "width": 0.46,
+        "pierce": 1
+      },
       "desc": "One shot. It goes exactly where it was sent.",
       "id": "DEX-23",
       "stat": "DEX",
@@ -1978,6 +2078,11 @@
         "duration": 3
       },
       "range": 7.9,
+      "projectile": {
+        "speed": 42,
+        "width": 0.49,
+        "pierce": 0
+      },
       "desc": "Minor fire, and it catches. The cheapest way to start a stack.",
       "id": "INT-0",
       "stat": "INT",
@@ -2000,6 +2105,11 @@
         "duration": 3
       },
       "range": 7.5,
+      "projectile": {
+        "speed": 42,
+        "width": 0.54,
+        "pierce": 0
+      },
       "desc": "A stinging barrage that cracks the guard. The second stack type.",
       "id": "INT-1",
       "stat": "INT",
@@ -2024,6 +2134,11 @@
         }
       },
       "range": 7,
+      "projectile": {
+        "speed": 46,
+        "width": 0.55,
+        "pierce": 0
+      },
       "desc": "Solid on its own, and it snuffs a Burn for far more. The first detonator.",
       "id": "INT-2",
       "stat": "INT",
@@ -2044,6 +2159,11 @@
         "duration": 3
       },
       "range": 7.5,
+      "projectile": {
+        "speed": 37,
+        "width": 0.28,
+        "pierce": 0
+      },
       "desc": "Drains the will to strike: −22% damage for 3 rounds. INT could not do this at all before.",
       "id": "INT-3",
       "stat": "INT",
@@ -2068,6 +2188,11 @@
         }
       },
       "range": 6.6,
+      "projectile": {
+        "speed": 42,
+        "width": 0.59,
+        "pierce": 0
+      },
       "desc": "A charge left ticking on them — devastating on anything already cracked open.",
       "id": "INT-4",
       "stat": "INT",
@@ -2088,6 +2213,11 @@
         "duration": 3
       },
       "range": 7.5,
+      "projectile": {
+        "speed": 37,
+        "width": 0.28,
+        "pierce": 0
+      },
       "desc": "Unpicks whatever is holding them together: −14 mitigation from EVERY source of damage.",
       "id": "INT-5",
       "stat": "INT",
@@ -2112,6 +2242,11 @@
         }
       },
       "range": 5.6,
+      "projectile": {
+        "speed": 32,
+        "width": 0.99,
+        "pierce": 0
+      },
       "desc": "Sets off everything still burning, on everyone at once. The Hexer capstone.",
       "id": "INT-6",
       "stat": "INT",
@@ -2129,6 +2264,11 @@
       "mana": 12,
       "variance": 0.2,
       "range": 8.3,
+      "projectile": {
+        "speed": 31,
+        "width": 0.85,
+        "pierce": 0
+      },
       "desc": "An icy dart. The frost line opens here.",
       "id": "INT-7",
       "stat": "INT",
@@ -2146,6 +2286,11 @@
       "mana": 16,
       "variance": 0.15,
       "range": 8,
+      "projectile": {
+        "speed": 34,
+        "width": 0.85,
+        "pierce": 0
+      },
       "desc": "Ice climbs the legs and sets. It can still cast; it is going nowhere.",
       "id": "INT-8",
       "stat": "INT",
@@ -2163,6 +2308,11 @@
       "mana": 26,
       "variance": 0.2,
       "range": 6.9,
+      "projectile": {
+        "speed": 26,
+        "width": 1.3,
+        "pierce": 0
+      },
       "desc": "A ring of hoarfrost bursts outward — the anti-melee tool casters never had.",
       "id": "INT-9",
       "stat": "INT",
@@ -2201,6 +2351,11 @@
         "duration": 3
       },
       "range": 6.6,
+      "projectile": {
+        "speed": 25,
+        "width": 1.49,
+        "pierce": 0
+      },
       "desc": "Fire across the whole position, and much of it keeps burning.",
       "id": "INT-11",
       "stat": "INT",
@@ -2223,6 +2378,11 @@
         "duration": 1
       },
       "range": 6.3,
+      "projectile": {
+        "speed": 25,
+        "width": 1.56,
+        "pierce": 0
+      },
       "desc": "The ground itself comes up. Damage AND a stun on everything standing on it.",
       "id": "INT-12",
       "stat": "INT",
@@ -2243,6 +2403,11 @@
         "maxHpDmg": 0.02
       },
       "range": 6,
+      "projectile": {
+        "speed": 25,
+        "width": 1.7,
+        "pierce": 0
+      },
       "desc": "The largest thing in the game, and it hurts the biggest of them most.",
       "id": "INT-13",
       "stat": "INT",
@@ -2260,6 +2425,11 @@
       "mana": 5,
       "variance": 0.15,
       "range": 7.4,
+      "projectile": {
+        "speed": 72,
+        "width": 0.5,
+        "pierce": 1
+      },
       "desc": "A small air bolt, cheap enough to throw between everything else.",
       "id": "INT-14",
       "stat": "INT",
@@ -2322,6 +2492,11 @@
         "duration": 2
       },
       "range": 6,
+      "projectile": {
+        "speed": 54,
+        "width": 0.88,
+        "pierce": 1
+      },
       "desc": "A bolt that leaps body to body along a line, weakening as it goes.",
       "id": "INT-17",
       "stat": "INT",
@@ -2343,6 +2518,11 @@
         "lifesteal": 0.25
       },
       "range": 6.9,
+      "projectile": {
+        "speed": 72,
+        "width": 0.55,
+        "pierce": 1
+      },
       "desc": "Siphons and steps away in the same motion. WIS steals better; this one escapes.",
       "id": "INT-18",
       "stat": "INT",
@@ -2364,6 +2544,11 @@
         "duration": 3
       },
       "range": 7,
+      "projectile": {
+        "speed": 58,
+        "width": 0.3,
+        "pierce": 1
+      },
       "desc": "Strips the shield off them and leaves their aim shaking.",
       "id": "INT-19",
       "stat": "INT",
@@ -2381,6 +2566,11 @@
       "mana": 26,
       "variance": 0.15,
       "range": 6.8,
+      "projectile": {
+        "speed": 72,
+        "width": 0.6,
+        "pierce": 1
+      },
       "desc": "Teleports the TARGET — rips a diver out of your back line and pins it where it lands.",
       "id": "INT-20",
       "stat": "INT",
@@ -2401,6 +2591,11 @@
         "pierce": 0.5
       },
       "range": 6.2,
+      "projectile": {
+        "speed": 78,
+        "width": 0.61,
+        "pierce": 2
+      },
       "desc": "Pure void. Half of everything they are wearing simply does not apply.",
       "id": "INT-21",
       "stat": "INT",
@@ -2421,6 +2616,11 @@
         "recoil": 0.15
       },
       "range": 6.2,
+      "projectile": {
+        "speed": 55,
+        "width": 0.8,
+        "pierce": 3
+      },
       "desc": "Overchannelled past what the caster can hold. It burns them too.",
       "id": "INT-22",
       "stat": "INT",

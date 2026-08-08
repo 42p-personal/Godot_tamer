@@ -32,7 +32,11 @@
 ##
 ## ── TACTICS (per unit; team plan supplies defaults, any axis overridable — decision #13) ─────
 ##   target_priority : nearest | weakest | casters | tanks | marked | threat | healers
-##   positional      : push | hold | wings | dive | guard
+##   positional      : push | hold | wings | dive | guard | kite   (⚠️ `kite` was already built
+##                     and missing from this list — decision #39's budgeted kiting)
+##                     ⚠️ EVERY POSTURE'S GEOMETRY IS BOARD-RELATIVE — see the BOARD SCALE block
+##                     below. Writing a distance here as a literal is the bug that parked `hold`,
+##                     `guard` and `kite` on their deploy anchors for whole 5v5 fights.
 ##   wing_side       : -1 | 1 (which flank for `wings`)
 ##   when_hurt       : fight_on | fall_back | disengage
 ##   hurt_at         : hp fraction that arms the when-hurt branch (data, not hardcoded)
@@ -93,6 +97,102 @@ const BT = preload("res://scripts/ai/bt.gd")
 const FALLBACK_DWELL_BASE := 30
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# BOARD SCALE — ⚠️ EVERY POSITIONAL CONSTANT BELOW IS A FRACTION OF THE BOARD, NOT AN ABSOLUTE
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## ⚠️ THIS IS THE FIFTH-SCALE-BUG SHAPE AGAIN, AND IT WAS MEASURED, NOT GUESSED.
+## `_probe_sim_quality.gd` ran the same comps on the toy 110x62 board every check used and on the
+## REAL `Spatial.ground_size(5)` = 440x246.4 board the game is actually played on. The toy board
+## puts the two deploy lines 80 units apart; the real one puts them **391.6** apart. Advance at
+## 34% into the fight, by posture, on the real board, BEFORE this block existed:
+##
+##     Push               0.90 .. 1.95   (of the way from its deploy line to the centre)
+##     Dive the backline  1.24 .. 1.82
+##     Hold the line      0.04 .. 0.05   ← parked on its deploy anchor, 390 units from the fight
+##     Guard the charge   0.07           ← guarding a parked charge, therefore also parked
+##     Kite               0.00           ← never moved at all, all fight
+##
+## A `hold` unit clamped 8.0 units from a deploy anchor at the far END of the board is not holding
+## a line, it is a spectator, and its team fights 5v3. The reason nobody saw it is that the toy
+## board is small enough that a body standing on its anchor is ALREADY inside reach of the centre
+## (`HARD_REACH_MAX` is 96.8 against a half-separation of 40) — the posture "worked" by accident
+## of scale. `wings` was the same story from the other end: an 18-unit lateral offset is a real
+## flank on a 62-deep board and 7% of a 246-deep one, so the tactic §2B names as one of the TWO
+## that spread a fight across the board measured a THINNER footprint than a plain brawl.
+##
+## The rule from here: the tree knows exactly ONE distance — the deploy separation, which it can
+## read off the blackboard — and every positional constant is expressed as a fraction of it.
+##
+## ⚠️ THE SCALE NEVER GOES BELOW 1.0, ON PURPOSE. Hand-built test blackboards (and any future
+## small board) keep the authored absolutes EXACTLY, so this block can only ever grow a distance
+## on a board bigger than the one they were authored for. That is what makes it safe to add to a
+## tree with a full probe battery already pinned against it.
+const BOARD_REF_SPAN := 80.0   # the deploy separation the absolutes below were authored against
+const WING_OFFSET_BASE := 18.0
+const DIVE_DEPTH_BASE := 12.0
+const KITE_GAP_BASE := 12.0
+const HOLD_RADIUS_BASE := 8.0  # ⚠️ MIRRORS sim.gd's HOLD_RADIUS_BASE — its own comment says
+							   #  "must match the tree's hold default". The sim publishes
+							   #  `hold_radius` as BASE + stagnation_level, so the tree
+							   #  subtracts BASE to recover the ratchet's contribution and
+							   #  re-adds it on top of the board-derived line (see _hold_radius).
+## `hold` holds a LINE, and on a board whose deploy zones are at the two ENDS the deploy point is
+## not a line, it is a corner of the map. The rule that reads correctly at EVERY board size is
+## REACH-RELATIVE: advance only until the enemy line is inside a working weapon's reach, and never
+## past `HOLD_LINE_FRAC` of the way to the centre.
+##
+## ⚠️ THE FIRST VERSION OF THIS WAS PURELY CENTRE-RELATIVE (`0.9 x half-separation`) AND THE
+## ANTI-BLOB CHECK CAUGHT IT — four teams on the small board collapsed past the 70% shrink floor,
+## because on a 110-wide board the enemy line is 80 away while reach runs to 96.8: everything is
+## ALREADY in range at deploy, so "advance to the centre" there means "pile into the scrum", which
+## is the blob this whole rewrite exists to kill. The reach term makes the small board resolve to
+## exactly the authored 8.0 (byte-identical to before) and the 5v5 board to ~176.
+##
+## `HOLD_REACH_REF` is the pool's working stand-off: `Spatial.CHANNEL_RANGE` puts magic at 61.6,
+## voice at 57.2 and ranged at 70.4, with `HARD_REACH_MAX` at 96.8. ⚠️ It is a REFERENCE, not the
+## unit's own reach — the blackboard does not carry that today. If the sim ever publishes a
+## `my_reach` key this should read it instead; see the note in the SIM WISHLIST at the top.
+const HOLD_LINE_FRAC := 0.9
+const HOLD_REACH_REF := 72.0
+## A kiter with nobody near it used to stand on its anchor forever (measured 0.00 advance). The
+## gap is a gap in BOTH directions: past this multiple of it, take up the firing line.
+const KITE_ADVANCE_SLACK := 1.3
+
+
+## The deploy separation, latched ONCE on the first descent (the root seeding Condition calls
+## this) from facts the blackboard already carries: my deploy anchor's x and the enemy line's x
+## are exactly one separation apart at tick 0. Latched, never re-read — enemies move, boards
+## do not. Falls back to the authored reference when the bb has no enemy line (hand-built bbs).
+static func _latch_span(bb) -> void:
+	if float(bb.get_value("_board_span", 0.0)) > 0.0:
+		return
+	var home: Vector2 = bb.get_value("home_pos", Vector2.ZERO)
+	var elx: float = float(bb.get_value("enemy_line_x", home.x))
+	bb.set_value("_board_span", maxf(BOARD_REF_SPAN, absf(elx - home.x)))
+
+
+static func _span(bb) -> float:
+	var v: float = float(bb.get_value("_board_span", 0.0))
+	return v if v > 0.0 else BOARD_REF_SPAN
+
+
+## >= 1.0 always — see the ⚠️ above.
+static func _board_scale(bb) -> float:
+	return maxf(1.0, _span(bb) / BOARD_REF_SPAN)
+
+
+## The hold line: board-derived, and it still carries the sim's stagnation ratchet on top.
+static func _hold_radius(bb) -> float:
+	var published: float = float(bb.get_value("hold_radius", HOLD_RADIUS_BASE))
+	var stagnation_extra: float = maxf(0.0, published - HOLD_RADIUS_BASE)
+	var span: float = _span(bb)
+	# Advance until the enemy line is inside a working reach — capped at the centre-line rule,
+	# floored at whatever the sim published. On the 110-wide board this is exactly `published`.
+	var line: float = clampf(span - HOLD_REACH_REF, published, HOLD_LINE_FRAC * span * 0.5)
+	return line + stagnation_extra
+
+
 static func build(tactics: Dictionary) -> BT.BehaviourTree:
 	var order_slot := BT.SubtreeSlot.new()
 	var mode_slot := BT.SubtreeSlot.new()  # decision #38: modes INJECT subtrees here
@@ -105,6 +205,10 @@ static func build(tactics: Dictionary) -> BT.BehaviourTree:
 		# A hand-set bb ordered_id wins over the tactics seed. Always falls through (returns
 		# false) so the selector continues — this node never claims the tick.
 		BT.Condition.new("", func(bb):
+			# BOARD SCALE: latch the deploy separation on the same first descent (see the
+			# BOARD SCALE block). Must happen HERE — at tick 0 the enemy line is still the
+			# enemy's deploy line, which is the one distance the tree can measure.
+			_latch_span(bb)
 			if not bb.get_value("_order_seeded", false):
 				bb.set_value("_order_seeded", true)
 				var oid: String = str(tactics.get("ordered_id", ""))
@@ -471,7 +575,9 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				# Low Aggression = tighter discipline (shorter leash); 50 = exactly authored.
 				# The sim GROWS hold_radius under stagnation pressure (nothing landing for 15s)
 				# so two turtled remnants cannot stand off forever — log the shift ONCE.
-				var hold_r: float = float(bb.get_value("hold_radius", 8.0)) * (0.75 + 0.5 * _aggr(bb))
+				# ⚠️ THE RADIUS IS THE BOARD'S, NOT A LITERAL 8.0 — see the BOARD SCALE block.
+				# Measured: the literal parked every holder 390 units from its own fight.
+				var hold_r: float = _hold_radius(bb) * (0.75 + 0.5 * _aggr(bb))
 				var pressed: bool = bool(bb.get_value("stagnation_pressure", false))
 				if pressed != bool(bb.get_value("_hold_pressed", false)):
 					bb.set_value("_hold_pressed", pressed)
@@ -486,7 +592,11 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
 				# WING VARIETY: Aggression scales the WIDTH (§9) — bolder swings wider; 50 =
 				# exactly the authored offset, the personality invariant everywhere in this file.
-				var lateral: float = float(bb.get_value("wing_offset", 18.0)) * wing * (0.7 + 0.6 * _aggr(bb))
+				# ⚠️ BOARD-SCALED (see the BOARD SCALE block): a flat 18 is a real flank on the
+				# board this was authored for and 7% of the height of a 5v5 ground, which made
+				# the anti-blob axis measure a THINNER footprint than a plain brawl.
+				var lateral: float = float(bb.get_value("wing_offset", WING_OFFSET_BASE * _board_scale(bb))) \
+					* wing * (0.7 + 0.6 * _aggr(bb))
 				var axis_y: bool = bool(bb.get_value("wing_axis_y", true))
 				var wp: Vector2 = Vector2(tp.x, tp.y + lateral) if axis_y else Vector2(tp.x + lateral, tp.y)
 				# CROWDED WING: 2+ live enemies nearer MY wing point than the target means the
@@ -512,7 +622,8 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				# around, which is the whole identity of the tactic.
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
 				# High Aggression dives DEEPER behind the line; 50 = exactly the authored depth.
-				var depth: float = float(bb.get_value("dive_depth", 12.0)) * (0.8 + 0.4 * _aggr(bb))
+				var depth: float = float(bb.get_value("dive_depth", DIVE_DEPTH_BASE * _board_scale(bb))) \
+					* (0.8 + 0.4 * _aggr(bb))
 				var behind_x: float = float(bb.get_value("enemy_line_x", tp.x)) + depth * signf(tp.x - float(bb.get_value("self", {}).get("pos", Vector2.ZERO).x) + 0.001)
 				bb.set_value("req_move_to", Vector2(behind_x, tp.y))
 				return BT.SUCCESS)
@@ -521,8 +632,9 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 				bb.set_value("posture", "Kite")
 				var tp: Vector2 = bb.get_value("target_pos", Vector2.ZERO)
 				var me: Dictionary = bb.get_value("self", {})
-				var gap: float = float(bb.get_value("kite_gap", 12.0))
+				var gap: float = float(bb.get_value("kite_gap", KITE_GAP_BASE * _board_scale(bb)))
 				var near: float = float(bb.get_value("nearest_enemy_dist", INF))
+				var back: float = 8.0 * _board_scale(bb)   # one backpedal step, board-relative
 				var budget: int = int(bb.get_value("kite_ticks_left", 0))
 				# #39: kiting has an END. Budget spent -> stand and fight, and say so.
 				if budget <= 0:
@@ -536,8 +648,21 @@ static func _positional_node(tactics: Dictionary) -> BT.BTBase:
 					if str(bb.get_value("_kite_state", "")) != "kiting":
 						bb._reason = "kiting — keeping the gap"
 						bb.set_value("_kite_state", "kiting")
-					bb.set_value("req_move_to", Vector2(me.pos) + away * 8.0)
+					bb.set_value("req_move_to", Vector2(me.pos) + away * back)
 					return BT.SUCCESS
+				# ⚠️ THE GAP IS A GAP IN BOTH DIRECTIONS. A kiter with nobody near it used to
+				# stand on its deploy anchor for the entire fight (MEASURED: advance 0.00 at
+				# every sample on the real board, while its team fought 3v5). "Kite" is a
+				# firing posture, not a refusal to take part: past KITE_ADVANCE_SLACK of the
+				# gap, close to the edge of the gap and shoot from there.
+				if near > gap * KITE_ADVANCE_SLACK:
+					var to_t: Vector2 = Vector2(tp) - Vector2(me.pos)
+					if to_t.length() > gap:
+						if str(bb.get_value("_kite_state", "")) != "closing":
+							bb._reason = "taking the firing line"
+							bb.set_value("_kite_state", "closing")
+						bb.set_value("req_move_to", Vector2(tp) - to_t.normalized() * gap)
+						return BT.SUCCESS
 				bb.set_value("_kite_state", "")
 				bb.set_value("req_move_to", Vector2(me.pos))
 				return BT.SUCCESS)

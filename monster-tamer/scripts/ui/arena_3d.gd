@@ -77,6 +77,66 @@ const UNIT_HEIGHT := 4.4
 const WALL_H := 1.4
 const STAND_TIERS := 5
 
+## ── PROP PROPORTION: THE CREATURE IS THE YARDSTICK ─────────────────────────────────────────────
+##
+## ⚠️ COVER HEIGHT USED TO BE THREE BARE NUMBERS (1.0 / 2.0 / 3.2) WHILE `UNIT_HEIGHT` IS 4.4, so
+## every grade was authored against nothing at all. Measured consequence on a 5v5 board, where a
+## blocking major is `ArenaLayout.MAJOR_MIN_BODIES` = 9 bodies of frontage = 39.6 ground units =
+## 13.5 world units: the piece was drawn 13.5 long and 3.2 tall — a **4.2 : 1 slab, three
+## creature-heights long and knee-high on the creature standing beside it**. That is the "brick
+## loaf" complaint exactly, and it is a PROPORTION fault, not a texture one.
+##
+## ⚠️ THE FOOTPRINT IS NOT OURS TO CHANGE. `Spatial.cover_between` tests that rectangle and the
+## renderer must not lie about where cover is (the invariant the `_try_prop_multimesh` header
+## defends). HEIGHT is the only free axis, so height is expressed in CREATURE HEIGHTS and the
+## cover GRADE is what picks the ratio:
+##
+##   soft     0.42 — mid-thigh. You crouch behind it and shots pass over. A crate reads as a crate
+##                   beside a monster (2.24 wide x 1.85 tall = 1.2 : 1) instead of as a loaf
+##                   (2.24 x 1.0 = 2.2 : 1).
+##   hard     0.80 — shoulder. You stand behind it and only your head is exposed.
+##   blocking 1.18 — over the head. This grade means "breaks the line of sight", so it has to be
+##                   taller than the thing whose line of sight it breaks or the picture is a lie.
+##                   A 9-body major now reads 13.5 x 5.19 = 2.6 : 1 — a wall, not a loaf.
+##
+## ⚠️ AND THE CEILING IS NOT INVENTED EITHER. `ARENA_DESIGN.md` §4 caps drawn cover at 3.4 against
+## a body that was ~2.0 units when the rule was written — i.e. **1.7 creature-heights**. 1.18 sits
+## comfortably under it, so blocking cover still cannot hide the fight from a 38-degree camera: it
+## occludes `h / tan(38°)` ≈ 1.28 h of floor behind it, which is precisely the cover shadow the sim
+## is already charging for.
+##
+## ⚠️ A GRADE WITH NO ENTRY FALLS TO `soft`, NEVER TO ZERO. A future layout stream may add a grade
+## name before this table hears about it; a piece drawn flat on the floor is invisible cover, which
+## is the worst possible failure mode in a game the player cannot intervene in.
+const PROP_HEIGHT_BODIES := {"soft": 0.42, "hard": 0.80, "blocking": 1.18}
+const PROP_HEIGHT_DEFAULT := 0.42
+
+## The drawn height of a cover piece, in world units. ⚠️ `_probe_venue.gd` reads this rather than
+## re-deriving it, so the instrument and the renderer can never disagree about what was drawn.
+static func prop_height(grade: String) -> float:
+	return UNIT_HEIGHT * float(PROP_HEIGHT_BODIES.get(grade, PROP_HEIGHT_DEFAULT))
+
+
+## ── THE VENUE SCALES WITH THE BOARD; THE CROWD DOES NOT ────────────────────────────────────────
+##
+## ⚠️ THE STANDS WERE A FIXED RING ON A BOARD THAT DOUBLES. Five tiers of 0.8 rise and 1.6 depth
+## give a bank 5.4 world units tall whatever the ground is, while `Spatial.ground_size` runs from
+## 74.8 x 41.9 world units at 1v1 to 149.6 x 83.8 at 5v5 — exactly 2.0x — and the camera pulls back
+## in proportion. So the venue subtends HALF the angle at the leagues that are supposed to feel
+## grandest, which is the "stands cropped to a thin band" report, and it is arithmetic rather than
+## taste.
+##
+## ⚠️ THE FIX IS MORE TIERS, NOT BIGGER ONES BELOW ROW 5, AND THAT IS A HARD CONSTRAINT.
+## `spectators.gd` seats its crowd on rows 0-4 at its own hard-coded step (`off = 4.5 + row*3.5`,
+## `lift = 1.6 + row*1.4` in GROUND units) and it is another workstream's file. Changing the first
+## five steps would float or bury every spectator in the venue. So rows 0-4 are byte-identical to
+## before and the growth is entirely in tiers ABOVE the crowd — which is also how a real ground
+## grows, and it obeys the standing rule that the crowd fills by FAME and is *never* scaled to the
+## arena (`spectators.gd` header; memory `crowd-fill-by-fame`).
+const STAND_TIERS_MAX := 12
+const STAND_STEP_H := 0.8
+const STAND_STEP_OUT := 1.6
+
 const SPEED_OPTIONS := [0.5, 1.0, 2.0, 4.0]
 const OPENING_HOLD := 1.5
 
@@ -130,9 +190,25 @@ const LEAGUE_LOOK := {
 	# own brightness is (Iron is near-colourless forge stone, Masters is pale marble), and this
 	# column is what compensates for it. So a new ground texture ALWAYS needs a fresh measurement —
 	# you cannot infer its tone-down from a neighbouring league's.
-	"Platinum":    {"key": Color(0.98, 0.91, 0.80), "key_e": 2.0, "amb": Color(0.33, 0.39, 0.53), "amb_e": 0.30, "fog": Color(0.13, 0.15, 0.19), "ground": Color(0.36, 0.37, 0.39), "fill": Color(0.58, 0.70, 0.98)},
+	# ⚠️ PLATINUM 0.36 -> 0.335 ON 2026-08-08, AND IT IS THE MARGINAL CASE IN THIS TABLE, not a clean
+	# one. It measured 1.12 / 1.14 / 1.12 / 1.07 / 1.07 across five integration runs against a 1.12
+	# pass mark: the FLOOR term is steady (0.200-0.201) and the BODY term is what moves (0.214-0.228),
+	# because the check samples whichever creature is standing in the sampling ring at a wall-clock
+	# frame. So this nudge buys margin against an instrument that wobbles, and the real fix is to pin
+	# the probe's sample to a sim tick. ⚠️ DO NOT KEEP CUTTING THIS ROW IF IT FAILS AGAIN: Platinum
+	# already has the darkest floor AND the darkest frame (0.158) of the eleven, and the honest
+	# diagnosis is that its CAST is dark, not that its ground is bright. The next move here is a
+	# stronger `fill` (which lifts a silhouette off the floor without lifting the floor), not more
+	# tone-down — past this point darkening the ground is fixing the ratio by ruining the venue.
+	"Platinum":    {"key": Color(0.98, 0.91, 0.80), "key_e": 2.0, "amb": Color(0.33, 0.39, 0.53), "amb_e": 0.30, "fog": Color(0.13, 0.15, 0.19), "ground": Color(0.335, 0.344, 0.363), "fill": Color(0.58, 0.70, 0.98)},
 	"Masters":     {"key": Color(1.00, 0.86, 0.68), "key_e": 2.1, "amb": Color(0.30, 0.36, 0.50), "amb_e": 0.28, "fog": Color(0.12, 0.12, 0.16), "ground": Color(0.56, 0.53, 0.49), "fill": Color(0.54, 0.66, 0.96)},
-	"Tamer Elite": {"key": Color(1.00, 0.84, 0.64), "key_e": 2.1, "amb": Color(0.30, 0.35, 0.50), "amb_e": 0.28, "fog": Color(0.11, 0.12, 0.16), "ground": Color(0.52, 0.50, 0.50), "fill": Color(0.54, 0.66, 0.96)},
+	# ⚠️ TAMER ELITE 0.52 -> 0.458 ON 2026-08-08. It was the last league still failing the value check
+	# and it failed on BOTH runs of the integration pass (1.05 twice, against a 1.12 pass mark),
+	# where Platinum's neighbouring failure moved to 1.12/1.14 between runs and is therefore noise,
+	# not a defect. Factor is the measured shortfall (0.214/0.229) with margin for the ±0.1 of
+	# run-to-run variance the check carries, keeping the colour's RATIOS so the league's pale-stone
+	# identity survives a change that is purely value.
+	"Tamer Elite": {"key": Color(1.00, 0.84, 0.64), "key_e": 2.1, "amb": Color(0.30, 0.35, 0.50), "amb_e": 0.28, "fog": Color(0.11, 0.12, 0.16), "ground": Color(0.458, 0.440, 0.440), "fill": Color(0.54, 0.66, 0.96)},
 	"Tamers Apex": {"key": Color(1.00, 0.87, 0.66), "key_e": 2.2, "amb": Color(0.31, 0.36, 0.52), "amb_e": 0.28, "fog": Color(0.12, 0.11, 0.15), "ground": Color(0.52, 0.49, 0.44), "fill": Color(0.56, 0.68, 0.98)},
 }
 ## The lamp a league with no entry gets. Neutral on purpose: a missing league should read as an
@@ -312,16 +388,91 @@ const OBSTACLE_TEX := {
 ## is a worse version of the original complaint: the majors are the biggest objects on the board
 ## and they became the brightest things in frame, above the creatures. Dressed stone here, so they
 ## sit below the cast and above the floor, which is the order the value ladder needs.
+## ⚠️ REBALANCED 2026-08-08 FROM MEASURED FRAMES, NOT FROM TASTE, AND THE MEASUREMENT SAID EVERY
+## SINGLE KIND WAS WRONG. `_probe_venue.gd`'s per-kind pass samples each prop's lit top face out of
+## the rendered frame and compares it with the floor and with the creatures. Before this change,
+## against a floor of 0.325 and a cast of 0.337:
+##
+##     pillar 2.03x floor · barrel 1.84 · fence 1.81 · boulder 1.73 · low_wall_border 1.55
+##     crate 1.47 · low_wall 1.29 · bench 1.03 · planter 0.75          (0 of 9 kinds correct)
+##
+## Six kinds were drawn between 1.4x and 2.0x THE VALUE OF THE CREATURES STANDING AMONG THEM. On a
+## board now carrying a hundred pieces that is not a subtle fault: the eye lands on the furniture.
+##
+## ⚠️ AND THE CAUSE WAS STRUCTURAL, NOT A BAD COLOUR. The floor takes `LEAGUE_LOOK.ground` (0.36 at
+## Platinum, 0.92 at Iron — a 2.6x spread), the barrier takes it, the stands take it, and the props
+## took NOTHING. So last round's grand-circuit tone-down darkened the ground out from under a set of
+## props that stayed exactly where they were, and the prop/floor relationship became a different
+## number in every league. The fix is that props now take the league tone too (see `_prop_material`)
+## — the ladder then holds by construction rather than by eleven separate strokes of luck.
+##
+## The values below are therefore the kind's own MATERIAL identity at a reference ground of 1.0.
+## Each was moved by the ratio the probe measured, targeting ~1.20x the floor: an object standing on
+## the ground reads a little above it, and stays far under the cast.
+##
+## ⚠️ RE-RUN THE PROBE AFTER TOUCHING ANY ROW HERE. Albedo is not luminance — the league tone, the
+## FILMIC curve and the model's own texture all sit between this number and the pixel, which is
+## exactly why the previous set of hand-picked values measured 0 for 9.
+## ⚠️ SECOND PASS, SAME METHOD: the first correction landed every kind at 1.5x the floor against a
+## 1.25 target and left `crate` at 2.00, so each row is multiplied by (target / measured) again.
+## Two passes rather than one because the response is not linear — the FILMIC curve compresses the
+## top end, so a tint change moves the pixel by less than itself up there. Iterating a measurement
+## is cheap; guessing a curve is not.
+##
+## ⚠️ AND `low_wall_border` CARRIES A SECOND, SEPARATE CORRECTION FOR CHROMA. Its art
+## (`low-wall-brick.jpg`) is a saturated red-orange, and it stayed the loudest thing in frame at a
+## luminance that measured perfectly in band — because VALUE IS NOT THE ONLY CHANNEL THE EYE SORTS
+## ON. `ART_BIBLE_GUILD_COLOURS.md` reserves saturation for the team and status channels and asks
+## the venue to be muted; three saturated orange slabs on a brown floor break that on their own.
+## The tint pulls red down relative to green and blue, which desaturates the brick toward the
+## league's masonry without repainting the texture.
 const OBSTACLE_TINT := {
-	"planter": Color(0.55, 0.72, 0.48),
-	"fence": Color(0.95, 0.88, 0.72),
-	"boulder": Color(0.80, 0.74, 0.66),
-	"shrine": Color(0.78, 0.72, 0.58),
-	"low_wall": Color(0.58, 0.54, 0.50),
-	"low_wall_border": Color(0.54, 0.52, 0.50),
-	"pillar": Color(0.70, 0.68, 0.64),
-	"crate": Color(0.86, 0.78, 0.62),
+	# ⚠️ `planter` REPORTS "SINKS INTO FLOOR" AND THAT REPORT IS NOT TRUSTWORTHY — DO NOT TUNE THIS
+	# ROW. It has the same signature as `crate` below: raised x1.27 (to 1.65/2.03/1.40) on 2026-08-08
+	# and the probe returned luma 0.243, ratio 1.02, sat 0.085 — IDENTICAL TO THREE DECIMALS to the
+	# run before. A number that does not move when you change what produces it is not measuring that
+	# thing, and that is now TWO kinds behaving this way, which makes it an instrument fault rather
+	# than a coincidence. Both are small props (0.61 and 0.44 bodies); the per-kind sampler almost
+	# certainly misses them at whole-venue framing. The change was REVERTED to this measured-neutral
+	# value rather than shipped blind. Fix the sampler first, then re-measure this row.
+	"planter": Color(1.30, 1.60, 1.10),
+	"fence": Color(0.70, 0.64, 0.53),
+	"boulder": Color(0.62, 0.57, 0.51),
+	"shrine": Color(0.56, 0.52, 0.42),
+	"low_wall": Color(0.60, 0.56, 0.52),
+	"low_wall_border": Color(0.38, 0.44, 0.46),
+	"pillar": Color(0.45, 0.43, 0.41),
+	# ⚠️ `crate` IS SET BY ANALOGY, NOT BY MEASUREMENT, AND THAT IS DELIBERATE — ITS MEASUREMENT IS
+	# NOT TRUSTWORTHY. Across FOUR runs with three different tints (0.96 -> 0.60 -> 0.37) the probe
+	# returned 0.477 every time, to three decimals, while all eight other kinds tracked their factor
+	# within a few percent. A number that will not move when you change the thing that produces it
+	# is not measuring that thing. The standing suspicion is the sample point: a 0.44-body crate is
+	# a few screen pixels at whole-venue framing and eleven guild banners hang at y≈3.0 across the
+	# far barrier, so an unprojected crate top near that end can land on a banner instead. UNTIL
+	# THAT IS RESOLVED, DO NOT KEEP CUTTING THIS ROW TO CHASE THE NUMBER — three more halvings would
+	# have left crates black on the evidence of an instrument fault. It is set to match `barrel`,
+	# which shares the wood art AND measures correctly (1.36x floor, 0.74x cast).
+	"crate": Color(0.72, 0.66, 0.55),
+	"barrel": Color(0.75, 0.69, 0.60),
+	"bench": Color(1.26, 1.19, 1.07),
 }
+## ⚠️ AN UNLISTED KIND IS NOT WHITE ANY MORE. `barrel` and `bench` fell through to Color(1,1,1) and
+## measured 1.84x and 1.03x the floor — the un-tinted default was itself one of the brightest things
+## on the board. A teammate is adding kinds; a kind nobody has tuned yet should arrive slightly
+## under-lit and quiet, never as the loudest object in the venue.
+const PROP_TINT_DEFAULT := Color(0.64, 0.61, 0.56)
+## How far above its league's FLOOR a cover piece is drawn. ⚠️ >1 on purpose and the direction
+## matters: cover reading BELOW the floor stops being an object standing on the ground and becomes
+## a stain on it (measured: `planter` at 0.75x, which is what that looks like). Calibrated so the
+## kind set averages ~1.2x the floor once the league tone is applied.
+## ⚠️ 1.28 -> 1.38 after the second measurement. At 1.28 the kind set landed at 1.20-1.34x the
+## floor, which is the target — but the leagues with the PALEST ground art (Tin 0.309, Silver
+## 0.277, Platinum 0.210) had their cover reading level with or under their floor, because a prop
+## takes the league's `ground` MULTIPLIER but never sees how bright that league's ground TEXTURE
+## is. The lift is the blunt instrument that keeps the darkest case above water; the sharp one
+## would be a per-league prop factor measured off each ground, which is worth doing the next time
+## the ground art moves and is not worth doing speculatively now.
+const PROP_LIFT := 1.38
 const OBSTACLE_FALLBACK := {
 	"barrel": Color(0.44, 0.32, 0.20), "crate": Color(0.50, 0.38, 0.24),
 	"planter": Color(0.40, 0.52, 0.34), "low_wall": Color(0.55, 0.53, 0.50),
@@ -329,6 +480,11 @@ const OBSTACLE_FALLBACK := {
 	"bench": Color(0.52, 0.40, 0.26), "fence": Color(0.58, 0.47, 0.32),
 	"boulder": Color(0.46, 0.43, 0.38), "shrine": Color(0.56, 0.50, 0.38),
 }
+
+## Kinds whose PRIMITIVE fallback is a cylinder rather than a box. ⚠️ A LIST, NOT AN `if kind ==`
+## CHAIN, because a teammate is adding kinds: an unlisted kind falls to a box, which is a plausible
+## object, where the old inline test silently made every new round thing square.
+const ROUND_KINDS := ["barrel", "boulder", "urn", "brazier", "cairn"]
 
 const PROJECTILE_COLOUR := {
 	"ranged": Color(0.95, 0.85, 0.45), "magic": Color(0.55, 0.62, 0.95),
@@ -1170,6 +1326,10 @@ func _build_world() -> void:
 	# why it read as a per-league art fault for three rounds of tuning. Nothing below the fight
 	# needs to cast: see the same setting on the zone paint and the centre line.
 	floor_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Named so `_probe_venue.gd` can toggle one layer of the venue at a time and measure its exact
+	# screen coverage by difference — a classification-free way to ask "how much of this frame is
+	# venue and how much is empty floor".
+	floor_mesh.name = "Ground"
 	add_child(floor_mesh)
 
 	_build_venue(bw, bd)
@@ -1275,7 +1435,17 @@ func _build_deploy_zones(bw: float, bd: float) -> void:
 	# ⚠️ 0.22 -> 0.13 AND OFF PURE WHITE. Unshaded white at 0.22 over a floor that is now properly
 	# dark rendered as a solid bright bar running the depth of the board — a piece of line marking
 	# out-valuing the competitors. It is a landmark, not a light source.
-	lmat.albedo_color = Color(0.86, 0.88, 0.92, 0.10)
+	# ⚠️ 0.10 -> 0.040 ON 2026-08-08, AND THIS TIME IT WAS MEASURED OFF THE FRAME RATHER THAN
+	# REASONED ABOUT. The note above cut 0.22 -> 0.13 -> 0.10 on the correct diagnosis and stopped
+	# short: sampling the shipped Platinum hero frame across three rows, the stripe rendered at
+	# 0.413 / 0.436 / 0.417 luma against a floor of 0.219 — 1.9x the ground, and ABOVE the creatures
+	# themselves (0.351-0.363 in the same frame). A piece of line marking was still the brightest
+	# object on the board. ⚠️ AND THE AUTHORED NUMBER DOES NOT PREDICT THE RENDERED ONE: alpha 0.10
+	# over a 0.22 floor should blend to ~0.26 and it blends to ~0.42, roughly 3x the expected lift,
+	# because this is an UNSHADED plane going through the same FILMIC tonemap as everything else.
+	# So do not re-derive this value arithmetically — sample the frame. Target is a landmark that
+	# sits between the floor and the cast, not above both.
+	lmat.albedo_color = Color(0.86, 0.88, 0.92, 0.040)
 	lmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	lmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	lmat.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -1313,7 +1483,9 @@ func _build_venue(bw: float, bd: float) -> void:
 		_box_xform(Vector3(-bw * 0.5 - 0.4, WALL_H * 0.5, 0), Vector3(0.8, WALL_H, bd + 1.6)),
 		_box_xform(Vector3(bw * 0.5 + 0.4, WALL_H * 0.5, 0), Vector3(0.8, WALL_H, bd + 1.6)),
 	]
-	add_child(_multimesh_boxes(wall_xforms, wall_mat))
+	var wall_node := _multimesh_boxes(wall_xforms, wall_mat)
+	wall_node.name = "VenueWalls"
+	add_child(wall_node)
 
 	var stand_mat := StandardMaterial3D.new()
 	var ctex: Texture2D = Art.load_or_null("res://assets/arena/stands-crowd.jpg")
@@ -1330,16 +1502,37 @@ func _build_venue(bw: float, bd: float) -> void:
 	if ctex != null:
 		stand_mat.albedo_color = Color(gt.r * 0.62, gt.g * 0.62, gt.b * 0.66)
 
+	# ⚠️ TIER COUNT SCALES WITH THE BOARD, THE FIRST FIVE STEPS DO NOT — see `STAND_TIERS_MAX`.
+	# Rows 0-4 keep the exact rise/depth `spectators.gd` seats its crowd against; rows 5+ are the
+	# upper bank and step at the venue's own scale, so a 5v5 ground gets a stand roughly 3 creature
+	# heights tall instead of 1.2 and the spectacle is actually in frame.
+	var vs := _venue_scale(bw, bd)
+	var tiers: int = clampi(int(round(float(STAND_TIERS) * vs)), STAND_TIERS, STAND_TIERS_MAX)
 	var stand_xforms: Array = []
-	for tier in range(STAND_TIERS):
-		var t := float(tier)
-		var h := WALL_H + 0.8 + t * 0.8
-		var out := 1.1 + t * 1.6
-		stand_xforms.append(_box_xform(Vector3(0, h * 0.5, -bd * 0.5 - out), Vector3(bw + 2.0 + out * 2.0, h, 1.6)))
-		stand_xforms.append(_box_xform(Vector3(0, h * 0.5, bd * 0.5 + out), Vector3(bw + 2.0 + out * 2.0, h, 1.6)))
-		stand_xforms.append(_box_xform(Vector3(-bw * 0.5 - out, h * 0.5, 0), Vector3(1.6, h, bd + 2.0 + out * 2.0)))
-		stand_xforms.append(_box_xform(Vector3(bw * 0.5 + out, h * 0.5, 0), Vector3(1.6, h, bd + 2.0 + out * 2.0)))
-	add_child(_multimesh_boxes(stand_xforms, stand_mat))
+	var h := WALL_H
+	var out := 1.1 - STAND_STEP_OUT
+	for tier in range(tiers):
+		# Below the crowd line the step is fixed; above it, it grows with the venue.
+		var step: float = 1.0 if tier < STAND_TIERS else vs
+		h += STAND_STEP_H * step
+		out += STAND_STEP_OUT * step
+		var depth: float = STAND_STEP_OUT * step
+		stand_xforms.append(_box_xform(Vector3(0, h * 0.5, -bd * 0.5 - out), Vector3(bw + 2.0 + out * 2.0, h, depth)))
+		stand_xforms.append(_box_xform(Vector3(0, h * 0.5, bd * 0.5 + out), Vector3(bw + 2.0 + out * 2.0, h, depth)))
+		stand_xforms.append(_box_xform(Vector3(-bw * 0.5 - out, h * 0.5, 0), Vector3(depth, h, bd + 2.0 + out * 2.0)))
+		stand_xforms.append(_box_xform(Vector3(bw * 0.5 + out, h * 0.5, 0), Vector3(depth, h, bd + 2.0 + out * 2.0)))
+	var stand_node := _multimesh_boxes(stand_xforms, stand_mat)
+	stand_node.name = "VenueStands"
+	add_child(stand_node)
+
+
+## How much bigger this board is than the smallest one in the game. 1.0 at 1v1, 2.0 at 5v5.
+## ⚠️ DERIVED FROM `Spatial.ground_size(1)`, NEVER A LITERAL — the board base has already moved
+## twice this project (40x22 -> 50x28, then x2.2 for `GEOMETRY_SCALE`) and a hard-coded reference
+## diagonal would have silently stopped meaning "the smallest board" on the first of those.
+func _venue_scale(bw: float, bd: float) -> float:
+	var ref: float = maxf(1.0, (Sp.ground_size(1) * WORLD_SCALE).length())
+	return clampf(Vector2(bw, bd).length() / ref, 1.0, 3.0)
 
 
 ## A handful of guild banners on the near wall — real dressing, not a grey box venue. Skipped
@@ -1484,15 +1677,13 @@ func _build_obstacles() -> void:
 		var centre := _to_world(r.position + r.size * 0.5)
 		var w := maxf(r.size.x * WORLD_SCALE, 0.6)
 		var d := maxf(r.size.y * WORLD_SCALE, 0.6)
-		# Height carries the cover GRADE, so what a player sees matches what the sim applies:
-		# blocking cover is tall enough to stop a shot, soft cover is knee-high.
-		var h := 1.0
-		if grade == "blocking":
-			h = 3.2
-		elif grade == "hard":
-			h = 2.0
+		# Height carries the cover GRADE, so what a player sees matches what the sim applies —
+		# and it is now measured in CREATURE HEIGHTS rather than in bare numbers. See
+		# `PROP_HEIGHT_BODIES` for why the three constants that used to live here were the whole
+		# "brick loaf" defect.
+		var h := prop_height(grade)
 		var xf := Transform3D(Basis().scaled(Vector3(w, h, d)), centre + Vector3(0, h * 0.5, 0))
-		if kind == "barrel" or kind == "boulder":
+		if kind in ROUND_KINDS:
 			if not cyl_groups.has(kind):
 				cyl_groups[kind] = []
 			cyl_groups[kind].append(xf)
@@ -1506,10 +1697,14 @@ func _build_obstacles() -> void:
 	# than an empty one.
 	for kind in box_groups.keys():
 		if not _try_prop_multimesh(kind, box_groups[kind]):
-			add_child(_multimesh_boxes(box_groups[kind], _rim(_obstacle_material(kind))))
+			var n := _multimesh_boxes(box_groups[kind], _rim(_obstacle_material(kind)))
+			n.name = "Prop_%s_box" % kind
+			add_child(n)
 	for kind in cyl_groups.keys():
 		if not _try_prop_multimesh(kind, cyl_groups[kind]):
-			add_child(_multimesh_cylinders(cyl_groups[kind], _rim(_obstacle_material(kind))))
+			var n2 := _multimesh_cylinders(cyl_groups[kind], _rim(_obstacle_material(kind)))
+			n2.name = "Prop_%s_cyl" % kind
+			add_child(n2)
 
 
 ## ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1545,7 +1740,15 @@ func _build_obstacles() -> void:
 ## `MAX_SEGMENTS_PER_AXIS` bounds the instance count a single huge piece can add. 6x6 is far more
 ## than any authored layout needs; it exists so a future outsized rect cannot quietly cost 400
 ## instances.
-const MAX_SEGMENTS_PER_AXIS := 6
+## ⚠️ 6 -> 3 ON 2026-08-08, AND THE REASON IS THAT SIX IS WHAT A COMB LOOKS LIKE. The 4% section
+## overlap closed the SEAM, but a strip model repeated six times across one rect still reads as a
+## row of merlons rather than as one wall — repetition at that count is perceived as a pattern, and
+## a pattern is decoration, not mass. `ARENA_DESIGN.md` §4 asks for "fewer and larger, always", and
+## that applies inside a piece as much as across a board. Three sections is the most that still
+## reads as one object. It also strictly lowers the instance budget the note below is guarding, so
+## nothing downstream needs re-checking. Piece FOOTPRINTS are unchanged — `Spatial.cover_between`
+## tests the rect, not the sections — so this cannot move a fight.
+const MAX_SEGMENTS_PER_AXIS := 3
 
 
 const PROP_DIR := "res://assets/models/obstacles/"
@@ -1565,8 +1768,62 @@ const PROP_DIR := "res://assets/models/obstacles/"
 ## uniform scale, looks better and LIES: a barrel drawn narrower than its rect gives cover from a
 ## spot that looks open. In a game the player cannot intervene in, being able to trust the picture
 ## outranks the picture being pretty.
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+## BREAKING THE MIRROR IN THE RENDERER — where `ARENA_DESIGN.md` §5 says it belongs
+## ═══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## ⚠️ THE REPORT WAS "EVERY GRAND-CIRCUIT LEAGUE IS THE SAME BOARD, PERFECTLY MIRRORED LEFT TO
+## RIGHT", and half of that is not a layout bug — it is REQUIRED. `ARENA_DESIGN.md` §5: the boards
+## are symmetric because fairness demands it ("an arena that favours a side biases every
+## measurement taken on it"), and the doc's own answer is explicit: *"It is broken in the RENDERER
+## instead, where it costs nothing: the engine knows rectangles, so inside one the mesh is turned
+## and resized by a hash of its world position."* That was never built here. It is now.
+##
+## ⚠️ WHAT MAY VARY AND WHAT MAY NOT, because the picture must not lie about cover:
+##   MAY   180-degree yaw          — the footprint is identical under it, so the sim's rect holds
+##   MAY   a per-section variant mesh (`<kind>_alt.glb`) — different object, same box
+##   MAY   +-4% height             — coursing irregularity, far inside the grade's own band
+##   NEVER 90-degree yaw, non-uniform rescale, or a nudged origin — every one of those moves the
+##         drawn silhouette off the rectangle `Spatial.cover_between` is testing
+##
+## Deterministic by construction: the seed is the section's own world position, so two runs of the
+## same fight draw the same board (`SPATIAL_HANDOFF.md` §1 covers the sim; the renderer has no
+## such obligation, but a board that reshuffles between replays of ONE fight is a legibility bug).
+static func _piece_hash(p: Vector3) -> int:
+	return abs(hash(Vector3i(int(round(p.x * 4.0)), int(round(p.y * 4.0)), int(round(p.z * 4.0)))))
+
+
+## Split a kind's pieces between its base mesh and its `_alt` mesh, when one exists on disk. Ten of
+## the kinds ship an alt today and none of them were ever drawn — a second silhouette per kind is
+## the cheapest possible answer to "the two halves of the board are the same objects".
 func _try_prop_multimesh(kind: String, xforms: Array) -> bool:
-	var path := PROP_DIR + kind + ".glb"
+	var alt_path := PROP_DIR + kind + "_alt.glb"
+	if xforms.size() >= 2 and ResourceLoader.exists(alt_path):
+		var base_set: Array = []
+		var alt_set: Array = []
+		for xf in xforms:
+			if _piece_hash((xf as Transform3D).origin) % 2 == 0:
+				base_set.append(xf)
+			else:
+				alt_set.append(xf)
+		# ⚠️ A SPLIT THAT LANDS EVERYTHING ON ONE SIDE IS NOT A SPLIT — fall through to the single
+		# batch rather than emitting an empty MultiMesh (instance_count 0 renders nothing but still
+		# costs a node, and it hid a real "no props drawn" bug the first time it happened).
+		if not base_set.is_empty() and not alt_set.is_empty():
+			var a := _prop_batch(kind, PROP_DIR + kind + ".glb", base_set, "")
+			var b := _prop_batch(kind, alt_path, alt_set, "alt")
+			if a and b:
+				return true
+			# Partial success means one mesh failed to load; redraw the whole kind as one batch so
+			# half the pieces cannot silently vanish.
+			for c in get_children():
+				if c is MultiMeshInstance3D and str(c.name).begins_with("Prop_%s" % kind):
+					remove_child(c)
+					c.queue_free()
+	return _prop_batch(kind, PROP_DIR + kind + ".glb", xforms, "")
+
+
+func _prop_batch(kind: String, path: String, xforms: Array, suffix: String) -> bool:
 	if not ResourceLoader.exists(path):
 		return false
 	var scn := load(path) as PackedScene
@@ -1592,6 +1849,17 @@ func _try_prop_multimesh(kind: String, xforms: Array) -> bool:
 	if ab.size.x <= 0.0001 or ab.size.y <= 0.0001 or ab.size.z <= 0.0001:
 		return false
 
+	# ⚠️ THE SEGMENT CAP FALLS AS THE PIECE COUNT RISES, and that is a scaling guard, not a taste
+	# call. A teammate is rewriting `arena_layout.gd` to place MANY more pieces per board; at 6x6
+	# per piece, forty pieces would be 1,440 instances of one kind. The budget below keeps a kind's
+	# batch bounded whatever count arrives, and degrades in the right direction — with more objects
+	# on the board, each one needs less internal detail to stop the board reading as empty.
+	var seg_cap: int = MAX_SEGMENTS_PER_AXIS
+	if xforms.size() > 48:
+		seg_cap = 2
+	elif xforms.size() > 16:
+		seg_cap = 3
+
 	# Build every section's transform first — the instance count is no longer one-per-piece.
 	var placed: Array = []
 	for i in range(xforms.size()):
@@ -1599,17 +1867,31 @@ func _try_prop_multimesh(kind: String, xforms: Array) -> bool:
 		# box's CENTRE. Convert that into "fill this box with sections of this prop".
 		var xf: Transform3D = xforms[i]
 		var want: Vector3 = xf.basis.get_scale()
-		var counts: Vector2i = _segment_counts(want, ab.size)
+		var counts: Vector2i = _segment_counts(want, ab.size, seg_cap)
 		var seg := Vector3(want.x / float(counts.x), want.y, want.z / float(counts.y))
 		var s := Vector3(seg.x / ab.size.x, seg.y / ab.size.y, seg.z / ab.size.z)
 		var foot: float = xf.origin.y - want.y * 0.5
+		# ⚠️ SECTIONS OVERLAP SLIGHTLY, AND THIS IS THE OTHER HALF OF THE "COMB" DEFECT. A run of
+		# abutting sections shows the model's own end profile at every seam, so a wall drawn as six
+		# sections rendered as six crenellations — the exact thing reported. Growing each section a
+		# few percent about its own centre closes the seam. It pushes the drawn silhouette past the
+		# sim's rect by half the overlap at the two OUTER ends only: 2% of one section, i.e. 0.3% of
+		# a six-section wall, which is far below the sub-unit precision the cover test resolves.
+		var lap: float = 1.04 if (counts.x > 1 or counts.y > 1) else 1.0
 		for cx in range(counts.x):
 			for cz in range(counts.y):
 				var ox: float = xf.origin.x - want.x * 0.5 + seg.x * (float(cx) + 0.5)
 				var oz: float = xf.origin.z - want.z * 0.5 + seg.z * (float(cz) + 0.5)
+				var hsh: int = _piece_hash(Vector3(ox, 0.0, oz))
+				# ±4% height and a half-turn, both from the section's own position — see the
+				# `_piece_hash` header for what is allowed to vary and why nothing else is.
+				var hv: float = 1.0 + (float(hsh % 5) - 2.0) * 0.02
+				var basis := Basis().scaled(Vector3(s.x * lap, s.y * hv, s.z * lap))
+				if (hsh / 5) % 2 == 1:
+					basis = basis.rotated(Vector3.UP, PI)
 				# Re-seat on the ground: the prop's own minimum, scaled, is the offset from centre.
-				placed.append(Transform3D(Basis().scaled(s),
-					Vector3(ox, foot - ab.position.y * s.y, oz)))
+				placed.append(Transform3D(basis,
+					Vector3(ox, foot - ab.position.y * s.y * hv, oz)))
 
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -1622,6 +1904,7 @@ func _try_prop_multimesh(kind: String, xforms: Array) -> bool:
 	node.multimesh = mm
 	node.material_override = _prop_material(kind, mat)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	node.name = "Prop_%s%s" % [kind, ("_" + suffix) if suffix != "" else ""]
 	add_child(node)
 	return true
 
@@ -1632,15 +1915,75 @@ func _try_prop_multimesh(kind: String, xforms: Array) -> bool:
 ##
 ## The prop's natural width is taken at the scale its HEIGHT is being drawn at, so a piece keeps a
 ## believable width:height ratio; anything wider than ~1.6 of that gets another section.
-static func _segment_counts(want: Vector3, natural: Vector3) -> Vector2i:
+## ⚠️ RAISING THE DRAWN HEIGHT ALSO CUTS THE SEGMENT COUNT, WHICH IS THE FIRST HALF OF THE "COMB"
+## FIX AND COSTS NOTHING. `s_y` is the scale the model is being drawn at, so a prop drawn 62%
+## taller (blocking cover, 3.2 -> 5.19) is also 62% wider per section and needs 62% fewer sections
+## to span the same rect. The wall that reported as a comb of six crenellations spans in two.
+static func _segment_counts(want: Vector3, natural: Vector3, cap: int = MAX_SEGMENTS_PER_AXIS) -> Vector2i:
 	if natural.y <= 0.0001:
 		return Vector2i(1, 1)
+	var lim: int = clampi(cap, 1, MAX_SEGMENTS_PER_AXIS)
 	var s_y: float = want.y / natural.y
 	var nat_x: float = maxf(0.0001, natural.x * s_y)
 	var nat_z: float = maxf(0.0001, natural.z * s_y)
-	var nx: int = clampi(int(round(want.x / (nat_x * 1.6))), 1, MAX_SEGMENTS_PER_AXIS)
-	var nz: int = clampi(int(round(want.z / (nat_z * 1.6))), 1, MAX_SEGMENTS_PER_AXIS)
+	var nx: int = clampi(int(round(want.x / (nat_x * 1.6))), 1, lim)
+	var nz: int = clampi(int(round(want.z / (nat_z * 1.6))), 1, lim)
 	return Vector2i(nx, nz)
+
+
+## THE PROP GEOMETRY REPORT — what `_probe_venue.gd` measures proportion from.
+##
+## ⚠️ THE INSTRUMENT READS THE RENDERER, IT DOES NOT RE-DERIVE IT. The last round of this file's
+## history is full of numbers that were reasoned about rather than measured; a probe that computed
+## its own idea of a prop's drawn height would agree with the code exactly until someone changed
+## one of them, and would then confidently report on a board nobody is looking at. Every figure
+## below comes from the same calls `_build_obstacles` makes.
+##
+## Returns one row per obstacle: kind · grade · drawn w/h/d in world units · the same three in
+## CREATURE HEIGHTS (the yardstick the proportion complaint was stated in) · the section counts
+## actually used · the model's natural proportions.
+func prop_report() -> Array:
+	var rows: Array = []
+	var natural_cache: Dictionary = {}
+	for o in _obstacles:
+		var kind: String = str(o.get("kind", "crate"))
+		var grade: String = str(o.get("grade", "soft"))
+		var r: Rect2 = o["rect"]
+		var w := maxf(r.size.x * WORLD_SCALE, 0.6)
+		var d := maxf(r.size.y * WORLD_SCALE, 0.6)
+		var h := prop_height(grade)
+		if not natural_cache.has(kind):
+			natural_cache[kind] = _prop_natural(kind)
+		var nat: Vector3 = natural_cache[kind]
+		var segs := Vector2i(1, 1)
+		if nat.y > 0.0:
+			segs = _segment_counts(Vector3(w, h, d), nat)
+		rows.append({
+			"kind": kind, "grade": grade,
+			"centre": _to_world(r.position + r.size * 0.5) + Vector3(0, h * 0.5, 0),
+			"w": w, "d": d, "h": h,
+			"w_bodies": w / UNIT_HEIGHT, "d_bodies": d / UNIT_HEIGHT, "h_bodies": h / UNIT_HEIGHT,
+			"long_over_tall": maxf(w, d) / maxf(0.001, h),
+			"segments": segs, "natural": nat,
+		})
+	return rows
+
+
+## The model's own bounding size, or Vector3.ZERO when the kind draws as a primitive.
+func _prop_natural(kind: String) -> Vector3:
+	var path := PROP_DIR + kind + ".glb"
+	if not ResourceLoader.exists(path):
+		return Vector3.ZERO
+	var scn := load(path) as PackedScene
+	if scn == null:
+		return Vector3.ZERO
+	var inst: Node = scn.instantiate()
+	var mi := _first_mesh(inst) as MeshInstance3D
+	var out := Vector3.ZERO
+	if mi != null and mi.mesh != null:
+		out = (_chain_from(inst, mi) * mi.get_aabb()).size
+	inst.free()
+	return out
 
 
 ## The material a prop is actually drawn with. See the block comment above `MAX_SEGMENTS_PER_AXIS`
@@ -1652,7 +1995,7 @@ static func _segment_counts(want: Vector3, natural: Vector3) -> Vector2i:
 ## textures land, adding a row to `OBSTACLE_TEX` is the whole integration; when one is absent it
 ## degrades to the kind's tint, which is a plausible object rather than a grey box.
 func _prop_material(kind: String, imported: Material) -> Material:
-	var tint: Color = OBSTACLE_TINT.get(kind, Color(1, 1, 1))
+	var tint: Color = _prop_tint(kind)
 	var base := StandardMaterial3D.new()
 	var tex: Texture2D = Art.load_or_null(str(OBSTACLE_TEX.get(kind, "")))
 	if tex != null:
@@ -1708,14 +2051,24 @@ func _first_mesh(n: Node) -> Node:
 	return null
 
 
+## The kind's material tint, TAKEN INTO THE LEAGUE'S OWN VALUE RANGE. See `OBSTACLE_TINT` for why
+## the league factor belongs here and what it cost to leave it out.
+func _prop_tint(kind: String) -> Color:
+	var t: Color = OBSTACLE_TINT.get(kind, PROP_TINT_DEFAULT)
+	var g: Color = _look()["ground"]
+	return Color(t.r * g.r * PROP_LIFT, t.g * g.g * PROP_LIFT, t.b * g.b * PROP_LIFT)
+
+
 func _obstacle_material(kind: String) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
+	var tint: Color = _prop_tint(kind)
 	var tex: Texture2D = Art.load_or_null(OBSTACLE_TEX.get(kind, "res://assets/arena/crate-wood.jpg"))
 	if tex != null:
 		mat.albedo_texture = tex
-		mat.albedo_color = OBSTACLE_TINT.get(kind, Color(1, 1, 1))
+		mat.albedo_color = tint
 	else:
-		mat.albedo_color = OBSTACLE_TINT.get(kind, OBSTACLE_FALLBACK.get(kind, Color(0.5, 0.45, 0.35)))
+		var fb: Color = OBSTACLE_FALLBACK.get(kind, Color(0.5, 0.45, 0.35))
+		mat.albedo_color = Color(fb.r * tint.r, fb.g * tint.g, fb.b * tint.b)
 	mat.roughness = 0.9
 	return mat
 
@@ -2972,9 +3325,18 @@ func _build_innate_tells() -> void:
 			radius = InnatesL.HOME_RADIUS
 		if radius <= 0.0:
 			continue
+		# ⚠️ THESE TWO RADII ARE SIM UNITS AND THE TORUS IS BUILT IN RENDER SPACE. Until 2026-08-08
+		# they were fed straight to the mesh, so homeGroundDR drew a 61.6-unit ground annulus — 40%
+		# of the short side of a 5v5 board — where 20.9 was intended, and auraEnemySlow drew 36.0
+		# where 12.2 was intended: a flat 1/WORLD_SCALE = 2.94x error. Found by `_probe_vfx_scale`
+		# while it was auditing vfx.gd, which does not own this ring and never did. Every other
+		# length in this file crosses the boundary through `_to_world`/`* WORLD_SCALE`; this one
+		# skipped it, which is the "two opinions about a distance" failure `spatial.gd`'s own header
+		# warns about. Convert HERE, at the one place the two spaces meet.
+		radius *= WORLD_SCALE
 		ring = MeshInstance3D.new()
 		var tor := TorusMesh.new()
-		tor.inner_radius = radius - 0.4
+		tor.inner_radius = maxf(radius - 0.4, radius * 0.90)
 		tor.outer_radius = radius
 		tor.rings = 48
 		ring.mesh = tor

@@ -179,8 +179,30 @@ const MAJOR_MIN_BODIES := 9.0
 ## change what a piece does — only what it is made of. See `_build_named`.
 const MAJOR_BLOCKING_KINDS := ["low_wall", "low_wall_border"]
 
+## ⚠️ A MAJOR IS A FRACTION OF THE BOARD, NOT AN ABSOLUTE — and 9 bodies WAS that fraction, at
+## 5v5 only. `MAJOR_MIN_BODIES × 4.4 = 39.6`, and the 5v5 ground is 440 wide, so the reference
+## proportion the note above cites ("a Nagrand pillar reads as roughly a tenth of the arena's
+## width") is exactly 9%. Every other team size got the same 39.6 unit wall on a smaller ground:
+## on Wood's 220-wide board that is 18% of the width, and the measured consequence was a
+## **10.2% covered floor** against the 2.55% the same composition produced at 5v5 — four times
+## the cover, from one number that did not scale. `_probe_layout.gd` is the instrument that
+## caught it.
+##
+## So the fraction is the rule and the body count is the FLOOR underneath it: cover must still be
+## at least a team's frontage wide (`MIN_FRONTAGE_BODIES` per monster, plus a body of slack) or
+## it shelters one monster while the rest of the line stands in the open.
+const MAJOR_WIDTH_FRACTION := 0.09
+const MIN_FRONTAGE_BODIES := 1.0
+
 static func major_min_width() -> float:
 	return MAJOR_MIN_BODIES * Sp.BODY_RADIUS * 2.0
+
+## The same number, but honest about the board it is on. Kept alongside the no-argument version
+## because that one is the 5v5 REFERENCE value and other streams may quote it.
+static func major_min_width_for(team_size: int) -> float:
+	var body := Sp.BODY_RADIUS * 2.0
+	var frontage := (float(maxi(1, team_size)) * MIN_FRONTAGE_BODIES + 1.0) * body
+	return maxf(frontage, MAJOR_WIDTH_FRACTION * Sp.ground_size(team_size).x)
 
 
 ## Each layout returns pieces in NORMALISED coordinates (0..1 across the ground) so one
@@ -200,11 +222,16 @@ const LAYOUTS := {
 		],
 		# Accents: small, cheap, and deliberately NOT paired with the majors — they add texture
 		# and a reason to be somewhere, never a second tier of real cover.
+		# ⚠️ AUTHORED AS THE CANONICAL HALF ONLY; the builder emits each one's 180-degree
+		# partner with the SAME rect. They used to be authored as both halves, and each half rolled
+		# its OWN kind from the grade pool — so a "pair" could be a 5.28-square barrel opposite a
+		# 12.1x2.2 fence. The board was therefore NOT 180-degree symmetric, which is the one
+		# property `ARENA_DESIGN.md` §5 calls non-negotiable, because an asymmetric board biases
+		# every measurement taken on it. Nothing caught it: `problems()` had only ever been run
+		# against the scatter path, which mirrors by construction. `_probe_layout.gd` catches it now.
 		"accents": [
 			{"at": Vector2(0.5, 0.14), "grade": "hard"},
-			{"at": Vector2(0.5, 0.86), "grade": "hard"},
 			{"at": Vector2(0.5, 0.38), "grade": "soft"},
-			{"at": Vector2(0.5, 0.62), "grade": "soft"},
 		],
 	},
 
@@ -229,7 +256,6 @@ const LAYOUTS := {
 		],
 		"accents": [
 			{"at": Vector2(0.5, 0.16), "grade": "hard"},
-			{"at": Vector2(0.5, 0.84), "grade": "hard"},
 		],
 	},
 
@@ -246,9 +272,7 @@ const LAYOUTS := {
 		],
 		"accents": [
 			{"at": Vector2(0.30, 0.24), "grade": "hard"},
-			{"at": Vector2(0.70, 0.76), "grade": "hard"},
 			{"at": Vector2(0.5, 0.12), "grade": "soft"},
-			{"at": Vector2(0.5, 0.88), "grade": "soft"},
 		],
 	},
 
@@ -265,20 +289,308 @@ const LAYOUTS := {
 		"accents": [
 			{"at": Vector2(0.5, 0.5), "grade": "hard"},
 			{"at": Vector2(0.18, 0.72), "grade": "soft"},
-			{"at": Vector2(0.82, 0.28), "grade": "soft"},
+		],
+	},
+}
+
+# ════════════════════════════════════════════════
+# LEAGUE BOARDS — eleven built places, not one composition in eleven colours
+# ════════════════════════════════════════════════
+#
+# ⚠️ THE MEASURED PROBLEM THIS SOLVES, from `_probe_layout.gd` before the change:
+#
+#     every one of the eleven leagues generated **eight pieces**, one **signature**
+#     (`c8/b1/k3/x8/y9`), and Bronze/Iron, Silver/Gold and Platinum/Masters/Tamer Elite/Tamers
+#     Apex were **byte-identical geometry**. The whole ladder was one board re-lit.
+#
+# Two causes, both structural rather than anybody's oversight:
+#   1. `arena_3d.gd` reads the composition out of the committed orders and defaults to
+#      `"four_pillar"`, and nothing in the career path ever sets that key — so every league on
+#      the ladder asked for the same family.
+#   2. A family is authored in NORMALISED coordinates, so the same family on a bigger ground is
+#      the same picture at a bigger size. Normalisation is what makes one composition portable;
+#      it is also what makes eleven leagues identical.
+#
+# ⚠️ AND EIGHT PIECES WAS NOT A DENSITY-LAW VIOLATION, WHICH IS WHY NOTHING CAUGHT IT.
+# `ARENA_DESIGN.md` §1 is a CEILING — "no more than one piece per 300 square units" — and eight
+# pieces against a 5v5 ceiling of seventy-four passes with room to spare. The law has no floor,
+# so an empty board is legal by every guard in the file. `_probe_layout.gd` adds the floor
+# (half the generator's own scatter target) rather than leaving "reads as empty" to the eye.
+#
+# THE FIX IS A SECOND AXIS, NOT A SECOND TABLE. `LAYOUTS` still owns the FAMILY — the four
+# compositions the WoW blueprints reduce to — and a caller that names one still gets it, so
+# `watch.gd` and `_probe_newlayouts.gd` keep comparing families like for like. What is new is
+# that the LEAGUE owns the built place standing in that family: how far the majors sit from
+# centre, and the furniture layer that turns four slabs on an empty floor into a court, a
+# cloister, a gatehouse or an obelisk field.
+#
+# ⚠️ EVERY ELEMENT BELOW IS AUTHORED IN THE CANONICAL HALF ONLY and emitted with its
+# 180-degree partner (`_emit_pair`). That is what keeps the fairness `ARENA_DESIGN.md` §5 calls
+# non-negotiable — it is a property of the EMITTER, so no author can forget it — while §5's
+# other demand ("must not LOOK symmetric") is served by staggered depths and mixed prop kinds.
+#
+# ⚠️ PIECE COUNT CLIMBS WITH THE LADDER ON PURPOSE, ~12 at Wood to ~42 at Tamers Apex. It is a
+# progression axis the game had lost (`ARENA_DESIGN.md` §7 concedes the plateau above Platinum
+# is real), it costs nothing, and it guarantees eleven distinct signatures by construction
+# rather than by an author's memory. Every count is checked against BOTH ends of the density
+# law by `_probe_layout.gd`; none is authored to a round number.
+#
+# Element grammar — three shapes, all normalised 0..1 across the ground:
+#   {"t": "post", "at": V2, "grade": s, "kind": s}                 one piece + its partner
+#   {"t": "row",  "from": V2, "to": V2, "n": i, "grade", "kind"}   n evenly spaced + n partners
+#   {"t": "bar",  "at": V2, "w": f, "d": f}                        a blocking run + its partner
+#
+# ⚠️ "Architecture is the default; trade is the accent" (§2). `pillar`, `boulder`, `low_wall`
+# and `fence` are the building; `crate`/`barrel` appear at most as one pair on a board, and only
+# where a working yard would keep them.
+const LEAGUE_BOARDS := {
+	# —— THE APPROACH LEAGUES —— small grounds, few decisions, read in one glance.
+	"Wood": {
+		"place": "the Timberyard Ring — four stacks and a pair of benches",
+		"mass": Vector2(0.92, 0.94),
+		"furniture": [
+			{"t": "post", "at": Vector2(0.20, 0.30), "grade": "soft", "kind": "bench"},
+			{"t": "post", "at": Vector2(0.20, 0.70), "grade": "soft", "kind": "planter"},
+		],
+	},
+	"Copper": {
+		"place": "the Smelt Court — a colonnade down one wing",
+		"mass": Vector2(1.06, 0.88),
+		"furniture": [
+			{"t": "row", "from": Vector2(0.20, 0.15), "to": Vector2(0.44, 0.15), "n": 3,
+				"grade": "hard", "kind": "pillar"},
+		],
+	},
+	"Tin": {
+		"place": "the Wash Court — two benched terraces at different depths",
+		"mass": Vector2(0.86, 1.10),
+		"furniture": [
+			{"t": "row", "from": Vector2(0.17, 0.15), "to": Vector2(0.30, 0.15), "n": 2,
+				"grade": "soft", "kind": "planter"},
+			{"t": "row", "from": Vector2(0.17, 0.85), "to": Vector2(0.30, 0.85), "n": 2,
+				"grade": "soft", "kind": "bench"},
+		],
+	},
+	"Bronze": {
+		"place": "the Alloy Hall — a four-bay colonnade and a pair of fallen drums",
+		"mass": Vector2(1.14, 0.90),
+		"furniture": [
+			{"t": "row", "from": Vector2(0.17, 0.12), "to": Vector2(0.47, 0.12), "n": 4,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "row", "from": Vector2(0.23, 0.42), "to": Vector2(0.39, 0.42), "n": 2,
+				"grade": "hard", "kind": "boulder"},
+		],
+	},
+	"Iron": {
+		"place": "the Gatehouse — stepped blocks, no two at the same depth",
+		"mass": Vector2(0.78, 1.16),
+		"furniture": [
+			{"t": "post", "at": Vector2(0.13, 0.09), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.19, 0.17), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.25, 0.45), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.31, 0.53), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.37, 0.61), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.43, 0.69), "grade": "soft", "kind": "crate"},
+			{"t": "post", "at": Vector2(0.49, 0.77), "grade": "hard", "kind": "pillar"},
+		],
+	},
+	# —— THE MIDDLE LEAGUES —— the ground is now big enough that arrangement, not size, carries
+	# the difference. Both are 4v4, which the doc's "Status" note flags as the exact trap Iron and
+	# Bronze fell into, so they are split by silhouette family: Silver is upright posts around an
+	# empty middle, Gold is one long diagonal run of low bars.
+	"Silver": {
+		"place": "the Cloister — a perimeter colonnade around an open middle",
+		"mass": Vector2(0.72, 1.04),
+		"furniture": [
+			{"t": "row", "from": Vector2(0.12, 0.07), "to": Vector2(0.60, 0.07), "n": 6,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "row", "from": Vector2(0.12, 0.30), "to": Vector2(0.12, 0.70), "n": 3,
+				"grade": "hard", "kind": "pillar"},
+		],
+	},
+	"Gold": {
+		"place": "the Chequer — a stepped echelon of low runs that the mirror continues",
+		"mass": Vector2(1.20, 1.34),
+		"furniture": [
+			{"t": "row", "from": Vector2(0.10, 0.06), "to": Vector2(0.50, 0.94), "n": 10,
+				"grade": "soft", "kind": "fence"},
+		],
+	},
+	# —— THE GRAND CIRCUIT —— four leagues, one ground size (§7). Colour is the cheapest axis
+	# and the least memorable, so these four are pulled apart by ARRANGEMENT first: an open court
+	# with piers, a spine, a broken court at every depth, and a field of standing stones.
+	"Platinum": {
+		"place": "the Four Piers — a stand of piers, a planted terrace, two flanking stones",
+		"mass": Vector2(1.00, 1.00),
+		"furniture": [
+			{"t": "row", "from": Vector2(0.16, 0.11), "to": Vector2(0.44, 0.11), "n": 5,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "row", "from": Vector2(0.16, 0.89), "to": Vector2(0.44, 0.89), "n": 4,
+				"grade": "soft", "kind": "planter"},
+			{"t": "post", "at": Vector2(0.30, 0.50), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.50, 0.66), "grade": "soft", "kind": "bench"},
+		],
+	},
+	"Masters": {
+		"place": "the Spine — a cross-run on the centre line with a bay each side",
+		"mass": Vector2(1.22, 0.86),
+		"furniture": [
+			{"t": "bar", "at": Vector2(0.50, 0.30), "w": 0.26, "d": 0.030},
+			{"t": "row", "from": Vector2(0.13, 0.09), "to": Vector2(0.45, 0.09), "n": 6,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "row", "from": Vector2(0.20, 0.44), "to": Vector2(0.42, 0.44), "n": 3,
+				"grade": "hard", "kind": "boulder"},
+			{"t": "row", "from": Vector2(0.21, 0.63), "to": Vector2(0.41, 0.63), "n": 3,
+				"grade": "soft", "kind": "bench"},
+		],
+	},
+	"Tamer Elite": {
+		"place": "the Broken Court — tumbled coursing, no two pieces sharing a depth",
+		"mass": Vector2(0.80, 1.18),
+		"furniture": [
+			{"t": "post", "at": Vector2(0.12, 0.08), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.21, 0.14), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.33, 0.10), "grade": "soft", "kind": "crate"},
+			{"t": "post", "at": Vector2(0.45, 0.26), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.17, 0.42), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.27, 0.48), "grade": "soft", "kind": "planter"},
+			{"t": "post", "at": Vector2(0.39, 0.54), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.13, 0.60), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.23, 0.66), "grade": "soft", "kind": "bench"},
+			{"t": "post", "at": Vector2(0.35, 0.72), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.47, 0.78), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.19, 0.86), "grade": "soft", "kind": "planter"},
+			{"t": "post", "at": Vector2(0.31, 0.92), "grade": "hard", "kind": "boulder"},
+			{"t": "post", "at": Vector2(0.43, 0.38), "grade": "hard", "kind": "pillar"},
+			{"t": "post", "at": Vector2(0.49, 0.32), "grade": "soft", "kind": "barrel"},
+		],
+	},
+	"Tamers Apex": {
+		"place": "the Obelisk Field — three ranks of standing stones and a cross-wall",
+		"mass": Vector2(1.10, 1.12),
+		"furniture": [
+			{"t": "bar", "at": Vector2(0.50, 0.18), "w": 0.22, "d": 0.028},
+			{"t": "row", "from": Vector2(0.11, 0.08), "to": Vector2(0.45, 0.08), "n": 6,
+				"grade": "hard", "kind": "pillar"},
+			{"t": "row", "from": Vector2(0.11, 0.34), "to": Vector2(0.45, 0.34), "n": 6,
+				"grade": "hard", "kind": "boulder"},
+			{"t": "row", "from": Vector2(0.15, 0.52), "to": Vector2(0.43, 0.52), "n": 5,
+				"grade": "hard", "kind": "pillar"},
 		],
 	},
 }
 
 
-## Builds a named composition. `w` on a major is a multiple of `major_min_width()`, so no layout
-## can accidentally author cover too narrow to hide a formation.
-static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerator) -> Array:
+## The 180-degree partner of a rect about the ground centre. ⚠️ DELEGATES TO `_mirror_rect`
+## RATHER THAN RESTATING IT — that function's own comment says every symmetry guarantee in this
+## file rests on it, which is only true while there is one copy. A second transcription of the
+## formula is how the emitter and the checker drift apart and each keeps passing its own test.
+static func _partner(rect: Rect2, g: Vector2) -> Rect2:
+	return _mirror_rect(rect, g)
+
+
+## Appends a piece AND its 180-degree partner, or the piece alone when it is its own partner
+## (`ARENA_DESIGN.md` §4: "a centrepiece sits at exactly (w - size) / 2 — it is its own 180-degree
+## partner and is emitted once").
+##
+## ⚠️ THE PAIR IS ALL-OR-NOTHING. If either member will not fit, clips a deploy band or touches
+## an existing piece, BOTH are dropped — dropping one would leave the board asymmetric, which is
+## the one property `ARENA_DESIGN.md` §5 calls non-negotiable. A board a piece lighter is a far
+## cheaper failure than a board that favours a side.
+static func _emit_pair(out: Array, rect: Rect2, grade: String, kind_a: String, kind_b: String,
+		g: Vector2, bands: Array) -> int:
+	var twin := _partner(rect, g)
+	var self_partnered: bool = rect.position.distance_to(twin.position) < SYMMETRY_EPS
+	var members: Array = [rect] if self_partnered else [rect, twin]
+	for r in members:
+		if not _fits(r, g) or _intersects_any_band(r, bands) or _overlaps_any(r, out):
+			return 0
+	out.append({"rect": rect, "grade": grade, "kind": kind_a})
+	if self_partnered:
+		return 1
+	out.append({"rect": twin, "grade": grade, "kind": kind_b})
+	return 2
+
+
+static func _kind_size(kind_name: String) -> Vector2:
+	for k in KIND_TABLE:
+		if str(k["kind"]) == kind_name:
+			return k["size"]
+	return Vector2(3.0 * G, 3.0 * G)
+
+
+## Lays the league's furniture over whatever family is already in `out`. Pure geometry off the
+## authored table — no rng at all, so a board is the same board on every replay by construction
+## rather than by seeding discipline.
+static func _build_furniture(league_name: String, g: Vector2, bands: Array, out: Array) -> void:
+	var board: Dictionary = LEAGUE_BOARDS.get(league_name, {})
+	if board.is_empty():
+		return
+	# ⚠️ THE CEILING IS ENFORCED HERE, NOT ONLY REPORTED BY `problems()`. A league board is
+	# authored against the ground that league actually fields, but nothing stops a caller pairing
+	# them freely — `sandbox_ui.gd` already generates a "Wood" board at every team size, and
+	# `_probe_density.gd` asks for "Platinum" at team size 1. Measured: the Platinum board on a
+	# 1v1 ground emitted 28 pieces against a ceiling of 18, so a mismatched pairing shipped a
+	# density-law violation with no guard between it and the screen. This is that guard, and it
+	# stops on the CEILING rather than clamping counts, because the law is the law and a board
+	# that runs out of allowance should simply be the board it can afford.
+	var ceiling: int = int(floor((g.x * g.y) / AREA_PER_PIECE))
+	var bar_i := 0
+	for e in board.get("furniture", []):
+		if out.size() + 2 > ceiling:
+			return
+		var t: String = str(e.get("t", "post"))
+		if t == "post":
+			var kind: String = str(e.get("kind", "crate"))
+			var sz := _kind_size(kind)
+			var c: Vector2 = (e["at"] as Vector2) * g
+			_emit_pair(out, Rect2(c - sz * 0.5, sz), str(e.get("grade", "soft")), kind, kind, g, bands)
+		elif t == "row":
+			var kind2: String = str(e.get("kind", "pillar"))
+			var sz2 := _kind_size(kind2)
+			var n: int = maxi(1, int(e.get("n", 2)))
+			var a: Vector2 = e["from"]
+			var b: Vector2 = e["to"]
+			for i in n:
+				if out.size() + 2 > ceiling:
+					return
+				var f: float = 0.0 if n == 1 else float(i) / float(n - 1)
+				var c2: Vector2 = a.lerp(b, f) * g
+				_emit_pair(out, Rect2(c2 - sz2 * 0.5, sz2), str(e.get("grade", "hard")),
+					kind2, kind2, g, bands)
+		elif t == "bar":
+			var w: float = float(e.get("w", 0.2)) * g.x
+			var d: float = maxf(Sp.BODY_RADIUS * 2.0, float(e.get("d", 0.03)) * g.y)
+			var c3: Vector2 = (e["at"] as Vector2) * g
+			var ka: String = MAJOR_BLOCKING_KINDS[bar_i % MAJOR_BLOCKING_KINDS.size()]
+			var kb: String = MAJOR_BLOCKING_KINDS[(bar_i + 1) % MAJOR_BLOCKING_KINDS.size()]
+			bar_i += 1
+			_emit_pair(out, Rect2(c3 - Vector2(w, d) * 0.5, Vector2(w, d)), "blocking",
+				ka, kb, g, bands)
+
+
+## Builds a named composition: the FAMILY skeleton (`LAYOUTS`) warped by the LEAGUE's own mass
+## placement, then the league's furniture laid over it (`LEAGUE_BOARDS`).
+##
+## `w` on a major is a multiple of `major_min_width_for(team_size)`, so no layout can author
+## cover too narrow to hide a formation — nor, since that became a fraction of the board, four
+## times too wide on the small grounds.
+##
+## ⚠️ THE LEAGUE `mass` MULTIPLIER SCALES EACH MAJOR'S OFFSET FROM CENTRE, never its position
+## outright. Scaling an offset about the centre commutes with the 180-degree rotation, so the
+## warp cannot break fairness no matter what an author types — which is the only reason it is
+## safe to expose an arrangement knob at all. `ARENA_DESIGN.md` §4 names exactly this as the
+## third-biggest lever on a board's signature: "push the mass to one edge of the legal strip".
+static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerator,
+		league_name: String = "", team_size: int = 5) -> Array:
 	var spec: Dictionary = LAYOUTS.get(layout_id, {})
 	if spec.is_empty():
 		return []
+	var bands := _deploy_bands(team_size)
+	var board: Dictionary = LEAGUE_BOARDS.get(league_name, {})
+	var mass: Vector2 = board.get("mass", Vector2.ONE)
 	var out: Array = []
-	var base := major_min_width()
+	var base := major_min_width_for(team_size)
 	var major_i := 0
 	for m in spec.get("major", []):
 		var w: float = base * float(m.get("w", 1.0))
@@ -289,7 +601,9 @@ static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerat
 		# in `ARENA_SCALE_COMPARISON.md` matters. WoW's pillars are chunky precisely so the shelter
 		# is omnidirectional enough to be worth standing behind.
 		var d: float = maxf(Sp.BODY_RADIUS * 2.0, w * float(m.get("d", 0.42)))
-		var c: Vector2 = (m["at"] as Vector2) * g
+		var at: Vector2 = m["at"]
+		var warped := Vector2(0.5 + (at.x - 0.5) * mass.x, 0.5 + (at.y - 0.5) * mass.y)
+		var c: Vector2 = warped * g
 		# ⚠️ EVERY MAJOR USED TO BE THE SAME `kind`, AND IT SHOWED. A composition's four blocking
 		# pieces were all `low_wall`, so a board rendered as four copies of one prop — the "grey
 		# slabs" read, half of which was a LAYOUT problem and not a renderer one. `ARENA_DESIGN.md`
@@ -320,10 +634,22 @@ static func _build_named(layout_id: String, g: Vector2, rng: RandomNumberGenerat
 				pool.append(k)
 		if pool.is_empty():
 			continue
-		var kind: Dictionary = pool[rng.randi_range(0, pool.size() - 1)]
+		var pick: int = rng.randi_range(0, pool.size() - 1)
+		var kind: Dictionary = pool[pick]
 		var sz: Vector2 = kind["size"]
+		# ⚠️ ACCENTS ARE DELIBERATELY NOT WARPED BY `mass`. The knob exists to move the MASS
+		# (§4: "push the mass to one edge of the legal strip"), and applying it to a piece already
+		# near an edge walks that piece off the board — Gold's 1.34 push put both accents outside
+		# `EDGE_MARGIN`, where `_emit_pair` silently dropped them. A knob whose range depends on
+		# which pieces it happens to touch is a knob nobody can use.
 		var c2: Vector2 = (a["at"] as Vector2) * g
-		out.append({"rect": Rect2(c2 - sz * 0.5, sz), "grade": grade, "kind": str(kind["kind"])})
+		# ⚠️ THE PARTNER SHARES THE RECT AND ONLY DIFFERS IN MESH. Rolling the partner's SIZE is
+		# what made the authored boards asymmetric; rolling its KIND is what `ARENA_DESIGN.md` §5
+		# asks for ("prefer odd arrangements... too symmetrical kept recurring"). Stepped by index
+		# rather than rolled, so the pair is GUARANTEED two different props instead of probably two.
+		var kind_b: String = str((pool[(pick + 1) % pool.size()] as Dictionary)["kind"])
+		_emit_pair(out, Rect2(c2 - sz * 0.5, sz), grade, str(kind["kind"]), kind_b, g, bands)
+	_build_furniture(league_name, g, bands, out)
 	return out
 
 
@@ -340,11 +666,12 @@ static func generate(team_size: int, league_name: String, rng: RandomNumberGener
 	# is still the fallback for an unknown layout id, and it is what the density law was written
 	# against — but a composition is authored, not sampled, and mixing the two would put random
 	# pieces on top of a deliberate arrangement.
-	var named := _build_named(layout_id, g, rng)
+	var named := _build_named(layout_id, g, rng, league_name, team_size)
 	if not named.is_empty():
 		return {
 			"obstacles": named,
 			"layout": layout_id,
+			"place": str((LEAGUE_BOARDS.get(league_name, {}) as Dictionary).get("place", layout_id)),
 			"centre": str((LAYOUTS[layout_id] as Dictionary).get("centre", "open")),
 			"theme": _theme_for(league_name, rng),
 		}
@@ -467,9 +794,11 @@ static func problems(obstacles: Array, team_size: int) -> Array:
 			% [obstacles.size(), ceiling, int(g.x * g.y), AREA_PER_PIECE, team_size])
 
 	# ── 180-degree rotational symmetry
-	if obstacles.size() % 2 != 0:
-		out.append("symmetry: %d obstacles is an odd count, cannot pair up into 180-degree mirrors"
-			% obstacles.size())
+	# ⚠️ AN ODD COUNT IS LEGAL AND THE OLD CHECK SAID IT WAS NOT. `ARENA_DESIGN.md` §4: "a
+	# centrepiece sits at exactly (w - size) / 2 — it is its own 180-degree partner and is emitted
+	# once". Two of the four authored families (`central_mass`, `triad`) put a mass on the axis, so
+	# this rule rejected the arrangement the design doc explicitly authorises. It never fired
+	# because `problems()` had only ever been run against the scatter path.
 	var matched: Array = []
 	for i in obstacles.size():
 		matched.append(false)
@@ -480,6 +809,9 @@ static func problems(obstacles: Array, team_size: int) -> Array:
 		if not (oi is Dictionary) or not (oi.get("rect") is Rect2):
 			continue
 		var want := _mirror_rect(oi["rect"], g)
+		if (oi["rect"] as Rect2).position.distance_to(want.position) < SYMMETRY_EPS:
+			matched[i] = true      # on the axis: its own partner, emitted once
+			continue
 		var found := -1
 		for j in range(i + 1, obstacles.size()):
 			if matched[j]:

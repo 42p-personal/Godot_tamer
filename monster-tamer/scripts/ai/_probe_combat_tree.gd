@@ -37,6 +37,31 @@ func _bb_base() -> BT.Blackboard:
 	return bb
 
 
+## ⚠️ THE SAME SCENARIO AT REAL 5v5 SCALE. `_bb_base` above is laid out on a board whose deploy
+## lines are ~34 units apart; `Spatial.ground_size(5)` puts them **391.6** apart, and every
+## positional posture behaved differently there — measured in `_probe_sim_quality.gd`'s
+## board-usage pass, which is what produced the BOARD SCALE block in combat_tree.gd. A tree probe
+## that only ever sees the small board cannot pin a scale-invariance fix, so this is the second
+## board. Geometry is `_bb_base` multiplied through by the real half-separation.
+const BIG_HALF_SEP := 195.8   # Spatial.deploy_separation(5) * 0.5
+
+func _bb_big() -> BT.Blackboard:
+	var bb := BT.Blackboard.new()
+	bb.rng = RandomNumberGenerator.new()
+	bb.rng.seed = 11
+	bb.set_value("self", {"id": "me", "pos": Vector2(-BIG_HALF_SEP, 0), "hp": 100, "max_hp": 100, "speed": 23.0})
+	bb.set_value("enemies", [
+		{"id": "e1", "pos": Vector2(BIG_HALF_SEP, -30), "hp": 80, "max_hp": 100, "int_stat": 10, "wis": 10, "con": 60, "threat": 5.0},
+		{"id": "e2", "pos": Vector2(BIG_HALF_SEP, 18), "hp": 30, "max_hp": 100, "int_stat": 80, "wis": 70, "con": 20, "threat": 1.0},
+		{"id": "e3", "pos": Vector2(BIG_HALF_SEP, 6), "hp": 95, "max_hp": 100, "int_stat": 20, "wis": 15, "con": 90, "threat": 9.0},
+	])
+	bb.set_value("allies", [{"id": "a1", "pos": Vector2(-BIG_HALF_SEP + 4, 24), "hp": 90, "max_hp": 100}])
+	bb.set_value("home_pos", Vector2(-BIG_HALF_SEP, 0))
+	bb.set_value("safe_pos", Vector2(-BIG_HALF_SEP - 20, 0))
+	bb.set_value("enemy_line_x", BIG_HALF_SEP)
+	return bb
+
+
 func _tick(tree: BT.BehaviourTree, bb: BT.Blackboard, t: int) -> int:
 	bb.set_value("_tick_now", t)
 	return tree.tick(bb, t)
@@ -50,6 +75,7 @@ func _init() -> void:
 	_test_fight_on_sovereignty()
 	_test_fallback_dwell()
 	_test_positional_geometry()
+	_test_board_scale()
 	_test_ability_policy()
 	_test_mode_and_order_slots()
 	_test_no_idle_without_reason()
@@ -180,12 +206,85 @@ func _test_positional_geometry() -> void:
 	var bbh := _bb_base()
 	_tick(CombatTree.build({"positional": "hold", "target_priority": "nearest"}), bbh, 0)
 	var hold_dest: Vector2 = bbh.get_value("req_move_to")
+	# ⚠️ THIS CHECK USED TO READ `<= 8.01` — the literal hold radius — AND THAT LITERAL WAS THE
+	# BUG. On the real 5v5 ground the deploy lines are 391.6 apart, so a body clamped 8 units
+	# from its anchor is a spectator: `_probe_sim_quality.gd`'s board-usage pass measured `Hold
+	# the line` advancing 0.04-0.05 of the way to the fight while `Push` advanced 0.90-1.95.
+	# The property worth pinning is not a number, it is that hold STOPS SHORT of the target's
+	# position rather than chasing it — the difference between hold and push.
 	_check("hold: never strays past the hold radius of home",
-		hold_dest.distance_to(bbh.get_value("home_pos")) <= 8.01)
+		hold_dest.distance_to(bbh.get_value("home_pos"))
+			<= CombatTree._hold_radius(bbh) * 1.25 + 0.01)
 	var bbg := _bb_base()
 	bbg.set_value("guard_id", "a1")
 	_tick(CombatTree.build({"positional": "guard", "target_priority": "nearest"}), bbg, 0)
 	_check("guard: stations on the charge", bbg.get_value("req_move_to") == Vector2(-18, 4))
+
+
+## ── BOARD SCALE (combat_tree.gd's BOARD SCALE block) ─────────────────────────────────────────
+## Every check here failed before that block existed. The measurements that produced them are in
+## `_probe_sim_quality.gd`'s board-usage section; these are the cheap tree-level tripwires so the
+## fix cannot be undone by someone re-writing a constant back to a literal.
+func _test_board_scale() -> void:
+	# 1. The scale is latched from the board and NEVER shrinks below the authored reference —
+	#    that floor is what keeps every other check in this file (and every hand-built bb in the
+	#    codebase) reading exactly the authored absolutes.
+	var bb_small := _bb_base()
+	CombatTree._latch_span(bb_small)
+	var bb_big := _bb_big()
+	CombatTree._latch_span(bb_big)
+	_check("board scale: a small/hand-built board keeps the authored absolutes (scale == 1.0)",
+		is_equal_approx(CombatTree._board_scale(bb_small), 1.0))
+	_check("board scale: the real 5v5 board scales up (scale ~ 4.9)",
+		CombatTree._board_scale(bb_big) > 4.5)
+
+	# 2. HOLD REACHES THE FIGHT. The measured failure: `Hold the line` advanced 0.04 of the way
+	#    to the centre on the real board while `Push` advanced 0.90+, i.e. its team fought 5v3.
+	#    A holder must leave its anchor and stop SHORT of the enemy — that is the whole posture.
+	var bbh := _bb_big()
+	_tick(CombatTree.build({"positional": "hold", "target_priority": "nearest"}), bbh, 0)
+	var hd: Vector2 = bbh.get_value("req_move_to")
+	var home: Vector2 = bbh.get_value("home_pos")
+	_check("board scale: hold advances to the LINE, not to its anchor (>= 60%% of the way to centre)",
+		hd.distance_to(home) >= 0.6 * BIG_HALF_SEP)
+	_check("board scale: hold still stops short of the target (hold is not push)",
+		hd.distance_to(Vector2(bbh.get_value("target_pos"))) > 1.0)
+
+	# 3. WINGS IS GENUINELY LATERAL AT SCALE. An 18-unit offset is 7% of a 246-deep ground; the
+	#    anti-blob axis measured a THINNER footprint than a plain brawl because of it.
+	var bbp := _bb_big()
+	_tick(CombatTree.build({"positional": "push", "target_priority": "nearest"}), bbp, 0)
+	var bbw := _bb_big()
+	_tick(CombatTree.build({"positional": "wings", "wing_side": 1, "target_priority": "nearest"}), bbw, 0)
+	_check("board scale: wings offsets laterally in proportion to the board (>= 60u at 5v5)",
+		absf(Vector2(bbw.get_value("req_move_to")).y - Vector2(bbp.get_value("req_move_to")).y) >= 60.0)
+
+	# 4. DIVE LANDS BEHIND THE LINE BY A BOARD-SIZED DEPTH, not by a fixed 12.
+	var bbd := _bb_big()
+	_tick(CombatTree.build({"positional": "dive", "target_priority": "nearest"}), bbd, 0)
+	_check("board scale: dive depth scales with the board (>= 40u behind the enemy line)",
+		Vector2(bbd.get_value("req_move_to")).x - float(bbd.get_value("enemy_line_x")) >= 40.0)
+
+	# 5. KITE TAKES THE FIRING LINE. Measured 0.00 advance for the whole fight: a kiter with
+	#    nobody near it stood on its deploy anchor while its team fought 3v5. The gap is a gap in
+	#    BOTH directions.
+	var bbk := _bb_big()
+	bbk.set_value("kite_ticks_left", 60)
+	bbk.set_value("nearest_enemy_dist", 2.0 * BIG_HALF_SEP)
+	_tick(CombatTree.build({"positional": "kite", "target_priority": "nearest"}), bbk, 0)
+	var kd: Vector2 = Vector2(bbk.get_value("req_move_to"))
+	_check("board scale: a kiter with nobody near CLOSES to the firing line (does not park)",
+		kd.distance_to(Vector2(bbk.get_value("self").pos)) > 1.0)
+	_check("board scale: the kiter stops AT the gap, not on top of the target",
+		kd.distance_to(Vector2(bbk.get_value("target_pos"))) > 20.0)
+	# ...and still backs off when something is inside the gap: the original behaviour survives.
+	var bbk2 := _bb_big()
+	bbk2.set_value("kite_ticks_left", 60)
+	bbk2.set_value("nearest_enemy_dist", 1.0)
+	bbk2.set_value("self", {"id": "me", "pos": Vector2(BIG_HALF_SEP - 4, 0), "hp": 100, "max_hp": 100, "speed": 23.0})
+	_tick(CombatTree.build({"positional": "kite", "target_priority": "nearest"}), bbk2, 0)
+	_check("board scale: a kiter with an enemy inside the gap still backs off",
+		Vector2(bbk2.get_value("req_move_to")).x < BIG_HALF_SEP - 4.0)
 
 
 func _test_ability_policy() -> void:
@@ -339,11 +438,20 @@ func _test_aggression_shapes_engagement() -> void:
 	_tick(CombatTree.build({"positional": "dive", "target_priority": "nearest"}), bbd_hi, 0)
 	_check("aggression 100: dives deeper", bbd_hi.get_value("req_move_to").x > bbd.get_value("req_move_to").x)
 	# Hold: aggression 0 keeps a tighter leash than the authored radius.
-	var bbh := _bb_base()
+	# Hold: aggression 0 keeps a tighter leash than aggression 100. Judged on the REAL-scale
+	# board, where the leash is long enough for the multiplier to have anywhere to move — on the
+	# hand-built board the target is inside the line at every aggression, so both clamp to the
+	# same point and the comparison would be vacuous.
+	var bbh := _bb_big()
 	bbh.set_value("aggression", 0)
 	_tick(CombatTree.build({"positional": "hold", "target_priority": "nearest"}), bbh, 0)
+	var bbh_hi := _bb_big()
+	bbh_hi.set_value("aggression", 100)
+	_tick(CombatTree.build({"positional": "hold", "target_priority": "nearest"}), bbh_hi, 0)
+	var home_b: Vector2 = bbh.get_value("home_pos")
 	_check("aggression 0: hold discipline tightens the leash",
-		bbh.get_value("req_move_to").distance_to(bbh.get_value("home_pos")) <= 6.01)
+		bbh.get_value("req_move_to").distance_to(home_b)
+			< bbh_hi.get_value("req_move_to").distance_to(home_b))
 
 
 func _test_smart_regroup() -> void:

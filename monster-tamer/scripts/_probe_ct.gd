@@ -1,5 +1,11 @@
 ## Direct unit test of the tree's cleanse override — no sim, no navmesh.
-extends Node
+##
+## ⚠️ SceneTree, NOT Node — it needs no scene tree, so it must be runnable with `--script`.
+## As a Node it popped a BLOCKING MODAL ("doesn't inherit from SceneTree or MainLoop") that
+## HANGS an automated run instead of failing it. See COMBAT_SPATIAL_LOG.md, "the mirror of that
+## rule". Nav-dependent probes are the opposite case and stay as scenes.
+##   godot --headless --path . --script res://scripts/_probe_ct.gd
+extends SceneTree
 const MonsterInstanceScript = preload("res://scripts/monster_instance.gd")
 const MTree = preload("res://scripts/ai/monster_tree.gd")
 const ClassifyLib = preload("res://scripts/classify.gd")
@@ -17,7 +23,7 @@ func _mk(nm: String, ms: Array):
 	mi.moveset = ms
 	return mi
 
-func _ready() -> void:
+func _initialize() -> void:
 	var f := FileAccess.open("res://data/data.json", FileAccess.READ)
 	var d = JSON.parse_string(f.get_as_text()); f.close()
 	var by := {}
@@ -50,4 +56,4 @@ func _ready() -> void:
 		print("    %-12s %s" % [k, str(out.get(k, "<missing>"))])
 	print("\n  VERDICT: %s" % ("CLEANSE REQUESTED" if str(out.get("move_name","")) == "Clarity"
 		else "*** override did not fire ***"))
-	get_tree().quit(0)
+	quit(0)

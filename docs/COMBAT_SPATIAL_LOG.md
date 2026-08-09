@@ -1099,6 +1099,28 @@ Two lessons paid for this session: a --script SceneTree cannot sync a navmesh (n
 probes that need nav run as SCENES); and one decision tick is ONE intent - per-action commits
 made the decision log cycle Mark->Move->Engage forever until the tree committed once per tick.
 
+### ⚠️ AND THE MIRROR OF THAT RULE, WHICH COST TWO AGENTS A HANG (2026-08-09)
+
+The rule above says nav-dependent probes must be SCENES. It does **not** say every probe should
+be a Node, and getting that backwards is worse than it sounds. `_probe_compile.gd` and
+`_probe_ct.gd` both `extends Node` while needing no tree at all — so running either
+the obvious way, `godot --headless --script res://scripts/_probe_x.gd`, made Godot pop a
+**blocking modal**: *"Can't load the script ... as it doesn't inherit from SceneTree or MainLoop."*
+
+**A modal is strictly worse than an error.** In an automated run it HANGS rather than failing,
+and the user saw exactly that twice — an ALERT dialog and a "Not Responding" window — before
+either of us noticed the cause was the probe's base class, not the code under test.
+
+**The rule, both halves:**
+
+| the probe needs | it must | why |
+|---|---|---|
+| a baked navmesh, a rendered frame, real nodes | `extends Node` + a `.tscn` wrapper, run the SCENE | a `--script` SceneTree has no main loop, so it cannot sync NavigationServer |
+| nothing but arithmetic or `load()` | `extends SceneTree` + `_initialize()` + `quit(code)` | the obvious `--script` command then works, and cannot pop a modal |
+
+`_probe_compile.gd` is now the second form and its header carries the reasoning. **Never leave a
+tree-less probe on `extends Node`** — the failure mode is not a red test, it is a stopped run.
+
 ## The legibility audit, and what a demo roster is FOR (2026-08-08)
 
 Two findings from wiring the renderer to the rewritten sim's event stream.

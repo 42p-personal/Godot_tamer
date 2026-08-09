@@ -47,6 +47,13 @@
 ##   5. THE ARC TABLE — (`-- --arc-table`) runs the AUTOPILOT and measures the climber itself,
 ##                      per rung, with sample counts. This is what authors `career.gd`'s
 ##                      `CLIMBER_FILL_BY_LEAGUE`. Takes about a minute for ten careers.
+##   6. THE SHAPE GAP — (`-- --shape`) THREE player builds at the IDENTICAL stat TOTAL, against the
+##                      REAL drawn cup field, at ALL ELEVEN rungs. FLAT (six equal stats — the
+##                      naive body), GEN (the generator's own roll) and SHAPED (the flat body run
+##                      through `roster.gd:_shape_to_class`, sum-preserving, kit redrawn onto the
+##                      new class). This is the ONE number that says whether the ladder can tell a
+##                      player who built something from a player who bought points. See the
+##                      `CLIMBER_SHAPE_*` block in `career.gd`.
 ##
 ## `-- --seeds N` raises the CLIMB sample from its default 32. A proportion at n=32 carries ±9
 ## points and this file's verdict counts INVERSIONS, so it can manufacture one; raise N first.
@@ -132,6 +139,16 @@ func _ready() -> void:
 			return
 		print("=== ladder slope probe (arc table only): OK ===")
 		_tree.quit(0)
+		return
+
+	## ⚠️ THE SHAPE GAP — the acceptance test for "the ladder can see what the player BUILT".
+	## Cheap (about a minute at n=16) and it answers the question BEFORE any career is run, which
+	## is the whole reason to have it: a policy table costs twenty minutes and cannot attribute.
+	if "--shape" in args:
+		_run_shape_gap(maxi(4, seeds_climb / 2))
+		print("\n%d simulated fights" % _fights)
+		print("=== ladder slope probe (shape gap only): %s ===" % ("OK" if not _fail else "FAILED"))
+		_tree.quit(1 if _fail else 0)
 		return
 
 	if "--response" in args:
@@ -251,6 +268,56 @@ func _player_team_flat(idx: int, fill: float, salt: int) -> Array:
 		mi.mp = mi.max_mp
 		team.append(mi)
 	return team
+
+
+## THE THIRD PLAYER MODEL — the flat body, redistributed. `_player_team_flat` pins all six stats
+## at `cap * fill`; this takes that EXACT team and runs it through the shipped
+## `roster.gd:_shape_to_class`, which is sum-preserving by construction (a permutation of six
+## widened values at the same mean) and re-drafts the kit from the new class's lines.
+##
+## ⚠️ IT IS PAIRED WITH `_player_team_flat` BY SEED, DELIBERATELY. The two arms are the SAME six
+## numbers arranged two ways, so the only thing the fight can be measuring is arrangement. Any
+## other construction (build a shaped team from scratch) reintroduces a total difference and the
+## comparison stops meaning anything — which is exactly how round 11's "9x from shape" came to be
+## a statement about the kit instead (`docs/SHAPE_DIAGNOSIS.md` §2.2).
+##
+## ⚠️ AND `Career.league_index` MUST ALREADY BE `idx` WHEN THIS RUNS. `_shape_to_class` clamps to
+## `GameData.stat_cap()` = the league the game is STANDING IN, not the one being built — shaping a
+## Masters team while standing at Wood hands back six stats clamped to 100, i.e. a flat body
+## wearing a shaped label. `_run_cup` sets it; this asserts it rather than trusting it.
+## (Flagged for the integrator as a real sharp edge in `roster.gd` — see the round-14 diagnosis.)
+##
+## ⚠️ THE BODY IS SHAPED ONTO ITS **OWN** EMERGENT CLASS, AND THE FIRST VERSION OF THIS FUNCTION
+## DID NOT — IT ROTATED A CLASS PER SLOT, AND THAT WAS A CONFOUND WORTH 10 POINTS. Rotating forces
+## a species into a class its base stats, aptitudes and innates have nothing to do with, so the arm
+## was measuring "shaped onto a stranger" (`_probe_shape.gd`'s arm D, which reads 4%) mixed in with
+## shape. Shaping onto `mi.class_name_` is the shipped meaning of the word — it is what
+## `roster.gd:make_rival_team` does to the whole field, and it is `_probe_shape.gd`'s arm B, so the
+## two instruments are now asking the same question and can be compared.
+func _player_team_shaped(idx: int, fill: float, salt: int) -> Array:
+	var team: Array = _player_team_flat(idx, fill, salt)
+	if absf(GameData.stat_cap() - Career.stat_cap_for_league(idx)) > 0.5:
+		push_error("shape arm: cap is %.0f but rung %d wants %.0f — the shape would clamp flat"
+			% [GameData.stat_cap(), idx, Career.stat_cap_for_league(idx)])
+		_fail = true
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 60600 + salt * 41 + idx
+	for i in range(team.size()):
+		team[i].recompute_class()
+		Roster._shape_to_class(team[i], str(team[i].class_name_), rng)
+		team[i].recompute_pools()
+		team[i].hp = team[i].max_hp
+		team[i].mp = team[i].max_mp
+	return team
+
+
+## One team per build mode, so `_run_cup` has exactly one branch and the three arms cannot
+## silently diverge in anything but the build.
+func _team_for_build(build: String, idx: int, fill: float, salt: int) -> Array:
+	match build:
+		"flat": return _player_team_flat(idx, fill, salt)
+		"shaped": return _player_team_shaped(idx, fill, salt)
+	return _player_team(idx, fill, salt)
 
 
 func _measured_fill(team: Array, cap: float) -> float:
@@ -383,7 +450,9 @@ func _arc_fills(kind: String, n_seeds: int) -> Array:
 
 ## Fight the real drawn field of rung `idx` once, with a player team at `fill`.
 ## Returns {"wins": [bool per round], "swept": bool, "fill": measured player fill}.
-func _run_cup(idx: int, fill: float, attempt: int, flat: bool = false) -> Dictionary:
+## `build` is "gen" (the generator's own roll — every other section uses this), "flat" (six equal
+## stats) or "shaped" (the flat body redistributed, sum-preserving). See `_player_team_shaped`.
+func _run_cup(idx: int, fill: float, attempt: int, build: String = "gen") -> Dictionary:
 	var prev_week: int = Career.week
 	Career.week = 1 + attempt * 4      # ⚠️ the field seed is month-stable — move it or every
 	Career.league_index = idx          #    attempt redraws the same three teams
@@ -393,7 +462,7 @@ func _run_cup(idx: int, fill: float, attempt: int, flat: bool = false) -> Dictio
 	var swept := true
 	for r in range(field.size()):
 		var salt: int = attempt * 11 + r
-		var team: Array = _player_team_flat(idx, fill, salt) if flat else _player_team(idx, fill, salt)
+		var team: Array = _team_for_build(build, idx, fill, salt)
 		var rivals: Array = field[r]["team"]
 		for m in team:
 			m.reset_for_battle()
@@ -419,10 +488,10 @@ func _run_cup(idx: int, fill: float, attempt: int, flat: bool = false) -> Dictio
 	return {"wins": wins, "swept": swept}
 
 
-func _sweep_rate(idx: int, fill: float, attempts: int, flat: bool = false) -> float:
+func _sweep_rate(idx: int, fill: float, attempts: int, build: String = "gen") -> float:
 	var sweeps := 0
 	for a in range(attempts):
-		if bool(_run_cup(idx, fill, a, flat)["swept"]):
+		if bool(_run_cup(idx, fill, a, build)["swept"]):
 			sweeps += 1
 	return float(sweeps) / float(maxi(1, attempts))
 
@@ -431,10 +500,10 @@ func _sweep_rate(idx: int, fill: float, attempts: int, flat: bool = false) -> fl
 ## (`Career.wins_needed_to_advance`). ⚠️ The threshold scan measures THIS, not the sweep: a
 ## threshold quoted against a rule the game does not use is a number about a different game.
 ## At Tamers Apex the two coincide, because the summit forgives nothing.
-func _advance_rate(idx: int, fill: float, attempts: int) -> float:
+func _advance_rate(idx: int, fill: float, attempts: int, build: String = "gen") -> float:
 	var got := 0
 	for a in range(attempts):
-		var res: Dictionary = _run_cup(idx, fill, a)
+		var res: Dictionary = _run_cup(idx, fill, a, build)
 		var rounds: int = (res["wins"] as Array).size()
 		var w := 0
 		for x in res["wins"]:
@@ -443,6 +512,107 @@ func _advance_rate(idx: int, fill: float, attempts: int) -> float:
 		if w >= Career.wins_needed_to_advance(idx, rounds):
 			got += 1
 	return float(got) / float(maxi(1, attempts))
+
+
+# =============================================================================
+# 6. THE SHAPE GAP — can the ladder tell a built roster from a bought one?
+# =============================================================================
+## ⚠️ THIS SECTION EXISTS BECAUSE THE DIFFICULTY MODEL IS STRUCTURALLY BLIND TO SHAPE, AND UNTIL
+## NOW SO WAS EVERY INSTRUMENT THAT JUDGED IT. `career.gd:expected_climber_fill()` is a stat TOTAL
+## over a cap; every `FIELD_*_RATIO_*` is a ratio to it. So a player who spends fifty weeks buying
+## a shape is priced exactly like one who bought raw points, and nothing in sections 1-5 could ever
+## have noticed: they all fight ONE player build (`_player_team`, the generator's roll).
+##
+## Three builds, the SAME total, the REAL drawn field (`make_cup_field`, archetypes, tactics), the
+## REAL promotion rule (`wins_needed_to_advance`), all eleven rungs — Platinum included, because it
+## is the modal stall and `_probe_shape.gd:NINE_RUNGS` skips it.
+##
+## ⚠️ WHAT A PASS LOOKS LIKE, AND WHY IT IS TWO-SIDED. `SHAPED - FLAT` must be POSITIVE and LARGE
+## at the top of the ladder (competence buys access), and FLAT must still be able to climb the
+## BOTTOM of it (the on-ramp `CLAUDE.md` requires). A run where both columns fall together is a
+## difficulty raise wearing a skill gap's clothes, and it is the failure this whole round was
+## warned against — so the FLAT column at Wood..Iron is an acceptance criterion, not a curiosity.
+const SHAPE_BUILDS := ["flat", "shaped", "gen"]
+
+func _run_shape_gap(attempts: int) -> void:
+	print("\n─── 6. THE SHAPE GAP — three builds at the SAME stat total, real field, real rule ───")
+	print("  n=%d cups per (rung, build). FLAT = six equal stats. SHAPED = that same body through" % attempts)
+	print("  roster.gd:_shape_to_class (sum-preserving, kit redrawn). GEN = the generator's roll.")
+	print("  %-12s %5s  %6s %6s %6s   %8s   %6s %6s" % [
+		"league", "fill", "FLAT", "SHAPE", "GEN", "SHAPE-FLAT", "rndF", "rndS"])
+	var acc := {"flat": 0, "shaped": 0, "gen": 0}
+	var rnd := {"flat": [0, 0], "shaped": [0, 0]}
+	var cups := 0
+	var rows: Array = []
+	for idx in range(Career.leagues.size()):
+		var fill: float = Career.expected_climber_fill(idx)
+		var adv := {}
+		for b in SHAPE_BUILDS:
+			var got := 0
+			for a in range(attempts):
+				var res: Dictionary = _run_cup(idx, fill, a, b)
+				var w := 0
+				for x in res["wins"]:
+					if bool(x):
+						w += 1
+				if rnd.has(b):
+					rnd[b][0] += w
+					rnd[b][1] += (res["wins"] as Array).size()
+				if w >= Career.wins_needed_to_advance(idx, (res["wins"] as Array).size()):
+					got += 1
+			adv[b] = float(got) / float(maxi(1, attempts))
+			acc[b] += got
+		cups += attempts
+		rows.append({"idx": idx, "flat": adv["flat"], "shaped": adv["shaped"], "gen": adv["gen"]})
+		print("  %-12s %5.2f  %5.0f%% %5.0f%% %5.0f%%   %+7.0f pts" % [
+			Career.league_at(idx).get("name", "?"), fill,
+			adv["flat"] * 100.0, adv["shaped"] * 100.0, adv["gen"] * 100.0,
+			(adv["shaped"] - adv["flat"]) * 100.0])
+	print("  %-12s %5s  %5.0f%% %5.0f%% %5.0f%%   %+7.0f pts" % [
+		"ALL", "", 100.0 * acc["flat"] / maxf(1.0, float(cups)),
+		100.0 * acc["shaped"] / maxf(1.0, float(cups)),
+		100.0 * acc["gen"] / maxf(1.0, float(cups)),
+		100.0 * (acc["shaped"] - acc["flat"]) / maxf(1.0, float(cups))])
+	print("  per-ROUND win rate  FLAT %.0f%% (%d)   SHAPED %.0f%% (%d)" % [
+		100.0 * rnd["flat"][0] / maxf(1.0, float(rnd["flat"][1])), rnd["flat"][1],
+		100.0 * rnd["shaped"][0] / maxf(1.0, float(rnd["shaped"][1])), rnd["shaped"][1]])
+	_shape_verdict(rows, attempts)
+
+
+## ⚠️ THE FOUR THINGS THAT MUST BE TRUE AT ONCE, ASSERTED — because "shaped is ahead" on its own is
+## satisfied by a ladder nobody can climb and by a ladder everybody can.
+const SHAPE_TOP_RUNGS := [7, 8, 9, 10]      ## Platinum..Apex — where the careers actually stall
+const SHAPE_ONRAMP_RUNGS := [0, 1, 2, 3, 4] ## Wood..Iron — the naive player must still get up these
+
+func _shape_verdict(rows: Array, attempts: int) -> void:
+	var top_f := 0.0
+	var top_s := 0.0
+	var top_n := 0
+	var ramp_f := 0.0
+	var ramp_n := 0
+	for r in rows:
+		var i: int = int(r["idx"])
+		if i in SHAPE_TOP_RUNGS:
+			top_f += float(r["flat"]); top_s += float(r["shaped"]); top_n += 1
+		if i in SHAPE_ONRAMP_RUNGS:
+			ramp_f += float(r["flat"]); ramp_n += 1
+	top_f /= maxf(1.0, float(top_n))
+	top_s /= maxf(1.0, float(top_n))
+	ramp_f /= maxf(1.0, float(ramp_n))
+	print("\n  ── verdict (n=%d cups per cell; a proportion at n=16 carries about ±12 points) ──" % attempts)
+	print("  top four rungs   FLAT %.0f%%  SHAPED %.0f%%  gap %+.0f pts" % [
+		top_f * 100.0, top_s * 100.0, (top_s - top_f) * 100.0])
+	print("  on-ramp (Wood..Iron)  FLAT %.0f%%" % (ramp_f * 100.0))
+	var checks: Array = [
+		["shape pays at the top   (SHAPED-FLAT >= +15 pts)", (top_s - top_f) >= 0.15],
+		["the top is a real wall  (FLAT <= 35%)", top_f <= 0.35],
+		["shape can still clear it (SHAPED >= 45%)", top_s >= 0.45],
+		["the on-ramp survives    (FLAT >= 45% at Wood..Iron)", ramp_f >= 0.45],
+	]
+	for c in checks:
+		print("    %-52s %s" % [str(c[0]), "PASS" if bool(c[1]) else "FAIL"])
+	print("  ⚠️ these are ACCEPTANCE TARGETS for round 14, not laws. If one fails, say which and by")
+	print("  how much — a difficulty raise that fails 'on-ramp' has bought the gap the wrong way.")
 
 
 ## ⚠️ SECTION 4 EXISTS BECAUSE TWO INSTRUMENTS IN THIS REPO DISAGREE ABOUT THE SAME LADDER, AND
@@ -457,7 +627,7 @@ func _run_model_sensitivity() -> void:
 		if idx >= Career.leagues.size():
 			continue
 		var gen := _sweep_rate(idx, 0.65, seeds_thresh)
-		var flat := _sweep_rate(idx, 0.65, seeds_thresh, true)
+		var flat := _sweep_rate(idx, 0.65, seeds_thresh, "flat")
 		print("  %-12s      %4.0f%%              %4.0f%%" % [
 			Career.league_at(idx).get("name", "?"), gen * 100.0, flat * 100.0])
 	print("  (a flat build dumps NOTHING, so it carries a maximal CON — and maxHp is superlinear in")

@@ -1123,11 +1123,19 @@ func _manage_roster(opts: Dictionary) -> Dictionary:
 		for mi in Roster.monsters:
 			mi.lifespan_years = 1000.0
 			mi.retired = false
-	## ⚠️ THE KIT IS DRAWN ONCE, AT PURCHASE, AND NEVER AGAIN — `week.gd:apply_activity` calls
-	## `recompute_class()` and `recompute_pools()` every week and never `assign_moveset()`. So a
-	## body recruited at ~23/stat drafts the floor of every line and carries it for life. A
-	## competent player re-draws the kit as the body grows; that this is a POLICY rather than
-	## something the game does for you is a legibility finding in its own right.
+	## ⚠️ THIS COMMENT WAS TRUE AND IS NOT ANY MORE — CORRECTED ROUND 14 (2026-08-09). It used to
+	## read "the kit is drawn once, at purchase, and never again", and that WAS the shipped
+	## behaviour when this hook was written. `week.gd:581` has called `_redraft_if_stale()` from
+	## `apply_activity` since, so **every** monster's kit is now re-drawn from its current class
+	## whenever it goes stale — the player's and the autopilot's alike.
+	##
+	## ⚠️ WHICH MATTERS BECAUSE THAT WIRE IS THE BIGGEST MEASURED SKILL LEVER IN THE GAME AND IT IS
+	## NOW GIVEN AWAY FOR FREE. `docs/SHAPE_DIAGNOSIS.md` §2.2 decomposes round 11's "9x from
+	## shape": **5.50x of it is the KIT** at a byte-identical stat vector (7% -> 36% of rounds),
+	## against only 1.39x for stat shape itself. So this hook no longer buys the 5.50x — it buys
+	## only the residual between "re-draw when STALE" and "re-draw EAGERLY every week", which is
+	## small. Read it as `redraft_eagerly`, and do not quote a COMPETENT-vs-NAIVE gap as evidence
+	## that kit management is a player skill: the game does it for the player, correctly, for free.
 	if p_redraft_kits:
 		for mi in Roster.monsters:
 			var before: String = str(mi.moveset)

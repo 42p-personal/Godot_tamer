@@ -155,14 +155,19 @@ func drill_note(mi, drill_id: String, cap: float) -> Dictionary:
 	# league cap still has 10% of headroom to train into. Reading the raw cap here would grey the
 	# button out on exactly the monster breeding exists to produce — the screen lying about the
 	# tick, which is the failure this file's mirror discipline is written to prevent.
-	var own_cap: float = WeekLib.stat_cap_for(mi, cap)
+	# ⚠️ AND IT IS THE *HEADROOM* CEILING, NOT THE NOMINAL ONE. `week.gd:stat_ceiling` lets a body
+	# that has committed its points to two stats train those two above the nominal cap out of the
+	# same total budget (see week.gd's HEADROOM TRADE block). Reading `stat_cap_for` here would
+	# grey the button out on exactly the committed build the mechanic exists to allow — the screen
+	# refusing a drill the tick would happily apply, which is this file's mirror discipline
+	# failing in the one direction the player cannot recover from.
 	var at_cap := true
 	var any_raised := false
 	for stat in gains.keys():
 		if float(gains[stat]) <= 0.0:
 			continue
 		any_raised = true
-		if float(mi.stats.get(stat, 0.0)) < own_cap - 0.001:
+		if float(mi.stats.get(stat, 0.0)) < WeekLib.stat_ceiling(mi, cap, str(stat)) - 0.001:
 			at_cap = false
 			break
 	if not any_raised:

@@ -753,9 +753,64 @@ func _check_climber_curve() -> void:
 				+ "curve (%.3f). Edit CLIMBER_FILL_WOOD/APEX and re-sample, never a cell." % want)
 
 
+## ── ⚠️ THE MODEL IS ONE-DIMENSIONAL ON PURPOSE, AND ROUND 14 IS WHY ──────────────────────────
+## THE STANDING BRIEF WAS: "the difficulty model is a stat TOTAL over a cap and is structurally
+## blind to SHAPE, so a player who spends fifty weeks buying a shape is priced as though they
+## bought nothing — give the model a second dimension." THE FIRST HALF IS TRUE AND THE CONCLUSION
+## DOES NOT FOLLOW. `scenes/_probe_ladder_slope.tscn -- --shape --seeds 64` (section 6) measured
+## it: three player builds at an IDENTICAL stat total, against the REAL drawn cup field
+## (`make_cup_field` — archetypes, tactics, orders) and the REAL promotion rule, 32 cups per cell,
+## all eleven rungs, 4,176 fights.
+##
+##   ADVANCE %    Wood Copp  Tin Bron Iron Silv Gold Plat Mast Elit Apex | ALL | top four
+##   FLAT   (six equal stats)   56    9    9    0   75   63   22   47   44   22    9 |  32 |  30
+##   SHAPED (same six numbers,  28   53    0   13   59   75   63   50   59   63   28 |  45 |  50
+##           redistributed by `roster.gd:_shape_to_class`, kit redrawn — SUM-PRESERVING)
+##   GEN    (the generator roll) 66   75   44   66   66   66   41   22   38   22   13 |  47 |  24
+##   per-ROUND win rate: FLAT 53% (n=1376) · SHAPED 61% (n=1376)
+##
+## **THE FIELD ALREADY SEES SHAPE, BY +20 POINTS OF ADVANCE AT THE TOP FOUR RUNGS AT AN IDENTICAL
+## STAT TOTAL** (30% -> 50%, Platinum..Apex — the four rungs where careers actually stall). The
+## PRICE is blind; the FIGHT is not. That difference is the whole answer, and it is the good case:
+## a shaped player is charged for the points they bought and paid for the build they made, which
+## is precisely "investment shows up as an ADVANTAGE rather than as a matched escalation".
+##
+## ⚠️ SO ADDING A SHAPE TERM TO THIS FUNCTION IS BANNED, AND FOR TWO SEPARATE REASONS.
+##   1. IF IT READS THE PLAYER'S ROSTER it is rubber-banding by construction: the +20 above is
+##      exactly what it would cancel, and it would do so invisibly. The brief that asked for the
+##      second dimension named this trap itself.
+##   2. IF IT IS AUTHORED PER RUNG (the only non-circular form) it is not a shape term at all — it
+##      is arithmetically a top-weighted difficulty RAISE, and **the ladder cannot currently afford
+##      one**. Round 12b's shipped slope is ADVANCE 66 -> 13 with Apex already UNDER its 15-20%
+##      target and 32.7 cups for the climb against a 25-28 target, with Platinum/Elite/Apex
+##      carrying the whole overrun. Any raise at the top spends budget the ladder has already
+##      overspent — and it lands on the SHAPED player too (50% -> lower), which is the opposite of
+##      the round's goal.
+##
+## ⚠️ AND ONE PIECE OF THE BRIEF WAS MEASURED WRONG, WHICH IS WORTH MORE THAN THE REST OF IT.
+## `docs/SHAPE_DIAGNOSIS.md` §5 B1 asked for the top four rungs to take a flat roster "from
+## 22/53/60% down to <= 35% while aligned ones stay >= 55%". Those three numbers were per-ROUND win
+## rates against `make_league_rivals(..., archetype = "")` — an UNSHAPED, PLANLESS field that no
+## cup ever draws. Measured against the field the game actually fields, and on ADVANCE (the rule
+## the ladder runs on), the shipped ladder ALREADY reads FLAT 30% / SHAPED 50% at those rungs.
+## **B1 was satisfied before it was written.** The instrument, not the ladder, was the finding.
+##
+## WHAT IS GENUINELY WRONG, MEASURED, AND NOT FIXABLE FROM THIS FILE — see the handover:
+##   * the SHAPED column is not a climb at all (28 53 0 13 59 75 63 50 59 63 28). Round 12b's
+##     monotonicity was only ever validated on the GEN build, and the sawtooth's known cause is the
+##     archetype KIND term (`FIELD_KIND_PARITY_APPLIED`), not any ratio here. Tin reads 0% for a
+##     shaped player and 44% for a generator one.
+##   * `roster.gd:_shape_to_class` clamps to `GameData.stat_cap()` — the league the game is
+##     STANDING IN, not the one being built. Section 6 asserts the cap before shaping rather than
+##     trusting it; the fix belongs in `roster.gd` as an explicit cap parameter.
+## ⚠️ RE-RUN SECTION 6 AFTER ANY CHANGE TO THE FIELD, THE ARCHETYPES OR THE DRAFT. It is 95s and it
+## is the only instrument in the repo that can tell a difficulty change from a skill gap.
+
+
 ## The fraction of rung `idx`'s ceiling the climbing player can be expected to carry. A LOOKUP into
 ## the sampled curve — see the block above. Falls back to the nearest authored rung if the ladder
 ## is ever lengthened, and says so in the console rather than inventing a value.
+## ⚠️ TOTAL ONLY, AND DELIBERATELY — read the block directly above before adding a second axis.
 func expected_climber_fill(idx: int) -> float:
 	if CLIMBER_FILL_BY_LEAGUE.is_empty():
 		return 0.45

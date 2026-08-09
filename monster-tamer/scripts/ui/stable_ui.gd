@@ -39,13 +39,21 @@ const TEMPERAMENT_AXES := [
 	{"key": "focus", "label": "Focus"},
 ]
 
-## ⚠️ DUPLICATED FROM training_ui.gd's INTENSIVE_PAIR, ON PURPOSE — this screen only PREVIEWS a
-## drill's trade-off (read-only, no mutation happens here), training_ui.gd is where the drill is
-## actually spent (GameData.train). Keep the two tables in sync if the pairing ever changes; they
-## are a one-line-per-stat mockup table, not worth a shared module for.
-const INTENSIVE_PAIR := {
-	"STR": "DEX", "DEX": "STR", "CON": "DEX", "WIS": "INT", "INT": "WIS", "CHA": "CON",
-}
+## ⚠️ `INTENSIVE_PAIR` USED TO LIVE HERE AND IT WAS A LIE IN THREE SEPARATE WAYS (round 14).
+## It was a hand-copied six-entry table "kept in sync" with training_ui.gd, and it had drifted:
+## it claimed CON pairs with DEX and CHA with CON, while `week.gd:DRILLS` — the table the tick
+## actually reads — carries TWO intensive drills per stat with different pairs (CON/DEX *and*
+## CON/INT; CHA/INT *and* CHA/CON), plus a whole extreme and diverse tier this screen never
+## mentioned at all. The preview also hardcoded "+6 basic / +12 intensive" and so ignored every
+## multiplier the week is actually decided by: life stage, stamina, happiness, species aptitude,
+## focus cost, the training food, and the monster's own bloodline ceiling.
+##
+## That is this project's signature failure in its purest form — a screen whose whole job is to
+## let the player "make a decision with knowledge they have earned", printing numbers the tick
+## does not use. It is now drawn from `week.gd:preview_week`, which runs the REAL tick on a
+## throwaway clone, exactly as training_ui.gd does. There is no second copy of the math left on
+## this screen to drift.
+const WeekLib = preload("res://scripts/week.gd")
 
 var roster_col: VBoxContainer
 var detail_box: VBoxContainer
@@ -297,10 +305,15 @@ func _make_card(m, index: int) -> PanelContainer:
 	return panel
 
 
+## ⚠️ THE MONSTER'S OWN CEILING, NOT THE LEAGUE'S FLAT NUMBER. `week.gd:stat_ceiling` is league cap
+## x bloodline potential, with the headroom a committed build has traded for out of its own total
+## budget. Reading the raw league cap here would show "At cap" on exactly the two monsters that
+## still have room — the bred body breeding exists to produce, and the specialist the headroom
+## trade exists to allow.
 func _has_room(m) -> bool:
 	var cap := GameData.stat_cap()
 	for stat in Classify.STATS:
-		if float(m.stats.get(stat, 0.0)) < cap - 0.001:
+		if float(m.stats.get(stat, 0.0)) < WeekLib.stat_ceiling(m, cap, stat) - 0.001:
 			return true
 	return false
 
@@ -421,13 +434,23 @@ func _refresh_detail() -> void:
 ## no room left, rather than leaving the player to guess why nothing happened.
 func _stat_row(m, stat: String) -> Control:
 	var cap := GameData.stat_cap()
+	var ceiling := WeekLib.stat_ceiling(m, cap, stat)
 	var value := float(m.stats.get(stat, 0.0))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 1)
-	col.add_child(UiTheme.stat_bar(stat, value, cap, accent, 40))
-	if value >= cap - 0.001:
+	# The bar is drawn against this monster's OWN ceiling, so a stat trained into its headroom is
+	# not silently painted as overflowing a bar it has legitimately passed.
+	col.add_child(UiTheme.stat_bar(stat, value, maxf(ceiling, value), accent, 40))
+	if value >= ceiling - 0.001:
 		col.add_child(UiTheme.body_text(
 			"at the %s ceiling — win promotion to train further" % _league_name(), "muted"))
+	elif value > cap + 0.001:
+		# ⚠️ SAY IT, DO NOT LET THEM FIND IT. A stat above the league number is the headroom trade
+		# paying out, and a player who sees a stat pass a cap the rest of the UI calls a cap will
+		# read it as a bug unless the screen names it.
+		col.add_child(UiTheme.body_text(
+			"%d above the %s cap — headroom traded from this monster's other stats" % [
+				int(round(value - cap)), _league_name()], "muted"))
 	return col
 
 
@@ -530,13 +553,55 @@ func _temperament_row(m, axis: Dictionary) -> Control:
 # The actual drill is spent on training.tscn (training_ui.gd) — this section never mutates state.
 # =============================================================================
 
+## ⚠️ THE KNOWLEDGE THE PLAYER IS SUPPOSED TO HAVE EARNED, PUT WHERE THEY SPEND IT.
+## `career.gd:champion_for()` already returns an archetype, a scouting `read` AND a `counter`, and
+## `tactics.gd:champion_counter` has been asserted against the event log by
+## `scenes/_probe_archetypes.tscn` since round 10 — but the only screen that showed any of it was
+## the tournament sign-up card, and even that dropped the `counter` on the floor. So the player
+## read "what beats this champion" on one screen and made every training decision on another,
+## with nothing in between. CLAUDE.md's bar is a decision "made with knowledge the player has
+## earned"; earned knowledge that is not on the screen where the decision happens is not knowledge,
+## it is trivia. This connects the two — no new system, three existing ones wired together.
+func _frontier_brief() -> Control:
+	if not has_node("/root/Career"):
+		return null
+	var idx: int = Career.league_index
+	var champ: Dictionary = Career.champion_for(idx)
+	var counter: String = str(champ.get("counter", ""))
+	var read: String = str(champ.get("read", ""))
+	if counter == "" and read == "":
+		return null
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 1)
+	box.add_child(UiTheme.body_text("What you are training FOR — %s, %s (%s)" % [
+		str(champ.get("name", "the titleholder")), str(champ.get("title", "")),
+		str(champ.get("archetype", ""))], "primary"))
+	if read != "":
+		var read_lbl := UiTheme.body_text("   they fight like this: %s" % read, "secondary")
+		read_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		box.add_child(read_lbl)
+	if counter != "":
+		var ctr := UiTheme.body_text("   what beats them: %s" % counter, "primary")
+		ctr.add_theme_color_override("font_color", UiTheme.GOLD)
+		ctr.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		box.add_child(ctr)
+	return box
+
+
 func _training_preview_section(m) -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 
 	box.add_child(UiTheme.heading("Training — what's on offer", 2))
+
+	var brief := _frontier_brief()
+	if brief != null:
+		box.add_child(brief)
+		box.add_child(HSeparator.new())
+
 	box.add_child(UiTheme.body_text(
-		"Every drill trades a stat gain against a cost — some tip %s into a different class outright. Rest and Excursion aren't modelled in this build yet." % m.species_name,
+		"The push drill for each stat, run through the real week — aptitude, focus cost, stamina, age and this week's food are all already in these numbers.",
 		"muted"))
 
 	for stat in Classify.STATS:
@@ -553,10 +618,17 @@ func _training_preview_section(m) -> Control:
 	return box
 
 
+## The EXTREME drill for `stat` — the one a player pushing a shape actually spends. It is the
+## honest row to show: it carries the biggest gain, the two paired drains, and the steepest focus
+## cost, so it is where the trade is visible at all. (The basic and intensive tiers, and the whole
+## diverse row, are on training.tscn with the same preview behind them.)
+func _push_drill_id(stat: String) -> String:
+	return "x" + stat.to_lower()
+
+
 func _training_preview_row(m, stat: String) -> Control:
 	var cap := GameData.stat_cap()
-	var current := float(m.stats.get(stat, 0.0))
-	var paired: String = INTENSIVE_PAIR.get(stat, "")
+	var drill_id := _push_drill_id(stat)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", UiTheme.SPACE_SM)
@@ -565,18 +637,40 @@ func _training_preview_row(m, stat: String) -> Control:
 	lbl.custom_minimum_size = Vector2(36, 0)
 	row.add_child(lbl)
 
+	var note: Dictionary = WeekPlan.drill_note(m, drill_id, cap)
 	var desc: String
-	if current >= cap - 0.001:
-		desc = "at the %s ceiling — win promotion to train further" % _league_name()
+	if not bool(note.get("allowed", true)):
+		desc = str(note.get("note", "unavailable"))
 	else:
-		var basic_gain := _preview_gain(m, stat, false)
-		var intensive_gain := _preview_gain(m, stat, true)
-		var intensive_cost := _preview_cost(m, paired)
-		var intensive_class := _preview_class_after(m, stat, true, paired)
-		desc = "basic +%d  ·  intensive +%d %s / −%d %s" % [
-			int(round(basic_gain)), int(round(intensive_gain)), stat, int(round(intensive_cost)), paired]
-		if intensive_class != m.class_name_:
-			desc += "   (→ %s)" % intensive_class
+		# ⚠️ THE REAL TICK ON A CLONE. `preview_week` runs `apply_week` itself, so this cannot drift
+		# from what Advance Week will do — the same invariant week.gd's header pins.
+		var plan: Dictionary = WeekPlan.plan_for(m.id)
+		var food: String = str(plan.get("food", ""))
+		var pv: Dictionary = WeekLib.preview_week(m, {"kind": "train", "drillId": drill_id},
+			Career.gold if has_node("/root/Career") else 0, 0, food, bool(plan.get("forage", false)),
+			WeekPlan.price_of(food), cap, _league_name())
+		var parts: Array = []
+		var deltas: Dictionary = pv.get("statDeltas", {})
+		for s in Classify.STATS:
+			var d: float = float(deltas.get(s, 0.0))
+			if absf(d) >= 0.5:
+				parts.append("%+d %s" % [int(round(d)), s])
+		desc = ", ".join(PackedStringArray(parts)) if parts.size() > 0 else "no gain"
+		var fc: float = WeekLib.focus_cost(m, stat)
+		var apt: float = WeekLib.stat_training_bonus(m, stat)
+		var chain: Array = []
+		if absf(apt - 1.0) > 0.01:
+			chain.append("aptitude x%.2f" % apt)
+		if fc < 0.999:
+			chain.append("focus x%.2f" % fc)
+		if chain.size() > 0:
+			desc += "   (%s)" % ", ".join(PackedStringArray(chain))
+		var after := _class_after(m, deltas)
+		if after != str(m.class_name_):
+			desc += "   → %s" % after
+		var extra: String = str(note.get("note", ""))
+		if extra != "":
+			desc += "   · %s" % extra
 
 	var desc_lbl := UiTheme.body_text(desc, "primary")
 	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -586,30 +680,16 @@ func _training_preview_row(m, stat: String) -> Control:
 	return row
 
 
-## Mirrors game_data.gd:train()'s room/clamp math exactly — read-only, no state changes. Keep in
-## sync with that function if the drill formula ever changes (same duplication rationale as
-## INTENSIVE_PAIR above).
-func _preview_gain(m, stat: String, intensive: bool) -> float:
-	var cap := GameData.stat_cap()
-	var current: float = float(m.stats.get(stat, 0.0))
-	var raw := 12.0 if intensive else 6.0
-	var room: float = maxf(0.0, cap - current)
-	return minf(raw, room)
-
-
-func _preview_cost(m, paired: String) -> float:
-	if paired == "":
-		return 0.0
-	return minf(4.0, float(m.stats.get(paired, 0.0)))
-
-
-## Applies the same gain/cost math to a COPY of the monster's stats, purely to preview a class
-## shift before the player commits a drill. Never mutates `m`.
-func _preview_class_after(m, stat: String, intensive: bool, paired: String) -> String:
+## Would this week's deltas tip the monster into a different class? Read-only — the deltas come
+## from the preview, so this asks the question against the numbers the tick will actually apply.
+## ⚠️ This is the single most decision-relevant line on the card: `docs/SHAPE_DIAGNOSIS.md` §2
+## measured that the kit is redrawn from the CLASS (`week.gd:_redraft_if_stale`) and that a kit
+## drawn for the wrong class collapses a roster's win rate from 56% to 4%. A class change is not
+## cosmetic; it is the whole moveset.
+func _class_after(m, deltas: Dictionary) -> String:
 	var stats_copy: Dictionary = m.stats.duplicate()
-	stats_copy[stat] = float(stats_copy.get(stat, 0.0)) + _preview_gain(m, stat, intensive)
-	if intensive and paired != "" and paired != stat:
-		stats_copy[paired] = float(stats_copy.get(paired, 0.0)) - _preview_cost(m, paired)
+	for s in deltas:
+		stats_copy[s] = float(stats_copy.get(s, 0.0)) + float(deltas[s])
 	return Classify.class_for_stats(stats_copy)
 
 

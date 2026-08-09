@@ -302,11 +302,21 @@ func _class_pair(class_name_: String) -> Array:
 
 ## Re-spread a generated monster's stats so it emerges as `want`, then re-derive everything
 ## downstream of stats (class, pools, kit). Sum-preserving; see the constants above.
-func _shape_to_class(mi, want: String, rng: RandomNumberGenerator) -> void:
+##
+## ⚠️ `cap_override` EXISTS BECAUSE THE DEFAULT WAS A SILENT FLATTENER, AND IT BIT TWO INSTRUMENTS
+## IN ONE ROUND (round 14, 2026-08-09). `GameData.stat_cap()` is `Career.current_stat_cap()` — the
+## league the game is STANDING IN, never the league being BUILT. Shaping a Masters team while the
+## career sits at Wood clamps all six widened values to 100, the permutation then hands back six
+## equal numbers, and the caller receives **a flat body wearing a shaped label**. It cost
+## `_probe_shape.gd` its first run (five of six rungs read 0% and looked like a finding) and
+## `_probe_ladder_slope.gd` §6 now asserts the cap rather than trusting it. Live callers are safe
+## only by accident: `make_rival_team` shapes for the rung the game is standing in.
+## PASS THE RUNG'S OWN CAP whenever you shape for a rung that is not the current one.
+func _shape_to_class(mi, want: String, rng: RandomNumberGenerator, cap_override: float = -1.0) -> void:
 	var pair: Array = _class_pair(want)
 	if pair.is_empty() or mi == null:
 		return
-	var cap: float = GameData.stat_cap()
+	var cap: float = cap_override if cap_override > 0.0 else GameData.stat_cap()
 	var total := 0.0
 	for st in Classify.STATS:
 		total += float(mi.stats.get(st, 0.0))

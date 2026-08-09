@@ -72,8 +72,29 @@ const FORAGE_HAPPINESS_COST := 2
 #   • It is a soft curve, never a wall (floor 0.55). ⚠️ The 5v5 sim rewards specialists and this
 #     must not quietly forbid one — CLAUDE.md's rule that a species must never be locked out of a
 #     role applies to builds too. Specialising still wins; it now COSTS.
+#
+# ⚠️ THE FLOOR WAS 0.55 AND IT PRICED A SPECIALIST OUT OF THE GAME (round 14, 2026-08-09).
+# `docs/SHAPE_DIAGNOSIS.md` §3 measured a true archetype spike over a full 336-week career at
+# **−31.9% of its lifetime stat points** against a flat body, mean focus multiplier 0.618 — and
+# the ladder's difficulty model prices the player on stat TOTAL (`career.gd:expected_climber_fill`
+# is a total over a cap and is structurally blind to shape). So the player who committed to a
+# shape paid a third of their career for it and was then priced as though they had bought
+# nothing: 4 careers won in 24, against 21/24 for a flat body. That is not a soft curve, it is a
+# trap with a price tag on it.
+#
+# ⚠️ AND NOTE WHICH DIRECTION THIS MOVES. The floor is *also* what makes "train whatever stat is
+# lowest" the points-optimal rule — a lagging stat pays ×1.00 while the leading one pays the
+# floor, so a greedy-by-points brain rotates around the bottom of the spread by construction and
+# `_probe_training.gd` §5's 94 switches were 94 switches between six ways of staying flat. Raising
+# the floor narrows that gap from 1.82x to 1.33x. It does not, on its own, make shape the better
+# play — the field has to do that (SHAPE_DIAGNOSIS §5 BUILDER B) — but it stops the training
+# economy actively punishing the decision the game wants the player to make.
+#
+# ⚠️ THE SLOPE IS DELIBERATELY UNCHANGED. The floor sets the price of a FINISHED spike; the slope
+# sets how fast that price arrives. Only the floor is implicated by the measured 0.618, and moving
+# both at once would make the re-measurement unreadable.
 const FOCUS_SLOPE := 0.45
-const FOCUS_FLOOR := 0.55
+const FOCUS_FLOOR := 0.75
 
 const PRESTIGE_BODIES := ["Draconic", "Abyssal", "Mythical"]
 const PRESTIGE_FLAW_PENALTY := 0.95
@@ -276,8 +297,60 @@ static func stat_malus_multiplier(mi, stat: String) -> float:
 ## League cap x bloodline potential (CLAUDE.md: "the ceiling is league cap × potential").
 ## ⚠️ Does not port the fusion/Primeval/prestige gen-1 sub-caps in game.ts:statCapFor — see the
 ## scope note at the top of this file.
+##
+## ⚠️ THIS IS THE *NOMINAL* CEILING — what the bars and the league text mean by "the cap". The
+## ceiling a drill is actually clamped against is `stat_ceiling()` below, which is the same number
+## for a balanced body and higher for a committed one. Callers that want "what does this league
+## cap at" keep using this; only the tick and anything previewing the tick want the other.
 static func stat_cap_for(mi, league_cap: float) -> float:
 	return roundi(league_cap * mi.potential)
+
+
+# ── THE HEADROOM TRADE — the price of shape, and where it actually lived (round 14, 2026-08-09) ──
+#
+# ⚠️ `docs/SHAPE_DIAGNOSIS.md` §3 attributes the cost of specialising to `focus_cost` and states
+# the floor "is the only knob that sets it". MEASURED, THAT IS WRONG, and the measurement is
+# `_probe_training.gd` §7 plus two runs of `_probe_shape.tscn --gym`:
+#
+#     FOCUS_FLOOR 0.55 -> 0.75 : spike deficit  -31.9% -> -30.3%   (focus mult 0.618 -> 0.781)
+#     FOCUS_FLOOR      -> 1.00 : spike deficit           -28.8%    (focus cost OFF entirely)
+#     ceiling removed, floor 0.75, shape vs lowest-stat:  -25.7% -> **+7.6%**
+#
+# Focus cost is worth ~3 points of a ~30-point deficit. **The other ~27 are the CEILING, and it is
+# geometry rather than tuning: the cap is PER STAT and identical on all six, so a body that
+# commits to two stats is handed one third of the room a body that trains all six gets.** A
+# specialist does not lose points to a multiplier — it runs out of anywhere to put them, and then
+# spends the back half of its career pouring weeks into a wall. That is the 31.9% and the 4/24.
+#
+# THE FIX IS A BUDGET, NOT A HIGHER WALL. A monster still gets exactly `6 x nominal cap` of total
+# room — so `career.gd:expected_climber_fill`, which is a stat TOTAL over a cap, reads a committed
+# build and a balanced one as the same strength and BUILDER B's field work is not disturbed by
+# this. What changes is that the room is now spendable where the player chooses, up to
+# `SPIKE_HEADROOM` on any one stat.
+#
+# ⚠️ THE HEADROOM NUMBER IS NOT INVENTED. 1.35 is `roster.gd:SHAPE_PRIMARY` — the exact primary
+# weight of the archetype vector the game already builds its rivals from. So the ceiling a player
+# can train to is precisely the shape the ladder already fields, and no further.
+#
+# ⚠️ AND THE TOTAL BUDGET DOES NOT BIND TODAY, deliberately. A full career banks ~4,450 points
+# against a 6,600 budget at the Apex cap (`_probe_training.gd` §1), so this is a guard against
+# generalisation, not a live constraint — it exists so that raising the per-stat ceiling cannot
+# quietly raise the total one. If a future career ever reaches it, that is the moment
+# `docs/CLASS_REWORK.md`'s per-class caps become load-bearing rather than optional.
+const SPIKE_HEADROOM := 1.35
+
+
+## The ceiling THIS stat may actually be trained to on THIS body: the nominal cap x SPIKE_HEADROOM,
+## less anything the rest of the monster has already spent out of the shared `6 x nominal` budget.
+## For a balanced body the budget term never binds and this returns the nominal cap, unchanged.
+static func stat_ceiling(mi, league_cap: float, stat: String) -> float:
+	var nominal := float(stat_cap_for(mi, league_cap))
+	var spent_elsewhere := 0.0
+	for s in mi.stats:
+		if str(s) != stat:
+			spent_elsewhere += float(mi.stats[s])
+	var from_budget: float = 6.0 * nominal - spent_elsewhere
+	return maxf(nominal, minf(nominal * SPIKE_HEADROOM, from_budget))
 
 
 ## How far a monster's TOP stat may outrun its TOP carried move's `learnLevel` before the kit is
@@ -460,7 +533,11 @@ static func apply_activity(mi, action: Dictionary, gold: int, cap: float, league
 			# x1.00, x1.50 and x2.00 all finished on exactly 750/stat. Bloodline potential is the
 			# ONLY thing breeding sells that the market shelf cannot, so breeding was strictly
 			# dominated by shopping for as long as this said `cap`.
-			var nv: float = clampf(mi.stats[stat] + applied, 1.0, stat_cap_for(mi, cap))
+			# ⚠️ `stat_ceiling`, NOT `stat_cap_for` — see the HEADROOM TRADE block above. A balanced
+			# body gets the identical number this line always used; a body that has committed its
+			# points to two stats may push those two to SPIKE_HEADROOM, out of the same total
+			# budget. Nothing here raises what a monster can bank in a career, only where it sits.
+			var nv: float = clampf(mi.stats[stat] + applied, 1.0, stat_ceiling(mi, cap, stat))
 			var real: float = nv - float(mi.stats[stat])
 			mi.stats[stat] = nv
 			if real != 0.0:

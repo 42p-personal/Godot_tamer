@@ -15,8 +15,20 @@ const UiTheme = preload("res://scripts/ui/theme.gd")
 ## Barn upgrades — price climbs steeply. ⚠️ PROPOSED, NOT BALANCED (`CLAUDE.md`: the baseline is
 ## suspended for the rebuild). The SHAPE is the intent: room 3 is affordable off a couple of
 ## purses, room 5 is a campaign goal.
-const BARN_PRICES := [0, 0, 320, 700, 1400, 2600]
-const MAX_BARN := 5
+## ⚠️ THE BARN USED TO STOP EXACTLY AT THE TEAM SIZE, AND THAT LOCKED OUT THE ENTIRE META-GAME.
+## `TEAM_SIZE_BY_LEAGUE` reaches 5 at Platinum and stays there to Tamers Apex, and `MAX_BARN` was
+## also 5 — so from Platinum onward every stall in the stable is a STARTER. There is no room to
+## raise a foal, no room to bring a young monster on behind an ageing one, and no room to hold a
+## bred child at all. Measured through `_probe_career_arc.tscn`: a full winning career bred ZERO
+## times, and section 4 (THE GYM) shows why that is fatal rather than merely a shame — one
+## perfectly-drilled monster RETIRES before filling the Platinum cap of 900. Above Gold the ladder
+## is mathematically gated on the potential multiplier that only breeding provides, and the barn
+## made breeding impossible in precisely those leagues. CLAUDE.md: "the ranch is not a frame
+## around the battles — it is how you build the answer you will need."
+##
+## Two more stalls, priced steeply so a deep bench is a real investment rather than a default.
+const BARN_PRICES := [0, 0, 320, 700, 1400, 2600, 4200, 6500]
+const MAX_BARN := 7
 
 var _box: VBoxContainer
 var _header: Label

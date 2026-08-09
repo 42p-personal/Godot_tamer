@@ -22,6 +22,10 @@ var team_size: int = 0
 var rival_count: int = 0
 var current_round: int = 0          # 0-based
 var rival_teams: Array = []         # Array[Array[MonsterInstance]] — one pre-built team per round
+## The drawn field, one entry per round: {"team", "fill", "champion", "label"} — see
+## `career.gd:make_cup_field()`. `rival_teams` is the team column of this, kept as its own array
+## because every existing caller (tactics_ui, arena_3d, the probes) indexes teams directly.
+var field: Array = []
 var wins: int = 0
 var round_results: Array = []       # Array[bool] — this run's per-round win/loss, in order
 var before_league_name: String = "" # league name at the moment this cup was entered (pre-promotion)
@@ -34,18 +38,27 @@ var last_result: Dictionary = {}
 ## Begin a cup: pre-generate a rival team for every round up front (deterministic off `Roster`'s
 ## own seeded rng, same call `career.gd:enter_league_tournament()` makes per iteration) so
 ## `current_rival_team()` is stable and ready before the first tactics screen even builds.
-func start(target_league_idx: int, rival_count_: int = 3) -> void:
+## ⚠️ `rival_count_` DEFAULTS TO -1 = "however many teams this league fields"
+## (`Career.rival_count_for_league`, ported from `town.ts:RIVAL_TEAM_COUNT_BY_LEAGUE` — 3 at the
+## bottom, 5 from Platinum up). An explicit count still wins, so the probes that pass 3 are
+## unaffected; only the game's own entry point asks for the league's real field.
+##
+## ⚠️ AND THE FIELD IS DRAWN, NOT ROLLED PER ROUND. `Career.make_cup_field()` seeds off
+## `cup_field_seed()`, so the teams the sign-up screen showed you are the teams you fight —
+## scouting a field that re-rolls at the door is not scouting.
+func start(target_league_idx: int, rival_count_: int = -1) -> void:
 	var idx: int = clampi(target_league_idx, 0, Career.league_index)
 	league_idx = idx
 	team_size = Career.team_size_for_league(idx)
-	rival_count = maxi(1, rival_count_)
+	rival_count = maxi(1, rival_count_) if rival_count_ > 0 else Career.rival_count_for_league(idx)
 	current_round = 0
 	wins = 0
 	round_results = []
 	rival_teams = []
 	before_league_name = Career.current_league_name()
-	for i in range(rival_count):
-		rival_teams.append(Career.make_league_rivals(team_size, idx))
+	field = Career.make_cup_field(idx, rival_count)
+	for entry in field:
+		rival_teams.append(entry["team"])
 	active = true
 
 
@@ -59,6 +72,28 @@ func current_rival_team() -> Array:
 
 func is_last_round() -> bool:
 	return current_round >= rival_count - 1
+
+
+## The drawn-field entry for the current round, or {} if the run is over. Lets the presentation
+## layer say WHO this round is — "Round 2 of the draw" vs "Ysolde Ferrum, the Anvil" — which is
+## the whole point of seating a named champion in the bracket rather than in a side skirmish.
+func current_round_entry() -> Dictionary:
+	if not active or current_round < 0 or current_round >= field.size():
+		return {}
+	return field[current_round]
+
+
+## True when the round about to be fought is the league's titleholder — always the last round.
+func is_champion_round() -> bool:
+	return bool(current_round_entry().get("champion", false))
+
+
+## A one-line billing for the current round, for any screen that wants it.
+func current_round_label() -> String:
+	var e := current_round_entry()
+	if e.is_empty():
+		return ""
+	return str(e.get("label", ""))
 
 
 func is_finished() -> bool:
@@ -82,7 +117,12 @@ func record_round_result(won: bool) -> void:
 func finish() -> Dictionary:
 	var out: Dictionary = Career.apply_tournament_outcome(league_idx, wins, rival_count)
 	out["beforeLeague"] = before_league_name
-	out["matches"] = round_results.map(func(w): return {"won": w})
+	var results: Array = []
+	for i in range(round_results.size()):
+		var champ: bool = i < field.size() and bool(field[i].get("champion", false))
+		results.append({"won": bool(round_results[i]), "champion": champ,
+			"label": str(field[i].get("label", "")) if i < field.size() else ""})
+	out["matches"] = results
 	last_result = out
 	active = false
 	return out
@@ -94,6 +134,7 @@ func cancel() -> void:
 	active = false
 	league_idx = -1
 	rival_teams = []
+	field = []
 	current_round = 0
 	wins = 0
 	round_results = []

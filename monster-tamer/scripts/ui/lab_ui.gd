@@ -1,23 +1,93 @@
-## THE LAB — cryo storage, and the freezer bill that makes it a decision.
+## THE LAB — preservation, the bill that makes it a decision, and the fusion bench.
 ##
 ## ⚠️ THE LAB'S JOB IS TO DECOUPLE THE BARN FROM THE BLOODLINE. A monster you want to breed from
 ## later does not need to occupy a barn slot in the meantime — but it does not become free either,
-## because the freezer charges rent EVERY WEEK (`town.ts:742 labUpkeepPerFrozen`).
+## because the freezer charges rent EVERY WEEK (`week_plan.gd:RENTAL_PER_FROZEN`, billed on
+## `Roster.frozen.size()`).
 ##
 ## ⚠️ WITHOUT THE RENT THIS IS AN INFINITE BARN AND THE 2-SLOT LIMIT STOPS MEANING ANYTHING. The
 ## upkeep is not flavour; it is the entire reason freezing is a trade rather than a free win.
 ##
-## ⚠️ ALL NUMBERS ARE PLACEHOLDERS, accepted as such by the user. The SHAPE is ported from
-## `town.ts`; the VALUES are due a pass at the re-baseline (the baseline is SUSPENDED).
+## ⚠️ AND THE FREEZER IS NOW THE ONLY BREEDING STOCK (`Roster.breeding_stock()`), which is what
+## `src/town.ts:787` always did and the port had dropped. That single line is what turns the Lab
+## from a parking bay into the decision at the centre of the meta-game: you must take a monster
+## OUT OF COMPETITION, while it is still winning, and accept a bill that never stops, in exchange
+## for its line. See the header of `breeding_ui.gd` for the measurements behind that change.
+##
+## ⚠️ IT IS ALSO THE HALL OF FAME, DELIBERATELY, AND NOT A TROPHY CASE. A retired champion has
+## exactly two fates here: preserved (its stats, its potential and its heirloom move stay
+## available to every future foal, for a weekly fee forever) or released (gone, permanently).
+## A trophy case is a display; a standing bill is a decision, and it is what makes a monster
+## matter for years after its last race. ⚠️ It also happens to be the only version that SURVIVES
+## A SAVE — `save_game.gd` persists `Roster.frozen` and nothing else roster-shaped, and that file
+## belongs to another workstream.
+##
+## ── FUSION (`docs/FUSION_DESIGN.md`) ─────────────────────────────────────────────────────────
+## ⚠️ FUSION EXISTED ONLY AS A DESIGN DOC AND 20 PAINTED SPECIES. Measured 2026-08-09: the Godot
+## build shipped **zero lines** of it, while `data/data.json` carries all 20 fusion species and
+## `assets/creatures/` carries a finished portrait for every one of them. The Market draws from
+## `Art.ROSTER` (20 ids, none of them fusion), so **45 of 65 species — including every fusion
+## body — were unreachable in the entire game.** This is `CLAUDE.md`'s named signature failure at
+## species scale: content authored, priced and painted, then never reached because the list
+## upstream of it still described the old world. Fusion is the only route to those 20, which is
+## what makes it a goal worth working toward rather than a second breeding button.
+##
+## ⚠️ THE SPECIES IS STEERED, NOT SPUN — and this deliberately follows the DESIGN DOC over the
+## TypeScript. `FUSION_DESIGN.md` is explicit: *"You steer the outcome by choosing which legacies
+## to sacrifice — that's the strategy, and it makes every one of the 5 reachable on purpose."*
+## The shipped `town.ts:fusionSpin` ignores that and rolls `rng()` over the pool. A random result
+## cannot be aimed, and a meta-game whose stated skill is *knowing WHICH monster to make* cannot
+## have its most expensive act be a dice roll. `_fusion_result()` below matches the parents'
+## combined stat profile against each candidate's own, deterministically.
+##
+## ⚠️ NOT PORTED, AND IT MATTERS: `FUSION_DESIGN.md` hard-caps a gen-1 fusion at Platinum until
+## the line is bred onward, and gives it TWO +20% training majors. Both live in
+## `week.gd` (`stat_cap_for`, `training_profile`), which is not this workstream's file — so
+## neither is implemented and neither is claimed anywhere on screen. Without the wall, fusion's
+## founding potential is a shortcut with no ceiling attached; that is a real balance debt to
+## settle at the re-baseline, not a silent one.
+##
+## ⚠️ ALL NUMBERS ARE PLACEHOLDERS, accepted as such by the user — the balance baseline is
+## SUSPENDED. The SHAPES are ported; the VALUES want a pass at the re-baseline.
 extends Control
 
 const UiTheme = preload("res://scripts/ui/theme.gd")
+const MonsterInstanceScript = preload("res://scripts/monster_instance.gd")
+const ClassifyLib = preload("res://scripts/classify.gd")
+const DeriveLib = preload("res://scripts/derive.gd")
+const WeekLib = preload("res://scripts/week.gd")
 
-## Weekly rent per frozen monster (`town.ts:RENTAL_PER_FROZEN`). Placeholder.
+const STATS := ["STR", "DEX", "CON", "WIS", "INT", "CHA"]
+
+## Weekly rent per frozen monster. ⚠️ MUST MATCH `week_plan.gd:RENTAL_PER_FROZEN`, which is what
+## actually bills — this constant only draws the number. They are two files because the tick and
+## the screen are two workstreams; if they ever disagree the screen is the one lying.
 const RENTAL_PER_FROZEN := 12
+
+## `town.ts:FUSION_COST`. Steep on purpose: both parents are CONSUMED.
+const FUSION_COST := 1000
+
+## `FUSION_DESIGN.md`: *"a MODERATE inherited base (~40% of the parents' averaged stats)"*.
+## Higher than breeding's 30% because breeding PRESERVES its parents and fusion EATS them.
+const FUSION_HEAD_START := 0.40
+
+## The five recipes (`town.ts:FUSION_RECIPES`), keyed by the parents' BODY types. ⚠️ Off-recipe
+## pairs are invalid on purpose — "no known fusion for this pairing" is what makes the three base
+## recipes feel like discoveries rather than a formula.
+const FUSION_RECIPES := [
+	{"pair": ["Mammal", "Reptilian"], "body": "Saurian", "potential": 1.15, "licence": ""},
+	{"pair": ["Avian", "Aquatic"], "body": "Tempestine", "potential": 1.15, "licence": ""},
+	{"pair": ["Marsupial", "Insectoid"], "body": "Broodkin", "potential": 1.15, "licence": ""},
+	{"pair": ["Mythical", "Draconic"], "body": "Primeval", "potential": 1.25, "licence": "Elite License"},
+	{"pair": ["Mythical", "Abyssal"], "body": "Primeval", "potential": 1.25, "licence": "Elite License"},
+]
 
 var _box: VBoxContainer
 var _header: Label
+var _log_label: Label
+var _fuse_a = null
+var _fuse_b = null
+var _fuse_heirloom := ""
 
 
 func _ready() -> void:
@@ -56,6 +126,8 @@ func _build() -> void:
 	page.add_child(UiTheme.heading("The Lab", 1))
 	_header = UiTheme.body_text("", "secondary")
 	page.add_child(_header)
+	_log_label = UiTheme.body_text("", "muted")
+	page.add_child(_log_label)
 	page.add_child(HSeparator.new())
 
 	var scroll := ScrollContainer.new()
@@ -77,87 +149,422 @@ func _build() -> void:
 	page.add_child(back)
 
 
+# ── fusion maths ─────────────────────────────────────────────────────────────────────────────
+
+static func recipe_for(body_a: String, body_b: String) -> Dictionary:
+	for r in FUSION_RECIPES:
+		if (r["pair"][0] == body_a and r["pair"][1] == body_b) \
+				or (r["pair"][0] == body_b and r["pair"][1] == body_a):
+			return r
+	return {}
+
+
+## Which of the recipe's five species the parents produce. ⚠️ DETERMINISTIC AND STEERABLE — see
+## the header. Each candidate has its own two-stat identity in its authored `base`; the winner is
+## the one whose SHAPE best matches the parents' combined shape. Both sides are normalised to
+## fractions first, so a pair of enormous champions and a pair of modest ones with the same
+## profile fuse to the same species — you steer with what you TRAINED, not with how much.
+##
+## ⚠️ AND IT IS NOT SPECIES-DESTINY (`CLAUDE.md`'s standing guard). The read is on the parents'
+## CURRENT, TRAINED stats, never on their species. Two Mammal+Reptilian pairs trained differently
+## give different fusions, and every one of the five is reachable from any legal pair.
+static func fusion_result(a, b) -> Dictionary:
+	var recipe := recipe_for(a.body, b.body)
+	if recipe.is_empty():
+		return {}
+	var want := {}
+	var want_total := 0.0
+	for s in STATS:
+		var v: float = float(a.stats.get(s, 0.0)) + float(b.stats.get(s, 0.0))
+		want[s] = v
+		want_total += v
+	if want_total <= 0.0:
+		want_total = 1.0
+
+	var best_id := ""
+	var best_score := -1.0
+	for sid in GameData.species_by_id:
+		var sp: Dictionary = GameData.species_by_id[sid]
+		if sp.get("body", "") != recipe["body"]:
+			continue
+		var base: Dictionary = sp.get("base", {})
+		var base_total := 0.0
+		for s in STATS:
+			base_total += float(base.get(s, 0.0))
+		if base_total <= 0.0:
+			base_total = 1.0
+		var score := 0.0
+		for s in STATS:
+			score += (float(want[s]) / want_total) * (float(base.get(s, 0.0)) / base_total)
+		# ⚠️ Deterministic tie-break by ID, never by dictionary order. `species_by_id` iterates in
+		# insertion order today; relying on that would make the fusion result depend on the order
+		# data.json happened to be written in.
+		if score > best_score + 0.000001 or (absf(score - best_score) <= 0.000001 and sid < best_id):
+			best_score = score
+			best_id = sid
+	if best_id == "":
+		return {}
+	return {"recipe": recipe, "species_id": best_id}
+
+
+## Every move either parent knows — the fusion carries ONE forward. `FUSION_DESIGN.md` gives a
+## fusion an exclusive signature move; there is no signature-move table on the Godot side, so the
+## heirloom is the analogue that exists, and it is the part the FIGHT can see.
+static func heirloom_options(a, b) -> Array:
+	var out: Array = []
+	var seen := {}
+	for parent in [a, b]:
+		for m in parent.moveset:
+			var mid: String = str(m.get("id", ""))
+			if mid == "" or seen.has(mid):
+				continue
+			seen[mid] = true
+			var stat: String = str(m.get("stat", "STR"))
+			out.append({"id": mid, "name": str(m.get("name", "?")), "stat": stat,
+				"at": float(parent.stats.get(stat, 0.0)), "from": parent.species_name})
+	return out
+
+
+## ⚠️ THE ONE BUILDER — the preview and the commit both call it, so the card cannot drift from
+## the result (the same rule `week.gd:preview_week` follows).
+func _make_fusion(a, b, slot_id: String):
+	var res := fusion_result(a, b)
+	if res.is_empty():
+		return null
+	var sp: Dictionary = GameData.species_by_id[res["species_id"]]
+	var base: Dictionary = sp.get("base", {})
+
+	var child = MonsterInstanceScript.new()
+	child.id = slot_id if slot_id != "" else "preview"
+	child.species_id = res["species_id"]
+	child.species_name = sp.get("name", res["species_id"])
+	child.body = sp.get("body", "")
+	child.flavour = sp.get("flavour", "")
+	child.innate = sp.get("innate", [])
+	child.potential = float(res["recipe"]["potential"])
+	child.generation = 1  # founds a brand-new bloodline; breeding climbs it from here
+	# Forged, not born: a fusion walks out of the Lab a year old, past the Baby training penalty.
+	child.age_weeks = WeekLib.WEEKS_PER_YEAR
+
+	child.stats = {}
+	for s in STATS:
+		var avg: float = (float(a.stats.get(s, 0.0)) + float(b.stats.get(s, 0.0))) * 0.5
+		child.stats[s] = maxf(float(base.get(s, 10.0)), round(avg * FUSION_HEAD_START))
+
+	if _fuse_heirloom != "":
+		for opt in heirloom_options(a, b):
+			if opt["id"] == _fuse_heirloom:
+				child.set_heirloom(opt["id"], opt["stat"], opt["at"])
+				break
+
+	child.class_name_ = ClassifyLib.class_for_stats(child.stats)
+	child.role = ClassifyLib.role_of_class(child.class_name_)
+	child.mana_role = ClassifyLib.mana_role_of(child.stats, child.class_name_)
+	child.basic_attack = ClassifyLib.basic_attack_for(child.stats)
+	child.max_hp = DeriveLib.max_hp(child.stats["CON"])
+	child.max_mp = DeriveLib.max_mana(child.stats["WIS"], child.stats["INT"])
+	child.hp = child.max_hp
+	child.mp = child.max_mp
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("fuse:%s+%s:%d:%s" % [a.bare_id(), b.bare_id(), Career.week, _fuse_heirloom])
+	if child.has_method("assign_moveset"):
+		child.assign_moveset(rng)
+	var prefs: Dictionary = GameData._pick_food_prefs(rng)
+	child.favourite_food = prefs["fav"]
+	child.hated_food = prefs["hated"]
+	child.log = ["forged from %s and %s — a %s." % [a.species_name, b.species_name, child.species_name]]
+	return child
+
+
+# ── the screen ───────────────────────────────────────────────────────────────────────────────
+
 func _refresh() -> void:
 	for c in _box.get_children():
 		c.queue_free()
 
-	var frozen: Array = Roster.frozen if "frozen" in Roster else []
+	var frozen: Array = Roster.frozen
 	var rent: int = frozen.size() * RENTAL_PER_FROZEN
-	_header.text = "%d gold · %d in the barn (holds %d) · %d frozen · freezer rent %dg/week" % [
+	_header.text = "%d gold · %d in the barn (holds %d) · %d preserved · freezer bill %dg/week" % [
 		Career.gold, Roster.monsters.size(), Career.barn_capacity, frozen.size(), rent]
 
+	if _fuse_a != null and not frozen.has(_fuse_a): _fuse_a = null
+	if _fuse_b != null and not frozen.has(_fuse_b): _fuse_b = null
+
 	_box.add_child(UiTheme.body_text(
-		"Freezing takes a monster out of the barn without losing it. It stops ageing and cannot train, compete or breed while frozen — and the freezer charges %dg every week it stays in." % RENTAL_PER_FROZEN,
+		"Preserving takes a monster out of the barn without losing it. It stops ageing and cannot train, compete or be fed — but it becomes BREEDING STOCK, and it is the only thing that is. The freezer charges %dg every week it stays in, for as long as you keep the line." % RENTAL_PER_FROZEN,
 		"secondary"))
 
-	if not Roster.monsters.is_empty():
+	var retirees: Array = Roster.retirees_in_barn()
+	if not retirees.is_empty():
+		_box.add_child(UiTheme.heading("Retired — occupying a barn slot", 2))
+		_box.add_child(UiTheme.body_text(
+			"A retiree cannot train, feed or compete. Preserve it and its stats, its potential and its heirloom stay available to every foal you ever breed — for %dg a week, forever. Release it and the line ends here." % RENTAL_PER_FROZEN,
+			"muted"))
+		for mi in retirees:
+			_box.add_child(_barn_row(mi))
+
+	var active: Array = Roster.monsters.filter(func(m): return not m.retired)
+	if not active.is_empty():
 		_box.add_child(UiTheme.heading("In the barn", 2))
-	for i in range(Roster.monsters.size()):
-		_box.add_child(_barn_row(i))
+	for mi in active:
+		_box.add_child(_barn_row(mi))
 
 	if not frozen.is_empty():
-		_box.add_child(UiTheme.heading("In the freezer", 2))
-	for i in range(frozen.size()):
-		_box.add_child(_frozen_row(i))
+		_box.add_child(UiTheme.heading("Preserved", 2))
+	for mi in frozen:
+		_box.add_child(_frozen_row(mi))
+
+	_box.add_child(HSeparator.new())
+	_box.add_child(_fusion_bench())
 
 
-func _barn_row(i: int) -> Control:
-	var mi = Roster.monsters[i]
+func _kit_line(mi) -> String:
+	var names: Array = []
+	for m in mi.moveset:
+		names.append(str(m.get("name", "?")))
+	return "kit: " + (", ".join(names) if not names.is_empty() else "—")
+
+
+func _barn_row(mi) -> Control:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	panel.add_child(col)
 
-	col.add_child(UiTheme.heading("%s — %s · potential ×%.2f" % [
-		mi.species_name, mi.class_name_, mi.potential], 3))
+	col.add_child(UiTheme.heading("%s — %s · potential ×%.2f%s" % [
+		mi.species_name, mi.class_name_, mi.potential, " · RETIRED" if mi.retired else ""], 3))
+	col.add_child(UiTheme.body_text(mi.lineage_label(), "muted"))
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	col.add_child(row)
 
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 34)
 	btn.focus_mode = Control.FOCUS_ALL
-	# ⚠️ Never freeze the last monster — an empty barn cannot advance a week or enter a cup, and
-	# the player would have to pay rent to get back to a playable state.
-	if Roster.monsters.size() <= 1:
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# ⚠️ Never freeze the last ACTIVE monster — an empty barn cannot advance a week or enter a
+	# cup, and the player would then be paying rent to get back to a playable state. A retiree is
+	# the exception: a barn holding only retirees is already stuck, and preserving the last one is
+	# how the player gets out of it (`Roster.preserve` enforces the same rule).
+	if Roster.monsters.size() <= 1 and not mi.retired:
 		btn.disabled = true
 		btn.text = "Your only monster — the barn cannot be left empty"
 	else:
-		btn.text = "Freeze — %dg/week thereafter" % RENTAL_PER_FROZEN
+		btn.text = "Preserve — %dg/week thereafter, breedable forever" % RENTAL_PER_FROZEN
 		btn.pressed.connect(func():
-			if not ("frozen" in Roster):
-				return
-			Roster.frozen.append(mi)
-			Roster.monsters.remove_at(i)
-			Roster.selected_index = 0
+			if Roster.preserve(mi):
+				_log_label.text = "%s preserved. The bill starts next week." % mi.species_name
 			_refresh())
-	col.add_child(btn)
+	row.add_child(btn)
+
+	if mi.retired:
+		var rel := Button.new()
+		rel.custom_minimum_size = Vector2(0, 34)
+		rel.focus_mode = Control.FOCUS_ALL
+		rel.text = "Release — the line ends"
+		rel.pressed.connect(func():
+			if Roster.release(mi):
+				_log_label.text = "%s released. Its potential and its heirloom are gone." % mi.species_name
+			_refresh())
+		row.add_child(rel)
 	return panel
 
 
-func _frozen_row(i: int) -> Control:
-	var frozen: Array = Roster.frozen
-	var mi = frozen[i]
+func _frozen_row(mi) -> Control:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.GOLD))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	panel.add_child(col)
 
-	col.add_child(UiTheme.heading("%s — %s · potential ×%.2f" % [
-		mi.species_name, mi.class_name_, mi.potential], 3))
-	col.add_child(UiTheme.body_text("Frozen. Not ageing, not training, costing %dg a week." % RENTAL_PER_FROZEN, "muted"))
+	col.add_child(UiTheme.heading("%s — %s · potential ×%.2f%s" % [
+		mi.species_name, mi.class_name_, mi.potential,
+		" · enshrined" if mi.retired else ""], 3))
+	col.add_child(UiTheme.body_text("%s · %d of 2 matings used" % [
+		mi.lineage_label(), int(mi.get_meta("children", 0))], "secondary"))
+	col.add_child(UiTheme.body_text(_kit_line(mi), "muted"))
+	col.add_child(UiTheme.body_text(
+		"Not ageing, not training, costing %dg a week." % RENTAL_PER_FROZEN, "muted"))
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	col.add_child(row)
 
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 34)
 	btn.focus_mode = Control.FOCUS_ALL
-	if Roster.monsters.size() >= Career.barn_capacity:
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if mi.retired:
+		btn.disabled = true
+		btn.text = "Enshrined — it has raced its last, but its line has not"
+	elif Roster.monsters.size() >= Career.barn_capacity:
 		btn.disabled = true
 		btn.text = "Barn is full (%d of %d) — extend it at the Shop" % [
 			Roster.monsters.size(), Career.barn_capacity]
 	else:
 		btn.text = "Thaw into the barn"
 		btn.pressed.connect(func():
-			Roster.monsters.append(mi)
-			Roster.frozen.remove_at(i)
+			Roster.thaw(mi, Career.barn_capacity)
 			_refresh())
+	row.add_child(btn)
+
+	var pick := Button.new()
+	pick.custom_minimum_size = Vector2(0, 34)
+	pick.focus_mode = Control.FOCUS_ALL
+	if mi == _fuse_a or mi == _fuse_b:
+		pick.text = "✓ on the fusion bench"
+		pick.pressed.connect(func():
+			if _fuse_a == mi: _fuse_a = null
+			elif _fuse_b == mi: _fuse_b = null
+			_fuse_heirloom = ""
+			_refresh())
+	else:
+		pick.text = "To the fusion bench"
+		pick.pressed.connect(func():
+			if _fuse_a == null: _fuse_a = mi
+			elif _fuse_b == null: _fuse_b = mi
+			else: _fuse_b = mi
+			_fuse_heirloom = ""
+			_refresh())
+	row.add_child(pick)
+
+	var rel := Button.new()
+	rel.custom_minimum_size = Vector2(0, 34)
+	rel.focus_mode = Control.FOCUS_ALL
+	rel.text = "Release — stop the bill"
+	rel.pressed.connect(func():
+		if Roster.release(mi):
+			_log_label.text = "%s released. %dg/week saved, the line ended." % [
+				mi.species_name, RENTAL_PER_FROZEN]
+		_refresh())
+	row.add_child(rel)
+	return panel
+
+
+func _fusion_bench() -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	panel.add_child(col)
+
+	col.add_child(UiTheme.heading("The fusion bench", 2))
+	col.add_child(UiTheme.body_text(
+		"Two preserved monsters, CONSUMED, become one of twenty species that exist nowhere else — not in the market, not in the wild. The pairing's BODY TYPES decide the family; the stats you trained into them decide which of the five you get.",
+		"secondary"))
+
+	var known: Array = []
+	for r in FUSION_RECIPES:
+		var gate: String = str(r["licence"])
+		var held: bool = gate == "" or Career.holds_licence(gate)
+		known.append("%s + %s → %s%s" % [r["pair"][0], r["pair"][1], r["body"],
+			"" if held else " (needs the %s)" % gate])
+	col.add_child(UiTheme.body_text("Known recipes: " + " · ".join(known), "muted"))
+
+	if _fuse_a == null or _fuse_b == null or _fuse_a == _fuse_b:
+		col.add_child(UiTheme.body_text(
+			"Put two preserved monsters on the bench to see what they would make.", "muted"))
+		return panel
+
+	var res := fusion_result(_fuse_a, _fuse_b)
+	if res.is_empty():
+		col.add_child(UiTheme.body_text(
+			"No known fusion for %s + %s." % [_fuse_a.body, _fuse_b.body], "primary"))
+		return panel
+
+	var recipe: Dictionary = res["recipe"]
+	var gate: String = str(recipe["licence"])
+	var child = _make_fusion(_fuse_a, _fuse_b, "")
+
+	# The heirloom the fusion carries forward — the one thing of its parents that survives them.
+	var opts: Array = [{"value": "", "text": "carry nothing forward"}]
+	for o in heirloom_options(_fuse_a, _fuse_b):
+		opts.append({"value": o["id"], "text": o["name"],
+			"tip": "%s's — dormant until %s %d" % [o["from"], o["stat"], int(o["at"])]})
+	var row_label := UiTheme.body_text("One move survives the fusion", "secondary")
+	col.add_child(row_label)
+	var chips := HBoxContainer.new()
+	chips.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	for o in opts:
+		var b := Button.new()
+		b.text = ("● " if o["value"] == _fuse_heirloom else "") + str(o["text"])
+		b.tooltip_text = str(o.get("tip", ""))
+		b.custom_minimum_size = Vector2(0, 32)
+		b.focus_mode = Control.FOCUS_ALL
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var v = o["value"]
+		b.pressed.connect(func(): _fuse_heirloom = v; _refresh())
+		chips.add_child(b)
+	col.add_child(chips)
+
+	col.add_child(HSeparator.new())
+	col.add_child(UiTheme.heading("It would forge: %s — %s, a %s" % [
+		child.species_name, child.class_name_, child.body], 3))
+	var stat_bits: Array = []
+	for s in STATS:
+		stat_bits.append("%s %d" % [s, int(child.stats[s])])
+	col.add_child(UiTheme.body_text(" · ".join(stat_bits), "primary"))
+	col.add_child(UiTheme.body_text("%d HP · %d MP · %s" % [
+		child.max_hp, child.max_mp, _kit_line(child)], "secondary"))
+	var why := UiTheme.body_text(
+		"Founds a new bloodline at potential ×%.2f — a wild line starts at ×1.00 and climbs ×0.10 a generation, so this is roughly %d generations of breeding, bought outright." % [
+			child.potential, int(round((child.potential - 1.0) / 0.10))], "primary")
+	why.add_theme_color_override("font_color", UiTheme.GOLD)
+	col.add_child(why)
+	col.add_child(UiTheme.body_text(
+		"Steered by the parents' trained stats — a different pair of %s and %s, trained differently, forges a different one of the five." % [
+			_fuse_a.body, _fuse_b.body], "muted"))
+
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(0, 40)
+	btn.focus_mode = Control.FOCUS_ALL
+	if gate != "" and not Career.holds_licence(gate):
+		btn.disabled = true
+		btn.text = "Requires the %s — buy it at the Shop" % gate
+	elif Career.gold < FUSION_COST:
+		btn.disabled = true
+		btn.text = "Need %d more gold" % (FUSION_COST - Career.gold)
+	elif Roster.monsters.size() >= Career.barn_capacity:
+		btn.disabled = true
+		btn.text = "Barn is full (%d of %d) — extend it at the Shop" % [
+			Roster.monsters.size(), Career.barn_capacity]
+	else:
+		btn.text = "Fuse — %dg, and both parents are consumed" % FUSION_COST
+		btn.pressed.connect(_on_fuse)
 	col.add_child(btn)
 	return panel
+
+
+func _on_fuse() -> void:
+	var a = _fuse_a
+	var b = _fuse_b
+	if a == null or b == null or a == b:
+		return
+	var res := fusion_result(a, b)
+	if res.is_empty() or Roster.monsters.size() >= Career.barn_capacity:
+		return
+	var gate: String = str(res["recipe"]["licence"])
+	if gate != "" and not Career.holds_licence(gate):
+		return
+	if not Career.spend_gold(FUSION_COST):
+		return
+
+	var child = _make_fusion(a, b, Roster.next_slot_id())
+	if child == null:
+		Career.add_gold(FUSION_COST)  # never take the gold without giving the monster
+		return
+	# ⚠️ CONSUMED — and the rent stops with them. That is the fusion trade in one line: breeding
+	# keeps its parents and their standing bill, fusion spends both and buys the bill out.
+	Roster.release(a)
+	Roster.release(b)
+	Roster.monsters.append(child)
+	_fuse_a = null
+	_fuse_b = null
+	_fuse_heirloom = ""
+	_log_label.text = "%s forged — a %s at potential ×%.2f. %s and %s are gone." % [
+		child.species_name, child.body, child.potential, a.species_name, b.species_name]
+	_log_label.add_theme_color_override("font_color", UiTheme.GOLD)
+	_refresh()

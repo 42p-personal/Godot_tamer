@@ -22,6 +22,27 @@ const UiTheme = preload("res://scripts/ui/theme.gd")
 const BASE_PURSE := 220
 const PURSE_PER_LEAGUE := 140
 
+## ⚠️ ENTRY COSTS GOLD, AND THAT IS THE POINT. Before this, a cup was free to enter, free to lose
+## and free to re-enter in the same breath — the difficulty curve could not function as pacing
+## because failure cost the player nothing but a click. A fee makes a cup a COMMITMENT you weigh
+## against the field you can see, which is what turns "enter" into a decision.
+##
+## ⚠️ "~14% OF THE PURSE" WAS THE INTENT AND IT IS NOT WHAT THE PLAYER PAYS. The fee is charged on
+## every ENTRY; the purse is paid on PLACEMENT, and placement pays 0 for anything below third. A
+## real career measured through `_probe_career_arc.tscn` wins 51% of its rounds and 44% of its
+## cups outright, so at 30 + 22/league the fees came to **44% of all purse income over a full
+## career** — three times the design figure. The arc autopilot ran 151 weeks at Platinum without
+## entering a single cup: it could not simultaneously afford the fees, the fifth barn stall and a
+## fifth monster, and Platinum is exactly where team size steps to five. That is a fee that stops
+## the ladder rather than pricing it.
+##
+## Halved. It is still a real commitment (a lost Apex run costs 125g against a 1620g purse) and
+## still stops free re-entry, but it is sized against the fee a LOSING player actually pays
+## rather than the one a winning player notices. ⚠️ Re-measure at the deliberate re-baseline —
+## this is one increment against a suspended baseline, judged on "does the ladder complete".
+const BASE_FEE := 15
+const FEE_PER_LEAGUE := 11
+
 ## Punching down pays less — index is how many leagues BELOW your frontier you entered.
 const REWARD_BY_DROP := [1.0, 0.5, 0.2]
 
@@ -112,6 +133,18 @@ func _purse_for(idx: int) -> int:
 	return int(round(float(base) * float(REWARD_BY_DROP[drop])))
 
 
+## ⚠️ THE BOTTOM RUNG IS FREE TO A BROKE PLAYER, AND THAT IS A SOFTLOCK FIX, NOT CHARITY.
+## Cup purses are effectively the only gold SOURCE in the build (`grep add_gold`: this screen, a
+## market sell-back, a cancelled fusion refund). Charge for every entry unconditionally and a
+## player with one monster and no gold has no legal move left. The Wood ring waives its fee when
+## you cannot pay it — you can always get back on the ladder, and only at the bottom of it.
+func _fee_for(idx: int) -> int:
+	var fee: int = BASE_FEE + FEE_PER_LEAGUE * idx
+	if idx == 0 and Career.gold < fee:
+		return 0
+	return fee
+
+
 func _cup_card(idx: int) -> Control:
 	var panel := PanelContainer.new()
 	var is_frontier: bool = idx == Career.league_index
@@ -124,19 +157,46 @@ func _cup_card(idx: int) -> Control:
 
 	var lname: String = Career.league_at(idx).get("name", "?")
 	var team_size: int = Career.team_size_for_league(idx)
+	var rounds: int = Career.rival_count_for_league(idx)
+	var cap: int = int(Career.stat_cap_for_league(idx))
 	var have: int = Roster.monsters.size()
+	var fee: int = _fee_for(idx)
 
 	col.add_child(UiTheme.heading("%s Cup%s" % [lname, "  ·  your league" if is_frontier else ""], 3))
 	col.add_child(UiTheme.body_text(
-		"%dv%d  ·  three rivals  ·  stat ceiling %d  ·  purse %dg" % [
-			team_size, team_size, int(Career.stat_cap_for_league(idx)), _purse_for(idx)], "secondary"))
+		"%dv%d  ·  %d teams in the draw  ·  stat ceiling %d  ·  entry %dg  ·  winner's purse %dg" % [
+			team_size, team_size, rounds, cap, fee, _purse_for(idx)], "secondary"))
+
+	# ── THE SCOUT REPORT ──────────────────────────────────────────────────────
+	# ⚠️ THIS IS THE DECISION. `CLAUDE.md`: "Preparation is the skill; observation is the reward"
+	# and "training and breeding are strategy, not maintenance". None of that is true if the
+	# player cannot see what they are training FOR. The field is drawn off `Career.cup_field_seed()`
+	# — stable for the game-month — so the arc shown here is the arc actually fought: scout it, go
+	# and train against it, come back to the same opponents.
+	var opener := Career.field_fill(0, rounds, idx)
+	var champ_fill := Career.field_fill(rounds - 1, rounds, idx)
+	col.add_child(UiTheme.body_text(
+		"The draw climbs: round 1 fields a team at ~%d%% of the %s ceiling, the final at ~%d%%." % [
+			int(round(opener * 100.0)), lname, int(round(champ_fill * 100.0))], "secondary"))
+
+	var champ: Dictionary = Career.champion_for(idx)
+	var beaten: bool = Career.has_beaten_champion(idx)
+	var champ_line := UiTheme.body_text("Title held by %s, %s. %s" % [
+		str(champ.get("name", "")), str(champ.get("title", "")), str(champ.get("read", ""))], "primary")
+	champ_line.add_theme_color_override("font_color", UiTheme.GOLD if not beaten else UiTheme.TEXT_SECONDARY)
+	champ_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(champ_line)
+	if beaten:
+		col.add_child(UiTheme.body_text(
+			"You have taken this title off them before — they have trained since.", "muted"))
 
 	# ⚠️ State the sweep rule BEFORE entry. Promotion on a sweep is a hard gate and the player
 	# must be able to weigh it, not discover it by losing.
 	if is_frontier:
 		var promo := UiTheme.body_text(
-			"Win all three and you are promoted. Lose one and you keep the purse but not the rank.", "primary")
+			"Beat all %d and the title — and the rank — are yours. Fall short and you place, and are paid to place." % rounds, "primary")
 		promo.add_theme_color_override("font_color", UiTheme.GOLD)
+		promo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(promo)
 	else:
 		col.add_child(UiTheme.body_text(
@@ -149,8 +209,14 @@ func _cup_card(idx: int) -> Control:
 	if have < team_size:
 		btn.disabled = true
 		btn.text = "Need %d monsters — you have %d" % [team_size, have]
+	elif Career.gold < fee:
+		btn.disabled = true
+		btn.text = "Entry is %dg — you have %dg" % [fee, Career.gold]
+	elif fee <= 0:
+		btn.text = "Enter the %s Cup  ·  entry waived" % lname
+		btn.pressed.connect(_on_enter.bind(idx))
 	else:
-		btn.text = "Enter the %s Cup" % lname
+		btn.text = "Enter the %s Cup  ·  %dg" % [lname, fee]
 		btn.pressed.connect(_on_enter.bind(idx))
 	col.add_child(btn)
 	return panel
@@ -161,8 +227,16 @@ func _cup_card(idx: int) -> Control:
 ## out (tactics -> arena3d, `rival_count` times) before landing back on this screen. The three
 ## fights headless-in-a-for-loop that used to happen here now only happen via
 ## `Career.enter_league_tournament()` directly, which the QA harness and sandbox still call.
+## ⚠️ THE FEE IS CHARGED HERE AND IS NOT REFUNDED. The button is disabled when it is unaffordable,
+## so the only caller that can reach this without the gold is a direct scripted call (the probes);
+## `spend_gold()` refuses rather than going negative, and the warning makes that loud instead of
+## silent. `rival_count` is NOT passed — the league's own field size is the default now.
 func _on_enter(idx: int) -> void:
-	CupRun.start(idx, 3)
+	var fee: int = _fee_for(idx)
+	if not Career.spend_gold(fee):
+		push_warning("tournament: entered the %s Cup without paying the %dg fee (gold %d)" % [
+			Career.league_at(idx).get("name", "?"), fee, Career.gold])
+	CupRun.start(idx)
 	get_tree().change_scene_to_file("res://scenes/tactics.tscn")
 
 
@@ -178,7 +252,13 @@ func _show_result(out: Dictionary) -> void:
 
 	var wins: int = int(out.get("wins", 0))
 	var rival_count: int = maxi(1, int(out.get("rivalCount", 3)))
-	var purse: int = int(round(float(_purse_for(idx)) * (float(wins) / float(rival_count))))
+	## ⚠️ PAID BY PLACEMENT (100/65/40/0), not by win fraction — `town.ts:PLACEMENT_REWARD_FRACTION`,
+	## which never crossed into the port. It is the difference between a cup being a coin-flip on
+	## the whole purse and a cup being a result you can be NEARLY good enough for: losing only to
+	## the champion still pays for the trip, finishing mid-table pays nothing.
+	var placement: int = int(out.get("placement", Career.placement_for(wins, rival_count)))
+	var frac: float = float(out.get("placementFraction", Career.placement_reward_fraction(placement)))
+	var purse: int = int(round(float(_purse_for(idx)) * frac))
 	Career.add_gold(purse)
 
 	for c in _result_box.get_children():
@@ -190,16 +270,40 @@ func _show_result(out: Dictionary) -> void:
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	panel.add_child(col)
 
-	col.add_child(UiTheme.heading("%s Cup — %d of %d" % [str(out.get("league", "")), wins, rival_count], 2))
+	col.add_child(UiTheme.heading("%s Cup — %s, %d of %d" % [
+		str(out.get("league", "")), Career.placement_label(placement), wins, rival_count], 2))
 
 	var matches: Array = out.get("matches", [])
 	for i in range(matches.size()):
 		var won: bool = bool(matches[i].get("won", false))
-		var line := UiTheme.body_text("Round %d — %s" % [i + 1, "WON" if won else "lost"], "primary")
+		var was_champ: bool = bool(matches[i].get("champion", false))
+		var who: String = str(matches[i].get("label", ""))
+		var line := UiTheme.body_text("%s%s — %s" % [
+			"THE TITLE BOUT · " if was_champ else "Round %d · " % (i + 1),
+			who if who != "" else "the draw", "WON" if won else "lost"], "primary")
 		line.add_theme_color_override("font_color", UiTheme.SAFE if won else UiTheme.TEXT_SECONDARY)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(line)
 
-	var purse_line := UiTheme.body_text("Purse: %d gold" % purse, "primary")
+	# ⚠️ The named champion is the point of the climb, so say what happened to them BEFORE the
+	# money. A first title reads differently from a defence, and both read differently from a loss.
+	var champ: Dictionary = out.get("champion", {})
+	if not champ.is_empty():
+		var champ_msg := ""
+		if bool(out.get("firstTitle", false)):
+			champ_msg = "You have taken the title off %s, %s." % [str(champ.get("name", "")), str(champ.get("title", ""))]
+		elif bool(out.get("championBeaten", false)):
+			champ_msg = "%s falls again. The title stays with you." % str(champ.get("name", ""))
+		else:
+			champ_msg = "%s keeps the title. Come back when you can answer them." % str(champ.get("name", ""))
+		var cl := UiTheme.body_text(champ_msg, "primary")
+		cl.add_theme_color_override("font_color",
+			UiTheme.GOLD if bool(out.get("championBeaten", false)) else UiTheme.TEXT_SECONDARY)
+		cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(cl)
+
+	var purse_line := UiTheme.body_text("Purse: %d gold  (%s pays %d%%)" % [
+		purse, Career.placement_label(placement), int(round(frac * 100.0))], "primary")
 	purse_line.add_theme_color_override("font_color", UiTheme.GOLD)
 	col.add_child(purse_line)
 
@@ -216,7 +320,7 @@ func _show_result(out: Dictionary) -> void:
 			% int(Career.current_stat_cap()), "secondary"))
 	elif not bool(out.get("swept", false)):
 		col.add_child(UiTheme.body_text(
-			"No promotion — a cup must be swept. Train, then come back.", "secondary"))
+			"No promotion — the title, and the rank, need the whole draw. Train, then come back.", "secondary"))
 
 	_result_box.add_child(panel)
 

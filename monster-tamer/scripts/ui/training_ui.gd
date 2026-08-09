@@ -13,6 +13,19 @@
 ## which floors at 0.5 and NEVER blocks a drill — at zero stamina you keep training at half rate,
 ## in this build and in the React one. The real ceiling is the league cap
 ## (`game.ts:361 statCapFor`), which is why the bars here read against it and never `/100`.
+##
+## ⚠️ 2026-08-09 — THIS SCREEN WAS SHOWING THE WRONG NUMBERS, AND THAT WAS THE REAL REASON THE
+## WEEK WAS NOT A DECISION. Every card printed the drill's AUTHORED face value ("+12 STR · −4
+## DEX"), which is the one number the tick never uses. Species aptitude (×0.8–×1.2), life stage
+## (×0.5 Baby / ×1.35 Teen / ×1.15 grown / ×0.8 Elder), the stamina bracket (down to ×0.5), the
+## happiness-weighted roll, the training food's boost and the league-cap clamp were ALL invisible
+## — so two cards that read identically could be worth 8 and 21. CLAUDE.md is explicit that the
+## Ranch shows a LIVE roll (`previewWeekEffects`) precisely because it is exact; that behaviour
+## did not survive the port and this restores it.
+##
+## ⚠️ AND IT IS DRAWN FROM `week.gd:preview_week`, WHICH RUNS THE REAL TICK ON A CLONE. Not a
+## second estimate. There is deliberately no arithmetic in this file that could drift from the
+## tick — the number on the button IS the number that will land.
 extends Control
 
 const UiTheme = preload("res://scripts/ui/theme.gd")
@@ -20,6 +33,7 @@ const WeekLib = preload("res://scripts/week.gd")
 
 var stat_box: VBoxContainer
 var header_label: Label
+var ladder_label: Label
 var plan_label: Label
 
 
@@ -48,6 +62,11 @@ func _build_ui() -> void:
 	page.add_child(UiTheme.heading("Training", 1))
 	header_label = UiTheme.body_text("", "secondary")
 	page.add_child(header_label)
+
+	# The ladder line — what the climb is about to ask of this monster. See `_refresh`.
+	ladder_label = UiTheme.body_text("", "secondary")
+	ladder_label.add_theme_color_override("font_color", UiTheme.GOLD)
+	page.add_child(ladder_label)
 
 	plan_label = UiTheme.body_text("Nothing booked this week.", "primary")
 	plan_label.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
@@ -78,6 +97,46 @@ func _cap() -> float:
 	return Career.current_stat_cap() if has_node("/root/Career") else 300.0
 
 
+func _league_cap_next() -> float:
+	if not has_node("/root/Career"):
+		return 0.0
+	var nxt: int = Career.league_index + 1
+	if nxt >= Career.leagues.size():
+		return 0.0
+	return Career.stat_cap_for_league(nxt)
+
+
+## The LIVE result of booking `action` for `m` this week, food included — straight off the tick.
+## ⚠️ Feeding resolves BEFORE the activity, so the booked food's happiness/stamina swing is
+## already folded into the roll this returns. That is the whole reason food and drill have to be
+## chosen together rather than as two errands.
+func _preview(m, action: Dictionary) -> Dictionary:
+	var p: Dictionary = WeekPlan.plan_for(m.id)
+	var food: String = str(p.get("food", ""))
+	var forage: bool = bool(p.get("forage", false))
+	var gold: int = Career.gold if has_node("/root/Career") else 0
+	var league: String = _league_name()
+	return WeekLib.preview_week(m, action, gold, 0, food, forage, WeekPlan.price_of(food),
+		_cap(), league)
+
+
+## "+18 STR  ·  −5 DEX" from a preview's statDeltas, in a stable stat order.
+func _delta_text(deltas: Dictionary) -> String:
+	var bits: Array = []
+	for stat in ["STR", "DEX", "CON", "WIS", "INT", "CHA"]:
+		var d: float = float(deltas.get(stat, 0.0))
+		if absf(d) >= 0.5:
+			bits.append("%+d %s" % [int(round(d)), stat])
+	return "  ·  ".join(PackedStringArray(bits))
+
+
+func _net_of(deltas: Dictionary) -> float:
+	var n := 0.0
+	for stat in deltas:
+		n += float(deltas[stat])
+	return n
+
+
 func _league_name() -> String:
 	return Career.current_league_name() if has_node("/root/Career") else "current league"
 
@@ -88,12 +147,29 @@ func _refresh() -> void:
 		c.queue_free()
 	if m == null:
 		header_label.text = "No monster selected — buy one at the Market first."
+		ladder_label.text = ""
 		plan_label.text = ""
 		return
 
 	header_label.text = "%s — %s · stamina %d/100 · happiness %d/10 · %s ceiling %d" % [
 		m.species_name, m.class_name_, int(round(m.stamina)), m.happiness,
 		_league_name(), int(round(_cap()))]
+
+	# ⚠️ TRAIN *FOR* SOMETHING. The ladder is the spine of the game (CLAUDE.md) and this screen
+	# had no idea it existed — a week planned against no target is maintenance by construction.
+	# This line names the wall the build is currently sitting against and the one after it.
+	var nxt := _league_cap_next()
+	var lead_stat := ""
+	var lead_val := -1.0
+	for stat in ["STR", "DEX", "CON", "WIS", "INT", "CHA"]:
+		if float(m.stats.get(stat, 0.0)) > lead_val:
+			lead_val = float(m.stats.get(stat, 0.0)); lead_stat = str(stat)
+	var ladder := "Leading stat %s %d/%d." % [lead_stat, int(round(lead_val)), int(round(_cap()))]
+	if lead_val >= _cap() - 0.5:
+		ladder += "  AT THE CEILING — further %s work is wasted until you win promotion." % lead_stat
+	elif nxt > 0.0:
+		ladder += "  Next league lifts the ceiling to %d." % int(round(nxt))
+	ladder_label.text = ladder
 
 	_refresh_plan_label(m)
 
@@ -184,12 +260,19 @@ func _food_card(m) -> Control:
 func _refresh_plan_label(m) -> void:
 	var p: Dictionary = WeekPlan.plan_for(m.id)
 	var act: String = str(p.get("activity", "rest"))
+	var food: String = str(p.get("food", ""))
+	var meal := "nothing booked — it will go hungry"
+	if bool(p.get("forage", false)):
+		meal = "foraging"
+	elif food != "":
+		meal = "%s (%dg)" % [str(WeekLib.food_by_id(food).get("name", food)), WeekPlan.price_of(food)]
 	if act == "rest":
-		plan_label.text = "Booked this week: REST. Stamina recovers; no stat gain."
+		plan_label.text = "Booked: REST, eating %s. Stamina recovers; no stat gain." % meal
 		plan_label.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	else:
 		var d: Dictionary = WeekLib.drill_by_id(act)
-		plan_label.text = "Booked this week: %s. Nothing is spent until you Advance Week." % str(d.get("name", act))
+		plan_label.text = "Booked: %s, eating %s. Nothing is spent until you Advance Week." % [
+			str(d.get("name", act)), meal]
 		plan_label.add_theme_color_override("font_color", UiTheme.GOLD)
 
 
@@ -200,10 +283,22 @@ func _rest_card(m) -> Control:
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	panel.add_child(col)
 
-	col.add_child(UiTheme.heading("Rest", 3))
+	var pv: Dictionary = _preview(m, {"kind": "rest"})
+	col.add_child(UiTheme.heading("Rest   → %+d stamina" % int(round(float(pv.get("staminaDelta", 0.0)))), 3))
 	col.add_child(UiTheme.body_text(
 		"Recovers stamina. No stat gain. ⚠️ Below 30 stamina every drill pays HALF, so a rest week often earns more than a tired drill.",
 		"secondary"))
+	# Rest is the ONLY thing that mends a monster between cups — say so with the actual numbers,
+	# because "rest or train" is the one weekly choice the player will face every single week.
+	var mend: Array = []
+	if absf(float(pv.get("hpDelta", 0.0))) >= 0.5:
+		mend.append("%+d HP" % int(round(float(pv["hpDelta"]))))
+	if absf(float(pv.get("mpDelta", 0.0))) >= 0.5:
+		mend.append("%+d MP" % int(round(float(pv["mpDelta"]))))
+	if not mend.is_empty():
+		var ml := UiTheme.body_text("  ·  ".join(PackedStringArray(mend)), "primary")
+		ml.add_theme_color_override("font_color", UiTheme.SAFE)
+		col.add_child(ml)
 
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_ALL
@@ -229,8 +324,6 @@ func _drill_card(m, d: Dictionary) -> Control:
 	var kind: String = str(d.get("kind", "basic"))
 	var cap := _cap()
 
-	col.add_child(UiTheme.heading(str(d["name"]), 3))
-
 	# ⚠️ A DRILL'S PAIRED COST LIVES INSIDE `gains` AS A NEGATIVE, not in a separate `costs` key —
 	# `week.gd`'s intensive rows read {"STR": +12, "DEX": -4}. Split them here, or the paired stat
 	# renders as "+-4 DEX" and gets a progress bar it should never have.
@@ -242,31 +335,59 @@ func _drill_card(m, d: Dictionary) -> Control:
 		else:
 			lowered.append(stat)
 
+	# ⚠️ THE LIVE ROLL, not the face value. See the header — this is the restored behaviour.
+	var pv: Dictionary = _preview(m, {"kind": "train", "drillId": drill_id})
+	var deltas: Dictionary = pv.get("statDeltas", {})
+	var net := _net_of(deltas)
+
+	var title := UiTheme.heading("%s   → %+d net" % [str(d["name"]), int(round(net))], 3)
+	col.add_child(title)
+
 	# The bar for the stat this drill actually raises, read against the LEAGUE CAP — never /100.
 	for stat in raised:
 		var cur: float = float(m.stats.get(stat, 0.0))
 		col.add_child(UiTheme.stat_bar(str(stat), cur, cap, UiTheme.GOLD, 34))
 
-	# What it pays and what it costs — stated before it is booked.
-	var costs: Array = []
-	for stat in raised:
-		costs.append("+%d %s" % [int(round(float(gains[stat]))), stat])
-	for stat in lowered:
-		costs.append("−%d %s" % [int(round(absf(float(gains[stat])))), stat])
-	costs.append("−%d stamina" % int(round(WeekLib.drill_stamina(kind))))
-	col.add_child(UiTheme.body_text("  ·  ".join(PackedStringArray(costs)), "secondary"))
+	var live := _delta_text(deltas)
+	var live_lbl := UiTheme.body_text(
+		("%s  ·  −%d stamina" % [live, int(round(WeekLib.drill_stamina(kind)))]) if live != ""
+		else "No movement this week — −%d stamina for nothing." % int(round(WeekLib.drill_stamina(kind))),
+		"primary")
+	live_lbl.add_theme_color_override("font_color", UiTheme.GOLD if net > 0.0 else UiTheme.CAUTION)
+	col.add_child(live_lbl)
 
-	# ⚠️ Aptitude is computed and was invisible in the UI — say why a drill suits THIS monster.
+	# The face value stays on the card, quietly, so the player can SEE the gap between what the
+	# drill is written to do and what it does for THIS monster THIS week. That gap is the lesson.
+	var face: Array = []
 	for stat in raised:
+		face.append("+%d %s" % [int(round(float(gains[stat]))), stat])
+	for stat in lowered:
+		face.append("−%d %s" % [int(round(absf(float(gains[stat])))), stat])
+	col.add_child(UiTheme.body_text("on paper: %s" % "  ".join(PackedStringArray(face)), "muted"))
+
+	# ⚠️ WHY the live number differs from the face value. Without this the preview is a magic
+	# number and the player learns nothing they can carry to the next monster — and "knowledge the
+	# player has earned" is the entire design bar for this screen.
+	for stat in raised:
+		var reasons: Array = []
 		var bonus: float = WeekLib.stat_training_bonus(m, str(stat))
 		if bonus > 1.05:
-			var tag := UiTheme.body_text("Natural aptitude for %s — trains ×%.1f faster." % [stat, bonus], "primary")
-			tag.add_theme_color_override("font_color", UiTheme.SAFE)
-			col.add_child(tag)
+			reasons.append("natural aptitude ×%.2f" % bonus)
 		elif bonus < 0.95:
-			var tag2 := UiTheme.body_text("Struggles with %s — trains ×%.1f." % [stat, bonus], "primary")
-			tag2.add_theme_color_override("font_color", UiTheme.CAUTION)
-			col.add_child(tag2)
+			reasons.append("trains against the grain ×%.2f" % bonus)
+		var focus: float = WeekLib.focus_cost(m, str(stat))
+		if focus < 0.995:
+			reasons.append("%s already leads this build — focus cost ×%.2f" % [stat, focus])
+		var fmult: float = WeekLib.food_train_mult(str(WeekPlan.plan_for(m.id).get("food", "")), str(stat))
+		if fmult > 1.0:
+			reasons.append("this week's food ×%.2f" % fmult)
+		if float(m.stats.get(stat, 0.0)) >= cap - 0.5:
+			reasons.append("%s is AT the %s ceiling" % [stat, _league_name()])
+		if not reasons.is_empty():
+			var r := UiTheme.body_text("%s: %s" % [stat, "  ·  ".join(PackedStringArray(reasons))], "secondary")
+			r.add_theme_color_override("font_color",
+				UiTheme.SAFE if bonus > 1.05 and focus > 0.995 else UiTheme.CAUTION)
+			col.add_child(r)
 
 	# drill_note's cap check must look at the RAISED stats only — a paired penalty stat sitting at
 	# the ceiling says nothing about whether this drill is still worth taking.

@@ -86,6 +86,15 @@ func _monster_row(m: Dictionary) -> Control:
 
 	col.add_child(UiTheme.heading(str(m.get("name", "?")), 3))
 
+	# ⚠️ WHAT IT DID AND WHAT IT ATE, NAMED. This screen used to print bare numbers with no
+	# subject — "+13 STR" with no statement of which drill produced it or what the monster was
+	# eating when it did. A ledger you cannot attribute teaches nothing, and the stable half only
+	# becomes strategy if the player can carry a lesson from this week into the next one.
+	var what: String = str(m.get("what", ""))
+	var meal: String = str(m.get("meal", ""))
+	if what != "":
+		col.add_child(UiTheme.body_text("%s · ate %s" % [what, meal], "secondary"))
+
 	var stats: Array = m.get("stats", [])
 	if stats.is_empty():
 		col.add_child(UiTheme.body_text("Rested — no training this week.", "muted"))
@@ -93,6 +102,15 @@ func _monster_row(m: Dictionary) -> Control:
 		var gains := UiTheme.body_text("  ".join(PackedStringArray(stats)), "primary")
 		gains.add_theme_color_override("font_color", UiTheme.GOLD)
 		col.add_child(gains)
+
+	# ⚠️ AND WHY. Every term the tick multiplied by, in the order it applied them — life stage,
+	# stamina bracket, happiness skew, species aptitude, focus cost, food boost. This is the EARNED
+	# KNOWLEDGE half of the loop: the player is not told a rule, they are shown the arithmetic of
+	# their own week and left to draw the rule out of it.
+	var why: Array = m.get("why", [])
+	if not why.is_empty():
+		var w := UiTheme.body_text("why: %s" % "  ·  ".join(PackedStringArray(why)), "muted")
+		col.add_child(w)
 
 	var stam: float = float(m.get("stamina", 0.0))
 	var happy: int = int(m.get("happiness", 0))

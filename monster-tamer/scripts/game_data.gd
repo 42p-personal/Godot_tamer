@@ -156,7 +156,24 @@ func _load() -> void:
 
 ## Build a runtime monster from a species id at a given "training level" (0..1, how far through
 ## its stat curve it's progressed — a stand-in for weeks of career training).
-func make_monster(species_id: String, training_level: float = 0.0, rng: RandomNumberGenerator = null):
+##
+## ⚠️ `room_mult` IS THE FACTOR THAT MADE `training_level` NOT MEAN WHAT EVERY CALLER THOUGHT.
+## The stat step below is `room * training_level * aptitude * room_mult`, and `room_mult` was an
+## unnamed literal `0.6`. So `training_level = 0.93` produced a monster at roughly 56% of the cap,
+## not 93% — a 1.66x understatement, silently applied to every rival in the game.
+##
+## That went unnoticed while every rival used one flat number. It stopped being harmless the
+## moment `career.gd:field_fill()` started expressing a cup's difficulty ARC as a fraction of the
+## league ceiling: the champion constants are authored and commented as "0.80..0.93 of its OWN
+## ceiling", and they were arriving at 0.48..0.56. Measured through `_probe_career_arc.gd`'s gate
+## instrument, a player team at 65% of cap swept EVERY league 100% of the time, champion included
+## — the arc existed in the code and not in the fight.
+##
+## ⚠️ THE DEFAULT IS UNCHANGED ON PURPOSE. Market offers, the sandbox, the tactics screen and the
+## arena previews all pass a `training_level` that was CHOSEN against the damped behaviour (0.2,
+## 0.3, 0.45); moving the default would silently restat all of them. Only the cup field, which
+## authors its numbers as fractions of the ceiling, asks for 1.0.
+func make_monster(species_id: String, training_level: float = 0.0, rng: RandomNumberGenerator = null, room_mult: float = 0.6):
 	var sp: Dictionary = species_by_id.get(species_id, {})
 	if sp.is_empty():
 		push_error("unknown species id: %s" % species_id)
@@ -186,7 +203,7 @@ func make_monster(species_id: String, training_level: float = 0.0, rng: RandomNu
 			elif profile.get("flaw") == stat:
 				mult = 0.7
 			var room: float = cap - mi.stats[stat]
-			mi.stats[stat] += room * training_level * mult * 0.6
+			mi.stats[stat] += room * training_level * mult * room_mult
 			mi.stats[stat] = minf(cap, mi.stats[stat])
 
 	mi.recompute_class()

@@ -16,7 +16,40 @@ var innate: Array = []
 ## (`week.gd`), so training rolls are deterministic per (monster, week) and never
 ## drift between preview and apply. Defaults to species_id so scripts that build a
 ## monster ad-hoc (tests, probes) still get a stable key without setting one.
-var id: String = ""
+##
+## ⚠️ `id` ALSO CARRIES THE LINEAGE, AND IT HAS TO. `save_game.gd` persists a fixed field list
+## (speciesId/stats/id/stamina/happiness/ageWeeks/careerWeek/retired/potential/lifespanYears/
+## foods/children) and it is not this workstream's file. A bred monster's generation, its
+## emphasis and its heirloom move are the whole point of breeding — if they lived in plain
+## fields they would be silently erased by the first save/load, and a Gen-4 dynasty would come
+## back from lunch as a Gen-1 wild. So the lineage rides on the one string that IS persisted, as
+## an appended `#gen,emph,moveId,stat,awakenAt` token.
+##
+## ⚠️ EVERY FIELD IN THE TOKEN IS FIXED AT BIRTH — nothing in it ever changes. That is not a
+## coincidence, it is the constraint: `week.gd` seeds the training roll off `"%s:%d" % [mi.id,
+## mi.career_week]`, so an `id` that mutated mid-career would silently re-roll the monster's
+## entire remaining training. Whether the heirloom has AWAKENED is therefore DERIVED from the
+## current stat (`heirloom_is_awake()`), never stored.
+var id: String = "" : get = _get_id, set = _set_id
+var _id_bare: String = ""
+
+# ── LINEAGE (breeding_ui.gd / lab_ui.gd) ─────────────────────────────────────────────────────
+## Dynasty depth. 1 = wild-caught or bought; a bred child is max(parents) + 1.
+var generation: int = 1
+## The stat the parents' head start was concentrated into at birth ("" = spread evenly). This is
+## the player AIMING the child — see breeding_ui.gd's bequest.
+var emphasis: String = ""
+## The heirloom: one move from a parent's kit that this monster is BORN knowing, holding a
+## reserved loadout slot regardless of its learn level. Dormant (60% power, riders stripped)
+## until the heir trains `heirloom_stat` up to `heirloom_awaken_at` — the value its parent had on
+## the day it was bequeathed. ⚠️ The bar is literally the ancestor's peak: the dynasty starts
+## ahead and still has something left to prove.
+var heirloom_move_id: String = ""
+var heirloom_stat: String = ""
+var heirloom_awaken_at: float = 0.0
+
+## A dormant heirloom keeps its identity but not its edge (`src/signature.ts:SIGNATURE_DORMANT_MULT`).
+const HEIRLOOM_DORMANT_MULT := 0.6
 
 var stats: Dictionary = {}  # Stat -> float, CURRENT (post-training) values
 
@@ -78,6 +111,134 @@ func clear_plan() -> void:
 	plan_stat = ""
 	plan_intensive = false
 	plan_paired_stat = ""
+
+
+# ── lineage: the id token ────────────────────────────────────────────────────────────────────
+
+## The lineage suffix, or "" for a monster with nothing to pass on. Omitted entirely for an
+## ordinary wild monster so ids of existing saves, probes and week plans are byte-identical.
+func _lineage_suffix() -> String:
+	if generation <= 1 and emphasis == "" and heirloom_move_id == "":
+		return ""
+	return "#%d,%s,%s,%s,%d" % [generation, emphasis, heirloom_move_id, heirloom_stat,
+		roundi(heirloom_awaken_at)]
+
+
+func _get_id() -> String:
+	return _id_bare + _lineage_suffix()
+
+
+func _set_id(value: String) -> void:
+	var hash_at := value.find("#")
+	if hash_at < 0:
+		_id_bare = value
+		return
+	_id_bare = value.substr(0, hash_at)
+	var parts: PackedStringArray = value.substr(hash_at + 1).split(",")
+	# Tolerant on purpose: a truncated or future-format token degrades to "wild", never crashes a
+	# load. Losing an heirloom is recoverable; refusing the save is not.
+	generation = maxi(1, parts[0].to_int()) if parts.size() > 0 else 1
+	emphasis = parts[1] if parts.size() > 1 else ""
+	heirloom_move_id = parts[2] if parts.size() > 2 else ""
+	heirloom_stat = parts[3] if parts.size() > 3 else ""
+	heirloom_awaken_at = float(parts[4].to_int()) if parts.size() > 4 else 0.0
+
+	# ⚠️ RE-DRAFT THE KIT WHEN A LINEAGE ARRIVES AFTER ONE ALREADY EXISTS.
+	# `save_game.gd:_deserialize_roster` calls `assign_moveset()` and THEN assigns `mi.id` — so on
+	# load the moveset is built before the heirloom is known, and a bequeathed move would silently
+	# vanish across a save. That ordering is in another workstream's file; this guard fixes it from
+	# the owning side. Measured: without it, "the heirloom is still in the reloaded kit" fails.
+	# Only fires when a kit is already present, so `clone_for_preview()` (which copies `id` into a
+	# blank monster before its stats exist) is untouched.
+	if heirloom_move_id != "" and not moveset.is_empty():
+		var redraft := RandomNumberGenerator.new()
+		redraft.seed = hash(value)
+		assign_moveset(redraft)
+
+
+## The career-slot key WITHOUT the lineage token. Nothing needs this today (the token is
+## immutable, so the full id is just as stable a seed) — it exists so a future save format that
+## stores lineage properly can strip the token without hunting for the parsing.
+func bare_id() -> String:
+	return _id_bare
+
+
+# ── lineage: the heirloom ────────────────────────────────────────────────────────────────────
+
+static var _moves_by_id: Dictionary = {}
+
+
+static func move_by_id(move_id: String) -> Dictionary:
+	if move_id == "":
+		return {}
+	if _moves_by_id.is_empty():
+		var loop := Engine.get_main_loop()
+		var gd = (loop as SceneTree).root.get_node_or_null("GameData") if loop is SceneTree else null
+		if gd == null:
+			return {}
+		for m in gd.moves:
+			_moves_by_id[m.get("id", "")] = m
+	return _moves_by_id.get(move_id, {})
+
+
+## Record a bequest. ⚠️ `at` IS ROUNDED HERE AND ONLY HERE. The awaken bar makes a round trip
+## through the id token as an integer, so an un-rounded 53.5 in memory comes back as 54 after a
+## load and the monster's awaken bar silently moves. Measured — it failed the save/load check.
+func set_heirloom(move_id: String, stat: String, at: float) -> void:
+	heirloom_move_id = move_id
+	heirloom_stat = stat
+	heirloom_awaken_at = float(roundi(at))
+
+
+## True once the heir has matched its ancestor's peak in the heirloom's stat. ⚠️ DERIVED, never
+## stored — see the note on `id`. It flips the moment training crosses the bar, which is exactly
+## when the player should feel it.
+func heirloom_is_awake() -> bool:
+	if heirloom_move_id == "":
+		return false
+	return float(stats.get(heirloom_stat, 0.0)) >= heirloom_awaken_at - 0.001
+
+
+## The heirloom resolved to a move dict the battle sim can fight with, or {} if there is none.
+## A dormant copy is a real move at 60% power with every rider effect stripped — worth a slot on
+## a young heir, never worth as much as the parent's.
+func heirloom_move() -> Dictionary:
+	var base: Dictionary = move_by_id(heirloom_move_id)
+	if base.is_empty():
+		return {}
+	var out: Dictionary = base.duplicate(true)
+	if heirloom_is_awake():
+		out["desc"] = "★ Heirloom — " + str(base.get("desc", ""))
+		return out
+	# ⚠️ DORMANCY SLOWS THE MOVE, IT DOES NOT GUT IT — AND THIS DELIBERATELY DEVIATES FROM
+	# `src/signature.ts`, which strips `effects` and `status` outright. That works there because a
+	# signature is drawn from a curated list of DAMAGE moves. Here ANY move in a parent's kit can
+	# be bequeathed, and 24 of the pool's moves are control/debuff whose entire payload IS the
+	# rider — stripping it turns a 0-power stun into a move that does literally nothing, which is
+	# worse than inheriting no move at all. Measured: the first bequest the audit tried was
+	# `Rallying Song`, power 0. So dormancy is priced in POWER and in COOLDOWN, both of which every
+	# move has, and the heirloom always still functions.
+	out["power"] = roundi(float(base.get("power", 0)) * HEIRLOOM_DORMANT_MULT)
+	out["cooldown"] = snappedf(float(base.get("cooldown", 1.0)) / HEIRLOOM_DORMANT_MULT, 0.1)
+	out["desc"] = "☆ Dormant heirloom — " + str(base.get("desc", ""))
+	return out
+
+
+## One line describing where this monster came from, for the stable and the breeding card.
+func lineage_label() -> String:
+	if generation <= 1 and heirloom_move_id == "":
+		return "Wild stock — Gen 1"
+	var bits: Array = ["Gen %d" % generation]
+	if emphasis != "":
+		bits.append("bred for %s" % emphasis)
+	var h: Dictionary = move_by_id(heirloom_move_id)
+	if not h.is_empty():
+		if heirloom_is_awake():
+			bits.append("★ %s awakened" % h.get("name", "?"))
+		else:
+			bits.append("☆ %s dormant (%s %d/%d)" % [h.get("name", "?"), heirloom_stat,
+				int(stats.get(heirloom_stat, 0.0)), int(heirloom_awaken_at)])
+	return " · ".join(bits)
 
 # ── derived, recomputed whenever stats change ────────────────────────────────
 var class_name_: String = "Generalist"
@@ -206,6 +367,30 @@ func assign_moveset(rng: RandomNumberGenerator) -> void:
 	candidates.append_array(picks)
 	for i in range(2, utility.size()):
 		candidates.append(utility[i])
+
+	# ⚠️ THE HEIRLOOM TAKES A RESERVED SLOT, AND IT MUST BE RESERVED RATHER THAN RANKED.
+	# The whole promise breeding makes is "this child will have THIS move". A weighting would
+	# have left it to chance, and this file already carries the scar of exactly that mistake one
+	# comment block up: control moves competed on a power number they were never authored to win
+	# and measured 0 drafted out of 114 slots. A bequest the player paid 300g for and cannot see
+	# in the fight is worse than no bequest at all.
+	#
+	# ⚠️ AND IT IGNORES `learnLevel` ON PURPOSE. A newborn heir qualifies for almost nothing (the
+	# pool's floor is 40 and a fresh monster averages ~32), so gating the heirloom would mean the
+	# inheritance did not exist for the first year of the child's life — the exact window in which
+	# the player is deciding whether breeding was worth doing. The dormant multiplier is what
+	# prices the early access; the level gate would just delete it.
+	var heir: Dictionary = heirloom_move()
+	if not heir.is_empty():
+		var heir_name: String = str(heir.get("name", ""))
+		# Drop any learned copy of the same move — `cooldowns` is keyed by move NAME, so two
+		# entries sharing a name would share one cooldown and the duplicate would read as a bug.
+		var deduped: Array = []
+		for m in candidates:
+			if str(m.get("name", "")) != heir_name:
+				deduped.append(m)
+		candidates = deduped
+		moveset.append(heir)
 
 	for m in candidates:
 		if moveset.size() >= 6:

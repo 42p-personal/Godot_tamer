@@ -143,7 +143,62 @@ func drill_note(mi, drill_id: String, cap: float) -> Dictionary:
 		return {"allowed": true, "note": "Exhausted — gains halved. A rest week would pay for itself."}
 	if mi.stamina < stam:
 		return {"allowed": true, "note": "Tired — this will bottom out its stamina."}
+	# ⚠️ A DRILL CAN NOW BE WORTH LESS THAN NOTHING and still be legal — an intensive or extreme
+	# whose raised stat is at the ceiling, or deep enough into focus cost, pays a malus it cannot
+	# earn back. That must be SAID, not discovered a week later in the ledger.
+	var net := 0.0
+	for stat in gains.keys():
+		var dv: float = float(gains[stat])
+		if dv > 0.0:
+			net += dv * WeekLib.stat_training_bonus(mi, str(stat)) * WeekLib.focus_cost(mi, str(stat))
+		else:
+			net += dv * WeekLib.stat_malus_multiplier(mi, str(stat))
+	if net <= 0.0:
+		return {"allowed": true,
+			"note": "This costs more than it pays on this monster — the stats it damages outweigh the one it raises."}
+	for stat in gains.keys():
+		if float(gains[stat]) > 0.0 and WeekLib.focus_cost(mi, str(stat)) < 0.75:
+			return {"allowed": true,
+				"note": "%s already dominates this build — further %s work pays a heavily reduced rate." % [stat, stat]}
 	return {"allowed": true, "note": ""}
+
+
+## The multiplier chain that will decide this monster's week, in plain words. Read BEFORE the
+## tick runs — every term here is a live function of state the tick is about to change.
+func _why_lines(mi, p: Dictionary) -> Array:
+	var act: String = str(p.get("activity", "rest"))
+	if act == "rest" or act == "excursion":
+		return []
+	var d: Dictionary = WeekLib.drill_by_id(act)
+	var gains: Dictionary = d.get("gains", {})
+	var food: String = str(p.get("food", ""))
+	var out: Array = []
+
+	var info: Dictionary = WeekLib.stage_info(mi.age_weeks, mi.lifespan_years)
+	var tm: float = float(info["trainMult"])
+	if absf(tm - 1.0) > 0.01:
+		out.append("%s ×%.2f" % [str(info["stage"]), tm])
+	var sm: float = WeekLib.stamina_malus(mi.stamina)
+	if sm < 0.999:
+		out.append("stamina %d/100 ×%.2f" % [int(round(mi.stamina)), sm])
+	if mi.happiness >= 8:
+		out.append("happiness %d/10 — rolls near the top of the range" % mi.happiness)
+	elif mi.happiness <= 2:
+		out.append("happiness %d/10 — rolls flat across the range" % mi.happiness)
+
+	for stat in gains.keys():
+		if float(gains[stat]) <= 0.0:
+			continue
+		var apt: float = WeekLib.stat_training_bonus(mi, str(stat))
+		if absf(apt - 1.0) > 0.01:
+			out.append("%s aptitude ×%.2f" % [stat, apt])
+		var fc: float = WeekLib.focus_cost(mi, str(stat))
+		if fc < 0.999:
+			out.append("%s focus cost ×%.2f" % [stat, fc])
+		var fm: float = WeekLib.food_train_mult(food, str(stat))
+		if fm > 1.0:
+			out.append("%s food boost ×%.2f" % [stat, fm])
+	return out
 
 
 ## ⚠️ THE ONLY THING THAT MOVES THE CLOCK. Runs the tick over the whole stable, clears the plans,
@@ -151,10 +206,20 @@ func drill_note(mi, drill_id: String, cap: float) -> Dictionary:
 func advance(monsters: Array) -> Dictionary:
 	var before: Dictionary = {}
 	for mi in monsters:
+		var p: Dictionary = plan_for(mi.id)
 		before[mi.id] = {
 			"stats": mi.stats.duplicate(),
 			"stamina": mi.stamina,
 			"happiness": mi.happiness,
+			# ⚠️ THE WHOLE MULTIPLIER CHAIN, SNAPSHOTTED BEFORE THE TICK. The feeding screen narrates
+			# WHY the week landed the way it did, and it can only do that from the state the tick
+			# actually read — afterwards the stats have moved and every multiplier reads differently.
+			# This is the observe half of "commit, then observe": a week you cannot explain is a week
+			# you cannot learn from, and earned knowledge is the design bar for the stable half.
+			"activity": str(p.get("activity", "rest")),
+			"food": str(p.get("food", "")),
+			"forage": bool(p.get("forage", false)),
+			"why": _why_lines(mi, p),
 		}
 
 	var gold_before: int = Career.gold if has_node("/root/Career") else 0
@@ -182,11 +247,25 @@ func advance(monsters: Array) -> Dictionary:
 			var delta: float = float(mi.stats.get(stat, 0.0)) - float(b["stats"].get(stat, 0.0))
 			if absf(delta) >= 0.5:
 				stat_moves.append("%+d %s" % [int(round(delta)), stat])
+		var act: String = str(b.get("activity", "rest"))
+		var what := "Rested"
+		if act != "rest" and act != "excursion":
+			what = str(WeekLib.drill_by_id(act).get("name", act))
+		elif act == "excursion":
+			what = "Excursion"
+		var meal := "unfed"
+		if bool(b.get("forage", false)):
+			meal = "foraged"
+		elif str(b.get("food", "")) != "":
+			meal = str(WeekLib.food_by_id(str(b["food"])).get("name", b["food"]))
 		lines.append({
 			"name": mi.species_name,
 			"stats": stat_moves,
 			"stamina": mi.stamina - float(b["stamina"]),
 			"happiness": mi.happiness - int(b["happiness"]),
+			"what": what,
+			"meal": meal,
+			"why": b.get("why", []),
 		})
 
 	plans.clear()
@@ -196,5 +275,10 @@ func advance(monsters: Array) -> Dictionary:
 
 	var wk: int = Career.week if has_node("/root/Career") else 0
 	var report := {"week": wk, "goldSpent": gold_before - gold_after, "monsters": lines}
+	# ⚠️ SET HERE, NOT AT THE CALL SITE. `feeding_ui.gd` reads this meta to narrate the week, and
+	# three separate callers each had to remember to set it — one that forgot would silently show
+	# the PREVIOUS week's ledger, which is the worst possible failure for a screen whose only job is
+	# to be trusted. Callers may still set it; this makes that redundant rather than required.
+	set_meta("last_report", report)
 	week_advanced.emit(wk, report)
 	return report

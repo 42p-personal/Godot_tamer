@@ -45,6 +45,36 @@ const EXCURSION_COST := 25.0
 const FORAGE_STAMINA_COST := 25.0
 const FORAGE_HAPPINESS_COST := 2
 
+# ── FOCUS COST — the thing that makes a training week a DECISION (2026-08-09) ────────────────
+#
+# ⚠️ MEASURED FIRST, THEN BUILT. `scripts/_probe_training.gd` ran every drill family as a fixed
+# policy over four full 336-week careers on identical seeds. Before this change:
+#
+#     basic 6.04 pts/wk · intensive 9.05 · diverse 12.13 · EXTREME 15.41 · greedy-all 15.57
+#
+# greedy-all ≈ extreme to within 1%, i.e. the "best play" WAS "take the extreme drill for the
+# stat you care about, every week you can afford it". That is the obvious click CLAUDE.md says
+# is a failure state, and it was measurable, not a matter of taste.
+#
+# FOCUS COST is the pushback: a drill pays LESS into a stat the further that stat already leads
+# the monster's OWN average. Depth stays available and stays correct — it just stops being free,
+# so every week is a live weigh-up between pushing the spike and shoring up the second stat, and
+# the answer MOVES as the build moves.
+#
+# Three properties that made this the choice over the alternatives considered:
+#   • It is a pure function of `mi.stats`, which already persists. A per-monster "conditioning"
+#     or "strain" counter would have been the richer mechanic, but MonsterInstance and
+#     save_game.gd are not this workstream's files — a mechanic that silently resets on load is
+#     worse than no mechanic.
+#   • It is deterministic and fully legible: the training card can print the exact multiplier and
+#     the exact resulting number, so the player can PREDICT it, which is the standing requirement
+#     for a game you commit to and then watch.
+#   • It is a soft curve, never a wall (floor 0.55). ⚠️ The 5v5 sim rewards specialists and this
+#     must not quietly forbid one — CLAUDE.md's rule that a species must never be locked out of a
+#     role applies to builds too. Specialising still wins; it now COSTS.
+const FOCUS_SLOPE := 0.45
+const FOCUS_FLOOR := 0.55
+
 const PRESTIGE_BODIES := ["Draconic", "Abyssal", "Mythical"]
 const PRESTIGE_FLAW_PENALTY := 0.95
 
@@ -215,6 +245,28 @@ static func stat_training_bonus(mi, stat: String) -> float:
 	return 1.0
 
 
+## Diminishing returns on a stat that already leads this monster's own spread. 1.0 for anything
+## at or below its own average; falls toward FOCUS_FLOOR as the lead grows.
+##
+## ⚠️ MEASURED AGAINST THE MONSTER'S OWN AVERAGE, NOT THE LEAGUE CAP. Against the cap it would be
+## a second, softer copy of the cap — the same wall twice — and it would punish a Wood-league
+## rookie and an Apex champion identically for having a 400 STR. Against its own average it asks
+## the only question that is actually a design decision: how LOPSIDED is this monster.
+static func focus_cost(mi, stat: String) -> float:
+	var total := 0.0
+	var n := 0
+	for s in mi.stats:
+		total += float(mi.stats[s])
+		n += 1
+	if n == 0:
+		return 1.0
+	var avg := total / float(n)
+	if avg <= 1.0:
+		return 1.0
+	var lead := (float(mi.stats.get(stat, 0.0)) - avg) / avg
+	return clampf(1.0 - FOCUS_SLOPE * lead, FOCUS_FLOOR, 1.0)
+
+
 static func stat_malus_multiplier(mi, stat: String) -> float:
 	var prof := training_profile(mi)
 	if stat != prof["flaw"]: return 1.0
@@ -311,7 +363,9 @@ static func age_one_week(mi) -> void:
 ## advanceWeek's own feed-then-activity order). Mutates `mi`; returns the new gold.
 ## `action` = {"kind": "train", "drillId": ...} | {"kind": "rest"} | {"kind": "excursion"}
 ##          | {"kind": "compete"}
-static func apply_activity(mi, action: Dictionary, gold: int, cap: float, league_name: String) -> int:
+## `eaten_food` is the food the monster ACTUALLY ate this week ("" = none/forage) — see the
+## training-food note in the train branch. Defaults to "" so existing 5-arg callers still work.
+static func apply_activity(mi, action: Dictionary, gold: int, cap: float, league_name: String, eaten_food: String = "") -> int:
 	if mi.retired: return gold
 	var g := gold
 	var rng := _seeded_rng(mi)
@@ -330,10 +384,22 @@ static func apply_activity(mi, action: Dictionary, gold: int, cap: float, league
 			var delta: float = drill["gains"][stat]
 			var applied: int
 			if delta > 0.0:
+				# ⚠️ `food_train_mult` WAS DEAD CODE. It was ported, documented and advertised on the
+				# training card ("+30% STR/CON") but never called from the tick — so the three 75g
+				# training foods bought literally nothing, and the one place where the week had TWO
+				# interacting variables was inert. Wiring it in is the fix.
 				var rolled := roll_drill_gain(rng, delta, mi.happiness)
-				applied = roundi(rolled * eff * stat_training_bonus(mi, stat))
+				applied = roundi(rolled * eff * stat_training_bonus(mi, stat)
+					* food_train_mult(eaten_food, stat) * focus_cost(mi, stat))
 			else:
-				applied = roundi(delta * stat_malus_multiplier(mi, stat))
+				# ⚠️ THE MALUS NOW SCALES BY `eff` TOO, AND THAT IS A DELIBERATE DESIGN CHANGE, NOT A
+				# PORT FIX. src/game.ts applies the paired malus FLAT while scaling the gain by life
+				# stage x stamina — so `drills.ts`'s own authored claim that extreme (+24/−4/−4) and
+				# diverse (+8/+8) are "deliberate MIRRORS, same +16 net" is false in the TypeScript too.
+				# Measured over four full careers: extreme 15.41 pts/wk vs diverse 12.13 — a 1.27x edge
+				# on a tier that costs the same 35 stamina. Scaling both halves by the same multiplier
+				# restores the intended mirror and turns "which tier" back into a question about SHAPE.
+				applied = roundi(delta * stat_malus_multiplier(mi, stat) * eff)
 			var nv: float = clampf(mi.stats[stat] + applied, 1.0, cap)
 			var real: float = nv - float(mi.stats[stat])
 			mi.stats[stat] = nv
@@ -401,14 +467,20 @@ static func apply_week(mi, action: Dictionary, gold: int, rental: int, food_id: 
 		age_one_week(mi)
 		return gold
 	var g := gold
+	# ⚠️ `eaten` is what the monster ACTUALLY ATE, not what was booked. A Prime Cut the player
+	# could not afford must not still hand out its +30% — `buy_food` reports `fed`, and only a
+	# successful purchase feeds the training multiplier into the drill below.
+	var eaten := ""
 	if food_id != "":
 		var r := buy_food(mi, g, food_id, price)
 		g = r["gold"]
-		if not r["fed"] and forage:
+		if r["fed"]:
+			eaten = food_id
+		elif forage:
 			forage_feed(mi)
 	elif forage:
 		forage_feed(mi)
-	g = apply_activity(mi, action, g, cap, league_name)
+	g = apply_activity(mi, action, g, cap, league_name, eaten)
 	if rental > 0:
 		g = maxi(0, g - rental)
 		mi.log.append("lab upkeep -%dg (frozen genomes)." % rental)

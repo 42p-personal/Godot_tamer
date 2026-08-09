@@ -1,66 +1,655 @@
-## Does the WATCH PATH work? Verified in two halves, because a probe that drives real scene
-## changes frees itself mid-test and reports its own death as a failure.
-##   A. the TITLE screen actually carries a reachable "Watch a Battle" button pointing at watch.tscn
-##   B. watch.gd's setup produces a real fight in arena3d
-## ⚠️ The arena rendered perfectly in every earlier probe while the ENTRY POINT into it was broken.
-## Testing the destination is not testing the journey.
+## WATCH AUDIT — the playtest record this repo has never had.
+##
+## ⚠️ THIS PROBE'S JOB IS NOT "DOES IT RENDER". It is: can a viewer who committed a plan 30
+## seconds ago tell WHAT IS HAPPENING, WHY, WHO IS WINNING, and WHETHER THEIR READ WAS RIGHT —
+## without pausing, without the decision log, and without knowing the codebase.
+## So it drives the REAL production watch path (title -> watch.gd -> arena3d.tscn ->
+## `scripts/ui/arena_3d.gd`), plays a fight at true speed, and CAPTURES A STRIP — a sequence,
+## not a pose, because a single frame cannot show whether a fight is readable over time.
+##
+## It reports three families of number, all of them about the VIEWER:
+##   A. VOCABULARY  — which sim event kinds the fight produced, and which of those reach the
+##      player's EYES (the visual adapter `arena_3d._adapt_event`) vs which reach only the ears
+##      (`scripts/audio/battle_audio.gd`) vs which reach neither.
+##   B. FRAMING     — how many pixels tall a monster actually is, over time, and what fraction of
+##      the frame the bodies occupy. The camera fits all living units' bounding box, so a spread
+##      fight averages into a distant blob; this measures how distant.
+##   C. RHYTHM      — event density per second, the longest dead-air gap, and the busiest second.
+##      Dead air and noise are both legibility failures and they are opposite ones.
+##
+## RUN IT WITH A WINDOW, NOT `--headless`. The dummy renderer returns blank images, so a headless
+## run of this probe would "pass" while capturing black rectangles — exactly the class of silent
+## success this project keeps recording.
+##   P:/Godot_v4.7.1-stable_win64.exe --path . res://scenes/_probe_watch.tscn -- four_pillar 0.35
+##
+## It also keeps the original entry-point check (section A of the probe this replaced): the arena
+## rendered perfectly in every earlier probe while the ENTRY POINT into it was broken. Testing the
+## destination is not testing the journey.
 extends Node
 
+const Arena = preload("res://scripts/ui/arena_3d.gd")
+
+## Sim seconds between strip captures. A fight is 20-140s; 12 frames is a readable contact sheet.
+const STRIP_STEP := 2.0
+## Every sim event kind, from `scripts/sim/sim.gd`. ⚠️ HARD-CODED ON PURPOSE — this is the
+## tripwire: a kind the sim emits that is not in this list prints as UNKNOWN, and a kind in this
+## list the fight never produced prints as NOT PRODUCED. Both are findings.
+const ALL_KINDS := [
+	"aoe", "buff", "cast_done", "cast_miss", "cast_start", "cleanse", "death", "debuff",
+	"fizzle", "heal", "interrupt", "miss", "proj_fizzle", "proj_hit", "proj_launch",
+	"status_applied", "status_break", "status_expire", "status_tick", "strike", "taunted",
+	"thorns", "ward_soak",
+]
+## Kinds `arena_3d._adapt_event` translates into a log record / float / VFX. Anything outside this
+## set is INVISIBLE — it may still be audible, which is a different question, answered separately.
+## ⚠️ FOUR KINDS ADDED 2026-08-09 — `taunted`, `aoe`, `fizzle`, `debuff` are now presented
+## (tether + float, impact ring at the sim's own centre/radius, grey "No target" cast bar, and the
+## buff grammar inverted). Leaving them out of this list would have reported a fixed renderer as
+## still silent, which is how a fix gets re-done. `cast_start` and `proj_launch` are presented
+## through the FRAME STREAM (cast bar, projectile bodies) rather than through events — counted
+## here because the question is what the viewer sees, not which code path shows it.
+const SEEN_KINDS := [
+	"strike", "cast_done", "proj_hit", "miss", "cast_miss", "status_applied", "status_expire",
+	"heal", "buff", "cleanse", "interrupt", "death",
+	"taunted", "aoe", "fizzle", "debuff", "cast_start", "proj_launch",
+	# Presented once the roster could produce them — `thorns` reflects backwards along the arrow
+	# the viewer just watched, `ward_soak` distinguishes a hit that landed and did nothing from
+	# a miss. Both were "never fired, and that is its own finding" in the audit.
+	"thorns", "ward_soak",
+]
+
+var _arena: Node = null
+var _out: Array = []            # the report, printed at the end so it is not interleaved with engine spam
+var _samples: Array = []        # per-engine-frame framing measurements
+var _next_strip := 0.0
+var _shot := 0
+var _tag := "four_pillar"
+var _cam_mode := 0
+
+
 func _ready() -> void:
-	# ── A. the button exists, is enabled, and targets the right scene ──────────────────────────
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	var layout: String = args[0] if args.size() > 0 else "four_pillar"
+	var train: float = float(args[1]) if args.size() > 1 else 0.35
+	_cam_mode = int(args[2]) if args.size() > 2 else 0   # 0 TEAM · 1 ACTION · 2 ARENA
+	_tag = "%s_t%02d_cam%d" % [layout, int(train * 100.0), _cam_mode]
+
+	if not await _check_entry_point():
+		get_tree().quit(1)
+		return
+
+	_line("")
+	_line("═══ WATCH AUDIT — layout=%s training=%.2f ═══" % [layout, train])
+
+	var W = load("res://scripts/watch.gd")
+	var a: Array = []
+	var b: Array = []
+	for s in W.ROSTER_A:
+		a.append(GameData.make_monster(s, train))
+	for s in W.ROSTER_B:
+		b.append(GameData.make_monster(s, train))
+	# ⚠️ THE ROLES COME FROM `watch.gd`, THEY ARE NOT COPIED HERE. This probe reconstructs the
+	# viewer's roster rather than launching it (it needs the arena as a child to measure), and a
+	# reconstruction that drifts measures a fight the player never sees — which is precisely the
+	# failure this audit exists to catch. Calling the viewer's own `_cast_role` makes drift
+	# impossible: change the composition in one place and the instrument follows.
+	for role in W.ROLES_A:
+		W._cast_role(a[int(role["i"])], role)
+	for role in W.ROLES_B:
+		W._cast_role(b[int(role["i"])], role)
+	# Same committed plan the viewer uses — including the `manmark` order, so the report screen
+	# this probe captures grades a real claim instead of printing "you committed no claim".
+	var plan_a := {"targetPriority": "manmark", "markedUnit": b[2],
+		"positionalIntent": "push", "temperament": "balanced", "formation": "tight"}
+	var plan_b := {"targetPriority": "tanks", "positionalIntent": "dive",
+		"temperament": "aggressive", "formation": "loose"}
+	var T = load("res://scripts/tactics.gd")
+	T.committed = {"teamA": a, "teamB": b, "planA": plan_a, "planB": plan_b,
+		"orders": {}, "ordersA": {}, "ordersB": {}, "layout": layout}
+
+	_arena = (load("res://scenes/arena3d.tscn") as PackedScene).instantiate()
+	add_child(_arena)
+	var ok := false
+	for i in range(1200):
+		await get_tree().process_frame
+		var nodes: Array = _arena.get("nodes")
+		if nodes != null and not nodes.is_empty() and not (_arena.get("frames") as Array).is_empty():
+			ok = true
+			break
+	if not ok:
+		_line("FAIL: the arena never produced units + frames")
+		_dump()
+		get_tree().quit(1)
+		return
+
+	_arena.set("_cam_mode", _cam_mode)
+	await _report_vocabulary()
+	_report_rhythm()
+	# Playback runs in `_process` below; it finishes by calling `_finish_audit`.
+	_line("")
+	_line("── C. FRAMING (measured every engine frame during real playback) ──")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# A. THE ENTRY POINT — is the destination reachable at all
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _check_entry_point() -> bool:
 	var title: Node = (load("res://scenes/title.tscn") as PackedScene).instantiate()
 	add_child(title)
 	await get_tree().process_frame
 	var btn := _find_button(title, "Watch a Battle")
 	if btn == null:
-		print("FAIL A: no 'Watch a Battle' button on the title screen"); get_tree().quit(1); return
-	print("A. button '%s'  disabled=%s  connections=%d"
-		% [btn.text, btn.disabled, btn.pressed.get_connections().size()])
-	if btn.disabled or btn.pressed.get_connections().is_empty():
-		print("FAIL A: button is dead"); get_tree().quit(1); return
+		_line("FAIL: no 'Watch a Battle' button on the title screen")
+		_dump()
+		return false
+	var live: bool = not btn.disabled and not btn.pressed.get_connections().is_empty()
+	_line("entry point: '%s' disabled=%s connections=%d -> %s"
+		% [btn.text, btn.disabled, btn.pressed.get_connections().size(), "LIVE" if live else "DEAD"])
 	title.queue_free()
 	await get_tree().process_frame
+	return live
 
-	# ── B. watch.gd's team setup produces a running fight ──────────────────────────────────────
-	var W = load("res://scripts/watch.gd")
-	var a: Array = []
-	var b: Array = []
-	for s in W.ROSTER_A:
-		a.append(GameData.make_monster(s, 0.35))
-	for s in W.ROSTER_B:
-		b.append(GameData.make_monster(s, 0.35))
-	var T = load("res://scripts/tactics.gd")
-	T.committed = {"teamA": a, "teamB": b, "planA": {}, "planB": {}, "orders": {}}
-
-	var arena: Node = (load("res://scenes/arena3d.tscn") as PackedScene).instantiate()
-	add_child(arena)
-	var nodes: Array = []
-	for i in range(900):
-		await get_tree().process_frame
-		nodes = arena.get("nodes")
-		if nodes != null and not nodes.is_empty():
-			break
-	if nodes.is_empty():
-		print("FAIL B: arena never built units"); get_tree().quit(1); return
-	var names: Array = []
-	for u in arena.all_units:
-		names.append(u.species_name)
-	print("B. %d units, %d frames, %d obstacles, layout=%s"
-		% [nodes.size(), (arena.get("frames") as Array).size(),
-		   (arena.get("_obstacles") as Array).size(), "four_pillar"])
-	print("   teams: %s" % str(names))
-	for f in range(150):
-		await get_tree().process_frame
-	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("user://watch.png")
-	print("   shot -> ", ProjectSettings.globalize_path("user://watch.png"))
-	print("PASS — the button is live and the fight runs")
-	get_tree().quit(0)
 
 func _find_button(n: Node, label: String) -> Button:
 	if n is Button and (n as Button).text == label:
 		return n
 	for c in n.get_children():
 		var r := _find_button(c, label)
-		if r != null: return r
+		if r != null:
+			return r
 	return null
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# B. VOCABULARY — what the fight said, and which senses heard it
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _report_vocabulary() -> void:
+	# ⚠️ `arena_3d.gd` THROWS THE RAW EVENT STREAM AWAY at `_adapt_result` — only the twelve kinds
+	# `_adapt_event` recognises survive into `event_log`. So the raw vocabulary has to be counted
+	# from a second, IDENTICAL run of the same sim (same seed, same inputs, deterministic), which
+	# is itself the finding: the renderer cannot tell you what it dropped.
+	var counts: Dictionary = await _count_kinds_by_resim()
+	_line("")
+	_line("── A. VOCABULARY — %d event kinds fired ──" % counts.size())
+	var eyes := 0
+	var blind := 0
+	var kinds: Array = counts.keys()
+	kinds.sort()
+	for k in kinds:
+		var sense := "EYES+log" if k in SEEN_KINDS else "no visual"
+		if k in SEEN_KINDS:
+			eyes += 1
+		else:
+			blind += 1
+		if not (k in ALL_KINDS):
+			sense += "  ⚠ UNKNOWN KIND (sim grew, this probe did not)"
+		_line("   %-16s %5d   %s" % [k, int(counts[k]), sense])
+	for k in ALL_KINDS:
+		if not counts.has(k):
+			_line("   %-16s     0   NOT PRODUCED by this roster" % k)
+	_line("   → %d kinds have a visual read, %d are visually silent this fight" % [eyes, blind])
+	# ⚠️ AND WHY A KIND NEVER FIRED IS A ROSTER QUESTION, NOT A RENDERER ONE. `COMBAT_SPATIAL_LOG`
+	# already recorded this once: "a demo roster that cannot produce a mechanic is a demo that
+	# hides it". So print what the ten monsters actually brought.
+	_line("   the ten kits that produced the above:")
+	for m in (_arena.get("all_units") as Array):
+		var names: Array = []
+		for mv in m.moveset:
+			names.append(str((mv as Dictionary).get("name", "")))
+		_line("     %-12s %s" % [m.species_name, ", ".join(PackedStringArray(names))])
+
+
+## Re-runs the same fight headlessly to count RAW event kinds. ⚠️ Deterministic: same seed, same
+## inputs, same fight — this is a second read of the same match, not a second match.
+func _count_kinds_by_resim() -> Dictionary:
+	var counts: Dictionary = {}
+	var NewSim = load("res://scripts/sim/sim.gd")
+	var Sp = load("res://scripts/spatial.gd")
+	var inputs: Array = _arena.call("_new_sim_inputs")
+	var ground: Vector2 = _arena.get("ground_size")
+	var off: Vector2 = ground * 0.5
+	var nav_obstacles: Array = []
+	for ob in (_arena.get("_obstacles") as Array):
+		if str((ob as Dictionary).get("grade", "blocking")) == Sp.COVER_BLOCKS_LOS_GRADE:
+			var r: Rect2 = (ob as Dictionary)["rect"]
+			nav_obstacles.append({"rect": Rect2(r.position - off, r.size)})
+	var sim = NewSim.new()
+	sim.setup(20260804, inputs, ground, nav_obstacles)
+	var half_x: float = ground.x * 0.5 - 4.0
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-half_x, 0), Vector2(half_x, 0))
+	if not ok:
+		_line("   (cannot re-sim: navigation never became ready)")
+		return counts
+	var raw: Dictionary = sim.run()
+	sim.nav.free_rids()
+	for rf in (raw.get("frames", []) as Array):
+		for e in (rf.get("events", []) as Array):
+			var k := str(e.get("kind", ""))
+			counts[k] = int(counts.get(k, 0)) + 1
+	return counts
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# C. RHYTHM — dead air and noise, both measured off the log the player actually reads
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _report_rhythm() -> void:
+	var log: Array = _arena.get("event_log")
+	var dur: float = float((_arena.get("frames") as Array).size()) * 0.1
+	_line("")
+	_line("── B. RHYTHM — %.1fs fight, %d log lines the player can read ──" % [dur, log.size()])
+	# Bucket by whole second.
+	var per_sec: Dictionary = {}
+	var last_t := 0.0
+	var worst_gap := 0.0
+	var worst_at := 0.0
+	# Only BIG events count as "something happened" for the dead-air test — a 4-damage tick is not
+	# a beat. Deaths, interrupts, cleanses and heals are; routine hits are counted separately.
+	var big := ["death", "interrupt", "cleanse", "status_apply"]
+	var big_last := 0.0
+	var big_worst := 0.0
+	var big_worst_at := 0.0
+	for e in log:
+		var t: float = float(e.get("t", 0.0))
+		var k := str(e.get("kind", ""))
+		if k == "start" or k == "end":
+			continue
+		var s := int(floor(t))
+		per_sec[s] = int(per_sec.get(s, 0)) + 1
+		if t - last_t > worst_gap:
+			worst_gap = t - last_t
+			worst_at = last_t
+		last_t = t
+		if k in big:
+			if t - big_last > big_worst:
+				big_worst = t - big_last
+				big_worst_at = big_last
+			big_last = t
+	var busiest := 0
+	var busiest_s := 0
+	var quiet := 0
+	for s in range(int(ceil(dur))):
+		var n: int = int(per_sec.get(s, 0))
+		if n > busiest:
+			busiest = n
+			busiest_s = s
+		if n == 0:
+			quiet += 1
+	_line("   density        %.2f log lines/sec average" % (float(log.size()) / maxf(dur, 0.01)))
+	_line("   busiest second %d lines at t=%ds  ← can a viewer read %d lines in one second?"
+		% [busiest, busiest_s, busiest])
+	_line("   silent seconds %d of %d (%.0f%% of the fight has NO log line at all)"
+		% [quiet, int(ceil(dur)), 100.0 * float(quiet) / maxf(1.0, ceil(dur))])
+	_line("   longest gap    %.1fs of nothing, starting t=%.1fs" % [worst_gap, worst_at])
+	_line("   longest gap between BIG beats (death/interrupt/cleanse/status): %.1fs from t=%.1fs"
+		% [big_worst, big_worst_at])
+	# When did the fight's outcome become obvious? First death, and the score at each death.
+	var deaths: Array = []
+	for e in log:
+		if str(e.get("kind", "")) == "death":
+			deaths.append(float(e.get("t", 0.0)))
+	var first_hit := -1.0
+	for e in log:
+		if str(e.get("kind", "")) == "hit":
+			first_hit = float(e.get("t", 0.0))
+			break
+	_line("   first DAMAGE   t=%.1fs (%.0f%% of the fight is the approach — nothing is at stake yet)"
+		% [first_hit, 100.0 * first_hit / maxf(dur, 0.01)])
+	if deaths.is_empty():
+		_line("   deaths         NONE — the fight was decided by the clock, not by kills")
+	else:
+		_line("   deaths at      %s" % str(deaths.map(func(t): return "%.1f" % t)))
+		_line("   first blood    t=%.1fs (%.0f%% into the fight)"
+			% [deaths[0], 100.0 * deaths[0] / maxf(dur, 0.01)])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# D. FRAMING — measured live, during real playback, with the real camera
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _process(_delta: float) -> void:
+	if _arena == null:
+		return
+	var frames: Array = _arena.get("frames")
+	if frames == null or frames.is_empty():
+		return
+	var cam: Camera3D = _arena.get("camera")
+	if cam == null:
+		return
+	var t: float = float(_arena.get("frame_pos")) * 0.1
+	_measure(cam, t)
+	if t >= _next_strip:
+		_next_strip += STRIP_STEP
+		_capture(t)
+	if not bool(_arena.get("playing")) and t > 0.2:
+		_finish_audit()
+
+
+## ⚠️ ALIVENESS COMES FROM THE FRAME, NOT FROM `all_units[k].alive`. `_write_back_final()` stamps
+## the fight's FINAL state onto the monster objects before playback starts, so `MonsterInstance.alive`
+## is the ANSWER, not the current state. This probe must not repeat the renderer's own mistake —
+## and comparing the two is how the mistake gets measured.
+func _frame_alive() -> Array:
+	var frames: Array = _arena.get("frames")
+	var i: int = clampi(int(floor(float(_arena.get("frame_pos")))), 0, frames.size() - 1)
+	var out: Array = []
+	for rec in (frames[i].get("units", []) as Array):
+		out.append(bool(rec.get("alive", true)))
+	return out
+
+
+func _measure(cam: Camera3D, t: float) -> void:
+	var nodes: Array = _arena.get("nodes")
+	var units: Array = _frame_alive()
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var mn := Vector2(1e9, 1e9)
+	var mx := Vector2(-1e9, -1e9)
+	var body_px := 0.0
+	var on_screen := 0
+	var n := 0
+	for k in range(nodes.size()):
+		if k >= units.size() or not units[k]:
+			continue
+		var p: Vector3 = (nodes[k]["holder"] as Node3D).position
+		var foot: Vector2 = cam.unproject_position(p)
+		var head: Vector2 = cam.unproject_position(p + Vector3(0, Arena.UNIT_HEIGHT, 0))
+		var h: float = absf(foot.y - head.y)
+		body_px += PI * pow(h * 0.30, 2.0)     # a body is roughly 0.6x as wide as it is tall
+		# ⚠️ IS IT EVEN IN FRAME? `unproject_position` happily returns coordinates far outside the
+		# viewport (and mirrored ones for points BEHIND the camera), so "action box area" is
+		# meaningless once anything leaves the shot. The honest metric is a headcount.
+		if foot.x >= 0.0 and foot.x <= vp.x and foot.y >= 0.0 and foot.y <= vp.y 				and not cam.is_position_behind(p):
+			on_screen += 1
+		mn.x = minf(mn.x, foot.x); mn.y = minf(mn.y, head.y)
+		mx.x = maxf(mx.x, foot.x); mx.y = maxf(mx.y, foot.y)
+		n += 1
+	if n == 0:
+		return
+	var box: float = maxf(0.0, mx.x - mn.x) * maxf(0.0, mx.y - mn.y)
+	# ── THE NAMEPLATE READ. A plate is the only HP/intent surface the player has, and it is only
+	# usable if you can tell WHOSE it is. Two failures are measurable: a plate lifted far from the
+	# head it annotates (unattributable), and two plates overlapping (illegible).
+	var rects: Array = []
+	var orphan := 0
+	var plate_px := 0.0
+	for k in range(nodes.size()):
+		if k >= units.size() or not units[k]:
+			continue
+		var plate: Control = nodes[k].get("plate")
+		if plate == null or not plate.visible:
+			continue
+		var head: Vector2 = cam.unproject_position((nodes[k]["holder"] as Node3D).position
+			+ Vector3(0, Arena.UNIT_HEIGHT, 0))
+		var r := Rect2(plate.position, plate.size)
+		# "Far" = more than one body-height away from the head it belongs to.
+		if (r.get_center() - head).length() > _mean_unit_height(cam, nodes, units):
+			orphan += 1
+		plate_px += r.size.x * r.size.y
+		rects.append(r)
+	var collide := 0
+	for i in range(rects.size()):
+		for j in range(i + 1, rects.size()):
+			if (rects[i] as Rect2).intersects(rects[j]):
+				collide += 1
+	# ── THE SCOREBOARD READ. ⚠️ THIS MEASURED THE WRONG FIELD AFTER THE FIX AND WOULD HAVE READ
+	# AS A REGRESSION. It counted `MonsterInstance.alive`, which `_write_back_final` stamped with
+	# the fight's final state before playback began — the bug `docs/WATCH_AUDIT.md` §1 found. The
+	# renderer now reads aliveness from the DISPLAYED FRAME via `_alive_now(k)`, and deliberately
+	# leaves `MonsterInstance.alive` stale until `_finish()`, so the old count can never reach 0%
+	# disagreement no matter how correct the scoreboard is. It now asks the scoreboard's own
+	# source the same question the frame answers — which is what "does the HUD agree with what is
+	# on screen" always meant.
+	var hud_a := 0
+	var hud_b := 0
+	var na_side: int = (_arena.get("team_a") as Array).size()
+	for k in range(nodes.size()):
+		if not bool(_arena.call("_alive_now", k)):
+			continue
+		if k < na_side:
+			hud_a += 1
+		else:
+			hud_b += 1
+	var real_a := 0
+	var real_b := 0
+	var na: int = (_arena.get("team_a") as Array).size()
+	for k in range(units.size()):
+		if not units[k]:
+			continue
+		if k < na:
+			real_a += 1
+		else:
+			real_b += 1
+	# ── HOW MUCH OF THE BOARD THE FIGHT ACTUALLY USES. The ground is sized by `Sp.ground_size`;
+	# the fight occupies whatever it occupies. `ARENA_BLUEPRINT`/`ART_DIRECTION` keep the VENUE
+	# and the GROUND apart on purpose — this is the number that says whether the ground was sized
+	# for the fight or for the spectacle.
+	var frames2: Array = _arena.get("frames")
+	var fi: int = clampi(int(floor(float(_arena.get("frame_pos")))), 0, frames2.size() - 1)
+	var wmn := Vector2(1e9, 1e9)
+	var wmx := Vector2(-1e9, -1e9)
+	for rec in (frames2[fi].get("units", []) as Array):
+		if not bool(rec.get("alive", true)):
+			continue
+		var wp: Vector2 = rec.get("pos", Vector2.ZERO)
+		wmn.x = minf(wmn.x, wp.x); wmn.y = minf(wmn.y, wp.y)
+		wmx.x = maxf(wmx.x, wp.x); wmx.y = maxf(wmx.y, wp.y)
+	var gs: Vector2 = _arena.get("ground_size")
+	var used: float = maxf(0.0, wmx.x - wmn.x) * maxf(0.0, wmx.y - wmn.y)
+	_samples.append({
+		"used_frac": used / maxf(1.0, gs.x * gs.y),
+		"span_x": maxf(0.0, wmx.x - wmn.x), "span_y": maxf(0.0, wmx.y - wmn.y),
+		"t": t, "n": n,
+		"mean_h": _mean_unit_height(cam, nodes, units),
+		"body_frac": body_px / (vp.x * vp.y),
+		"box_frac": box / (vp.x * vp.y),
+		"plate_frac": plate_px / (vp.x * vp.y),
+		"on_screen": float(on_screen) / maxf(1.0, float(n)),
+		"orphan": orphan, "collide": collide, "plates": rects.size(),
+		"hud_lies": 1 if (hud_a != real_a or hud_b != real_b) else 0,
+		# ⚠️ THE FRAME BUDGET IS PART OF LEGIBILITY, NOT SEPARATE FROM IT. A round that adds a
+		# director, off-screen pips, team rings, leader lines, tethers, impact rings and a mixer
+		# can buy readability and spend it again on a stutter — and a fight the player cannot
+		# intervene in is judged entirely on how it LOOKS running. Sampled where every other
+		# framing number is sampled, so it describes the same fight.
+		"dt": get_process_delta_time(),
+		# Split the budget so a verdict names a CULPRIT rather than a number. `TIME_PROCESS` is
+		# all GDScript `_process` in the tree (the director, the plates, the pips, this probe);
+		# the remainder is the renderer.
+		"cpu": Performance.get_monitor(Performance.TIME_PROCESS),
+		"draws": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+		"objs": Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
+	})
+
+
+func _mean_unit_height(cam: Camera3D, nodes: Array, units: Array) -> float:
+	var tot := 0.0
+	var n := 0
+	for k in range(nodes.size()):
+		if k >= units.size() or not units[k]:
+			continue
+		var p: Vector3 = (nodes[k]["holder"] as Node3D).position
+		tot += absf(cam.unproject_position(p).y - cam.unproject_position(p + Vector3(0, Arena.UNIT_HEIGHT, 0)).y)
+		n += 1
+	return tot / maxf(1.0, float(n))
+
+
+func _capture(t: float) -> void:
+	await RenderingServer.frame_post_draw
+	var path := "user://watch_%s_%02d_t%05.1f.png" % [_tag, _shot, t]
+	get_viewport().get_texture().get_image().save_png(path)
+	_shot += 1
+
+
+func _finish_audit() -> void:
+	set_process(false)
+	if _samples.is_empty():
+		_line("   (no framing samples)")
+		_dump()
+		get_tree().quit(0)
+		return
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var mean_h := 0.0
+	var min_h := 1e9
+	var max_h := 0.0
+	var mean_body := 0.0
+	var mean_box := 0.0
+	for s in _samples:
+		mean_h += float(s["mean_h"]); mean_body += float(s["body_frac"]); mean_box += float(s["box_frac"])
+		min_h = minf(min_h, float(s["mean_h"])); max_h = maxf(max_h, float(s["mean_h"]))
+	var c := float(_samples.size())
+	_line("   viewport            %dx%d" % [int(vp.x), int(vp.y)])
+	_line("   monster height      mean %.0f px  (%.1f%% of frame height) · min %.0f · max %.0f"
+		% [mean_h / c, 100.0 * (mean_h / c) / vp.y, min_h, max_h])
+	_line("   bodies occupy       %.2f%% of the frame on average" % (100.0 * mean_body / c))
+	var on_scr := 0.0
+	for s2 in _samples:
+		on_scr += float(s2["on_screen"])
+	_line("   living units IN FRAME %.0f%% on average  ← the camera fits only what it decides to fit"
+		% (100.0 * on_scr / c))
+	# ── THE FRAME BUDGET. Sorted, so the read is the WORST ONE PER CENT rather than a mean that
+	# a single long hitch cannot move. A prettier slideshow is not a legibility win.
+	var dts: Array = []
+	for s3 in _samples:
+		dts.append(float(s3["dt"]))
+	dts.sort()
+	var dt_sum := 0.0
+	for d in dts:
+		dt_sum += float(d)
+	var p99: float = float(dts[mini(dts.size() - 1, int(float(dts.size()) * 0.99))])
+	# ⚠️ READ THE MEDIAN, NOT THE MEAN. This probe saves a 1920x1200 PNG every two sim seconds and
+	# that write is a multi-frame stall, so the mean and the 99th percentile both describe the
+	# INSTRUMENT as much as the game. The median is the frame the player actually gets.
+	var med: float = float(dts[dts.size() / 2])
+	_line("   frame time          median %.1f fps · mean %.1f fps · p99 worst %.0f ms  (mean and p99 include this probe's PNG writes)"
+		% [1.0 / maxf(0.0001, med), c / maxf(0.0001, dt_sum), p99 * 1000.0])
+	# ⚠️ `Performance.TIME_PROCESS` REPORTED 151 ms INSIDE A 35 ms FRAME, so it is not measuring
+	# what its name suggests and it is not quoted. Draw calls and node count are unambiguous and
+	# they are the two numbers that located the cost, so those are what get printed.
+	#
+	# ⚠️ AND THE COST IS THE CROWD, MEASURED BY A/B, NOT BY INFERENCE. Same fight, same probe,
+	# `spectators.build(..., fill)` at 1.0 vs 0.0:
+	#     fill 1.0 → 31 fps median · 2,986 draw calls · 30,111 nodes
+	#     fill 0.0 → 144 fps median ·   281 draw calls ·    713 nodes
+	# ~1,050 individually instantiated rigged GLB spectators are 4.6x the whole frame budget, and
+	# the fight, the director, the pips, the rings, the tethers and the mixer together fit inside
+	# the remaining 7 ms with room to spare. Do NOT "fix" this by thinning the house — the full
+	# house is a user call ("I want to see all of the seats filled") and fame-driven fill is a
+	# standing rule. It is a MultiMesh/impostor job.
+	var draws := 0.0
+	var objs := 0.0
+	for s4 in _samples:
+		draws += float(s4["draws"]); objs += float(s4["objs"])
+	_line("   scene cost          %.0f draw calls · %.0f nodes  ← the crowd; A/B in this file's comment"
+		% [draws / c, objs / c])
+	# The last-10-seconds read: does the camera tighten when the fight thins out?
+	var late_h := 0.0
+	var late_n := 0
+	var dur: float = float(_samples[_samples.size() - 1]["t"])
+	for s in _samples:
+		if float(s["t"]) > dur - 10.0:
+			late_h += float(s["mean_h"]); late_n += 1
+	if late_n > 0:
+		_line("   last 10s            monster height mean %.0f px" % (late_h / float(late_n)))
+	var orphan := 0.0
+	var collide := 0.0
+	var plates := 0.0
+	var lies := 0
+	var plate_frac := 0.0
+	for s in _samples:
+		orphan += float(s["orphan"]); collide += float(s["collide"]); plates += float(s["plates"])
+		plate_frac += float(s["plate_frac"]); lies += int(s["hud_lies"])
+	var used := 0.0
+	var sx := 0.0
+	var sy := 0.0
+	var used_min := 1e9
+	for s3 in _samples:
+		used += float(s3["used_frac"]); sx += float(s3["span_x"]); sy += float(s3["span_y"])
+		used_min = minf(used_min, float(s3["used_frac"]))
+	var gs2: Vector2 = _arena.get("ground_size")
+	_line("   ground              %.0f x %.0f world units (%.0f sq units)" % [gs2.x, gs2.y, gs2.x * gs2.y])
+	_line("   fight footprint     %.0f x %.0f mean = %.1f%% of the ground (min %.2f%%)"
+		% [sx / c, sy / c, 100.0 * used / c, 100.0 * used_min])
+	_line("")
+	_line("── D. THE NAMEPLATE, which is the ONLY hp/intent surface the player has ──")
+	_line("   plates shown        %.1f on average" % (plates / c))
+	_line("   ORPHANED            %.1f per frame (%.0f%%) — lifted more than one body-height from"
+		% [orphan / c, 100.0 * orphan / maxf(1.0, plates)])
+	_line("                       the head they annotate, so they cannot be attributed")
+	_line("   OVERLAPPING pairs   %.1f per frame — two plates sharing pixels are both unreadable"
+		% (collide / c))
+	_line("   plates occupy       %.2f%% of the frame vs %.2f%% for the bodies (ratio %.1fx)"
+		% [100.0 * plate_frac / c, 100.0 * mean_body / c,
+		   (plate_frac / maxf(0.0001, mean_body))])
+	_line("")
+	_line("── E. THE SCOREBOARD ──")
+	_line("   frames where the standing HUD disagrees with the frame on screen: %d of %d (%.0f%%)"
+		% [lies, _samples.size(), 100.0 * float(lies) / c])
+	_line("   strip               %d frames -> %s" % [_shot, ProjectSettings.globalize_path("user://")])
+	# ── F. THE MIX. ⚠️ A TRIPWIRE, NOT A NICETY. `docs/WATCH_AUDIT.md` §5 found 700 lines of
+	# mix engineering that the production watch path never called, and the failure was completely
+	# invisible from the outside: the scene ran, the probes passed, and the fight was silent. The
+	# only honest question about a mix is what the LISTENER actually heard, and that is a count.
+	# It reads the layer's own audit counters, so a wiring that goes stale reports zero rather
+	# than passing quietly. Headless runs on the dummy driver — this proves the events REACHED
+	# the mixer and were graded, never that anything sounded good.
+	var au = _arena.get("_audio")
+	if au == null:
+		_line("── F. THE MIX ──")
+		_line("   ⚠️ NO AUDIO LAYER ON THE PRODUCTION WATCH PATH — the fight is silent")
+	else:
+		var ev: Dictionary = au.get("stat_events")
+		var pl: Dictionary = au.get("stat_played")
+		var rf: Dictionary = au.get("stat_refused")
+		var n_ev := 0
+		for v in ev.values():
+			n_ev += int(v)
+		var n_pl := 0
+		for v in pl.values():
+			n_pl += int(v)
+		var n_rf := 0
+		for v in rf.values():
+			n_rf += int(v)
+		_line("── F. THE MIX ──")
+		_line("   events reaching the mixer %d across %d kinds" % [n_ev, ev.size()])
+		_line("   cues played %d · refused by the density gate %d · cast rises cut %d"
+			% [n_pl, n_rf, int(au.get("stat_cut"))])
+		var keys: Array = pl.keys()
+		keys.sort()
+		var parts: Array = []
+		for k in keys:
+			parts.append("%s=%d" % [k, int(pl[k])])
+		_line("   " + " ".join(parts))
+	_capture_endings()
+
+
+## THE POST-FIGHT READ — the third watch surface, and the one that is supposed to answer "was my
+## read right". Captured here because a report nobody has looked at is exactly as unproven as a
+## fight nobody has watched.
+func _capture_endings() -> void:
+	for i in range(180):
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://watch_%s_END.png" % _tag)
+	# Hand the real result to the real report screen, exactly as `arena_3d._finish()` does.
+	_arena.visible = false
+	var rep: Node = (load("res://scenes/report.tscn") as PackedScene).instantiate()
+	add_child(rep)
+	rep.call("set_battle_result", _arena.get("result"), _arena.get("team_a"), _arena.get("team_b"))
+	for i in range(60):
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://watch_%s_REPORT.png" % _tag)
+	_line("   endings             watch_%s_END.png · watch_%s_REPORT.png" % [_tag, _tag])
+	_dump()
+	get_tree().quit(0)
+
+
+func _line(s: String) -> void:
+	_out.append(s)
+
+
+func _dump() -> void:
+	for s in _out:
+		print(s)

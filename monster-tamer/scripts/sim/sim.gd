@@ -83,6 +83,26 @@ const TickLib = preload("res://scripts/tick.gd")               # the ONE per-tic
 const DT := 0.1                 # fixed step, matches Sp.DT — never frame delta
 const DECISION_EVERY := 5       # decision tick = 0.5s; movement executes every tick
 const BODY_RADIUS := 2.2        # agreed with the renderer (spatial.gd)
+## ⚠️ "AGREED WITH THE RENDERER" IS NO LONGER TRUE, AND THE GAP IS WHY A 5v5 SCRUM IS A PILE.
+## Measured 2026-08-09 (round 13, `docs/WATCH_AUDIT.md` §0 is the symptom): enemies stand at
+## `BODY_RADIUS * 2` = 4.4 ground units = **1.50 world units** at `arena_3d.WORLD_SCALE` 0.34,
+## while a creature is drawn `UNIT_HEIGHT` 4.4 world units tall and roughly 2.3–2.6 wide. Bodies
+## therefore interpenetrate by ~40% of their drawn width BY CONSTRUCTION, and no camera, plate or
+## colour work can separate them — round 13 tried all three.
+##
+## ⚠️ AND THE OBVIOUS FIX DOES NOT FIT, WHICH IS THE ACTUAL FINDING. Focus fire (the sim's own
+## preferred behaviour, and now named on the scoreboard) rings N attackers around one target at
+## that radius. Ringing five bodies of drawn width w without overlap needs a radius of about
+## 0.85w ≈ 2.0 world units ≈ **5.9 ground units** — but `BASE_REACH`, the melee basic, is **6.6**.
+## Separation and reach are within 12% of each other, so there is no value for one that does not
+## either keep the pile or push melee out of its own swing range. **The pair has to move
+## together** (`GEOMETRY_SCALE`), or the drawn bodies have to shrink. Either is a balance change
+## with a spatial-probe re-baseline behind it, not a renderer edit.
+##
+## MEASURED NEGATIVE, so nobody pays for it twice: raising `ALLY_MIN_SEP` alone from `*2.0` to
+## `*3.2` moved nothing a viewer can see (fight footprint 166x74 → 152x69, units in frame 71% →
+## 74%, and the scrum capture is visually identical). The pile is made of ENEMIES converging on
+## one body, not of allies crowding each other. Reverted.
 const MAX_TICKS := 1800         # 3 min hard stop (fight length is emergent, #11)
 const BASE_REACH := 6.6         # melee basic reach: 3.0 * GEOMETRY_SCALE, per CLASS_BASIC melee
 const BASIC_COOLDOWN := 12      # ticks between basic attacks (1.2s)

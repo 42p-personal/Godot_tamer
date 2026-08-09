@@ -46,123 +46,45 @@ var _team_orig: Dictionary = {}
 # =============================================================================
 # THE VARIANT — one subclass, every knob the arc's own `opts` cannot reach
 # =============================================================================
+## ⚠️ THIS SUBCLASS IS NOW A THIN ADAPTER, AND THAT IS THE FIX, NOT A REGRESSION. Every knob
+## below used to be IMPLEMENTED here — a second copy of the training brain, of the successor
+## loop and of the free-body overrides, living in a different file from the autopilot it was
+## a variant of. `_probe_career_arc.gd` now owns all of them as first-class POLICIES
+## (`POLICIES` / `apply_policy`), because they are the definition of the reference player the
+## whole difficulty curve is priced against, and a player model with two implementations has
+## two definitions. The `v_*` names and `succession_buys` are KEPT because
+## `_probe_ladder_slope.gd` (not this workstream's file) sets and reads them.
 class ArcVariant extends ArcScript:
 	var v_seed: int = 20260809
 	var v_redraft_kits: bool = false     ## re-draft the moveset every week (see section 2)
 	var v_immortal: bool = false         ## lifespan -> 1000y: nothing ever retires
 	var v_free_bodies: bool = false      ## recruits, barn slots and breeding cost nothing
-	## ⚠️ THE POLICY TEST. The parent's bench is UNREACHABLE BY CONSTRUCTION: it buys a spare only
-	## when `Career.barn_capacity > team_need`, and the same loop only ever grows the barn UP TO
-	## `team_need`. Measured: `benchWeeks = 0` over a 483-week career. So "the stable never had a
-	## trained successor" was a property of the autopilot, not of the game — and the brief's
+	## ⚠️ THE POLICY TEST. The parent's bench was once UNREACHABLE BY CONSTRUCTION: it bought a
+	## spare only when `Career.barn_capacity > team_need`, and the same loop only ever grew the
+	## barn UP TO `team_need`. Measured: `benchWeeks = 0` over a 483-week career. So "the stable
+	## never had a trained successor" was a property of the autopilot, not of the game — and the
 	## question "is the wall the POLICY rather than the GAME" cannot be answered without this row.
 	var v_succession: bool = false
-	var v_succession_lead: int = 150     ## start growing the replacement this long before retirement
+	var v_succession_lead: int = 150     ## kept for callers; the parent's SUCCESSION_LEAD is 150
 	var succession_buys: int = 0
 	## Train the stats the monster is GOOD at instead of the one it is worst at. The parent's
-	## policy ("biggest drill on the lowest stat") maximises POINTS and is measured at 14.45/wk
-	## against the optimiser's 12.01 — but it builds a perfectly flat generalist, and every rival
-	## is shaped onto an archetype axis. This row asks what the flatness costs.
+	## naive policy ("biggest drill on the lowest stat") maximises POINTS and is measured at
+	## 14.45/wk against the optimiser's 12.01 — but it builds a perfectly flat generalist, and
+	## every rival is shaped onto an archetype axis. This row asks what the flatness costs.
 	var v_shaped_training: bool = false
 
-	## The ONLY copy in this file, and it exists solely to inject a seed the parent pins as a const.
-	func _reset_career() -> void:
-		Career.reset_new_game()
-		Roster.reset_to_empty()
-		Roster.rng.seed = v_seed
-		WeekPlan.plans.clear()
-		WeekPlan._rng.seed = v_seed
-		WeekPlan.reroll_food_prices()
-
-	func _offer_price(mi) -> int:
-		return 0 if v_free_bodies else super(mi)
-
-	func _barn_prices() -> Array:
-		return [0, 0, 0, 0, 0, 0, 0, 0] if v_free_bodies else super()
-
-	func _breed_cost() -> int:
-		return 0 if v_free_bodies else super()
-
-	## ⚠️ THE TRAINING BRAIN IS A SEAM THE PARENT ALREADY DISPATCHES THROUGH, so this is a policy
-	## swap and not a fork of the autopilot. Same drills, same stamina rules, same cap — only the
-	## stat chosen changes: lean into aptitude (and accept `week.gd:focus_cost` pushing back)
-	## instead of levelling the spread.
-	func _drill_plan_greedy(mi, league_cap: float) -> Dictionary:
-		if not v_shaped_training:
-			return super(mi, league_cap)
-		var WeekL = load("res://scripts/week.gd")
-		var cap: float = WeekL.stat_cap_for(mi, league_cap)
-		var best := ""
-		var best_score := -1.0
-		for s in Classify.STATS:
-			if float(mi.stats.get(s, 0.0)) >= cap - 0.5:
-				continue
-			var score: float = WeekL.stat_training_bonus(mi, s) * WeekL.focus_cost(mi, s)
-			if score > best_score:
-				best_score = score
-				best = s
-		if best == "":
-			return {"mode": "idle", "id": ""}
-		if mi.stamina >= WeekL.EXTREME_DRILL_STAMINA:
-			return {"mode": "train", "id": "x" + best.to_lower()}
-		return {"mode": "rest", "id": ""}
-
-	## The weekly hook the arc already calls before it plans anything. Everything that has to
-	## happen "to the stable, every week" rides here rather than in a copied main loop.
-	func _manage_roster(opts: Dictionary) -> Dictionary:
-		var out: Dictionary = super(opts)
-		if v_immortal:
-			for mi in Roster.monsters:
-				mi.lifespan_years = 1000.0
-				mi.retired = false
-		if v_redraft_kits:
-			for mi in Roster.monsters:
-				var rng := RandomNumberGenerator.new()
-				rng.seed = hash(mi.id) * 31 + Career.week
-				mi.assign_moveset(rng)
-		if v_succession:
-			_grow_successor()
+	## The one seam: copy this variant's knobs onto the parent's policy vars, then run the ONE
+	## autopilot. Nothing here re-implements a policy.
+	func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
+		p_seed = v_seed
+		p_redraft_kits = v_redraft_kits
+		p_immortal = v_immortal
+		p_free_bodies = v_free_bodies
+		p_succession = v_succession
+		p_shaped_training = v_shaped_training
+		var out: Dictionary = super(max_weeks, opts)
+		succession_buys = p_succession_buys
 		return out
-
-	## Keep ONE spare body in training whenever any fielded monster is inside `v_succession_lead`
-	## weeks of retiring. Pays the real barn price and the real market price — this is a POLICY
-	## change, not a subsidy, so a row that clears Gold on it says the wall was the autopilot's
-	## play and a row that does not says the wall is the game's.
-	func _grow_successor() -> void:
-		var team: int = Career.current_team_size()
-		var active: Array = Roster.monsters.filter(func(m): return not m.retired)
-		if active.size() > team:
-			return   # a spare already exists
-		var ageing := false
-		for mi in active:
-			if _weeks_left(mi) <= v_succession_lead:
-				ageing = true
-				break
-		if not ageing:
-			return
-		while Career.barn_capacity <= team:
-			var nxt: int = Career.barn_capacity + 1
-			if nxt >= _barn_prices().size():
-				return
-			var bprice: int = _barn_prices()[nxt]
-			if Career.gold < bprice + 120:
-				return
-			Career.spend_gold(bprice)
-			Career.barn_capacity = nxt
-		if Roster.monsters.size() >= Career.barn_capacity:
-			return
-		var pick: Dictionary = {}
-		for o in _offers_this_week():
-			if int(o["price"]) + 120 > Career.gold:
-				continue
-			if pick.is_empty() or _stat_total(o["mi"]) > _stat_total(pick["mi"]):
-				pick = o
-		if pick.is_empty():
-			return
-		Career.spend_gold(int(pick["price"]))
-		pick["mi"].id = Roster.next_slot_id()
-		Roster.monsters.append(pick["mi"])
-		succession_buys += 1
 
 
 ## Travel is charged inline in `_run_arc` off `CupRun.weeks_for_cup`, which no override can reach.

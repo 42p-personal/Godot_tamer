@@ -52,6 +52,7 @@ var licences: Dictionary = {}
 func _ready() -> void:
 	_load_ladder()
 	_reset_leagues_won()
+	_check_climber_curve()   ## ⚠️ after _load_ladder — `ladder_shape()` needs `leagues.size()`
 
 
 func _load_ladder() -> void:
@@ -249,24 +250,60 @@ func rival_count_for_league(idx: int) -> int:
 ##
 ## Measured response of that ratio (the calibration these were read off, `-- --response`):
 ##   ratio .80 -> ~90% win  |  .95 -> ~72%  |  1.05 -> ~55%  |  1.15 -> ~35%  |  1.25 -> ~22%
-const FIELD_OPENER_RATIO_BOTTOM := 0.80   ## round one, Wood — winnable, never free
-const FIELD_OPENER_RATIO_TOP := 0.90      ## round one, Tamers Apex
+## ⚠️ THE QUALIFIER CEILING IS THE ONE AUTHORED CURVE; THE OPENER IS DERIVED FROM IT.
+## It used to be two independent lerps — opener 0.80->0.90 and ceiling 0.95->1.00 — and the SHAPE
+## OF A CUP was therefore an accident of four endpoints, exactly like the champion band was. What a
+## designer actually wants to say about a draw is two things: how hard its hardest qualifier is,
+## and how much the first round ramps up to it. So that is what is authored.
+## ⚠️ AND THE TOP CAME UP HARD (1.00 -> 1.20) BECAUSE THE MID-LADDER MEASURED AS A WALKOVER.
+## At 1.00 the qualifying rounds of Bronze..Tamer Elite ran at a 0.75-0.92 win rate against the
+## climber — a draw you clear by turning up. The old value was set when the field also carried
+## `tactics.gd:FILL_MULT` (see `FIELD_KIND_PARITY_APPLIED`) and against a climber table 15-25%
+## higher in the mid-game; both of those propped it up, and both are now gone.
 const FIELD_QUAL_RATIO_BOTTOM := 0.95     ## the last qualifying round, Wood
-const FIELD_QUAL_RATIO_TOP := 1.00        ## the last qualifying round, Tamers Apex
-## ⚠️ THE CHAMPION BAND CAME DOWN 0.04 WHEN THE CLIMBER MODEL BECAME A MEASUREMENT, AND IT WAS
-## THE ONLY FIELD CONSTANT THAT HAD TO MOVE. The measured climber carries FEWER absolute points
-## than the old formula assumed at the top of the ladder (Apex: 0.43 x 1100 = 473 against the
-## formula's 0.61 x 1100 = 671), and a ratio is not perfectly scale-free — the same 1.06 ratio is
-## a harder fight at 473 points than at 671. Measured at 96 cups per rung, dropping the band from
-## 1.02/1.06 to 0.98/1.02 moved the three hardest rungs (Masters 19 -> 26, Tamer Elite 27 -> 32,
-## Apex 11 -> 15 ADVANCE %) and the whole ladder from 31.8 to 26.7 expected cups, with everything
-## below Gold unchanged inside noise. Champions eat the correction because at every rung but Apex
-## the RANK forgives one dropped round, so this buys the summit without making the draw a walkover.
-## ⚠️ AND THE TOP MUST STAY ABOVE THE BOTTOM. Setting TOP below BOTTOM was tried and the slope
-## probe's liveness canary refused it — a Dynast priced softer than the Paddock King makes the
-## ladder's own difficulty knob run backwards, whatever the advance column says.
-const FIELD_CHAMPION_RATIO_BOTTOM := 0.98 ## the Paddock King
-const FIELD_CHAMPION_RATIO_TOP := 1.02    ## the Dynast — the hardest single opponent in the game
+const FIELD_QUAL_RATIO_TOP := 1.08        ## the last qualifying round, Tamers Apex
+
+## ⚠️ HOW FAR ROUND ONE SITS BELOW THAT CEILING — AND IT NARROWS UP THE LADDER ON PURPOSE.
+## A Wood cup should TEACH: an opener you beat, then a real one, then the titleholder. A Tamers
+## Apex cup is an invitational, and there is no such thing as a warm-up round in it. Measured, the
+## old constant-width ramp is why the summit's opener sat at a 94-100% win rate while its ADVANCE
+## was 15% — the draw was four free rounds and a wall, which is a coin toss with ceremony, not a
+## final. Narrowing the ramp is what makes the Apex draw a gauntlet instead.
+const FIELD_DRAW_RAMP_BOTTOM := 0.15      ## Wood — round one is well below the last qualifier
+const FIELD_DRAW_RAMP_TOP := 0.05         ## Apex — every round in the draw is a title contender
+## ── THE CHAMPION BAND — A GAP OVER THE QUALIFIERS, NOT AN INDEPENDENT CURVE ──────────────────
+## ⚠️ THIS IS THE FIX FOR THE LADDER'S TWO LARGEST INVERSIONS, AND THE BUG WAS STRUCTURAL RATHER
+## THAN NUMERIC. The champion ratio used to be its OWN lerp (0.98 -> 1.02) sitting beside the
+## qualifier lerp (0.95 -> 1.00), and nothing in the code related the two. The gap they happened
+## to produce was therefore an ACCIDENT of four independently-authored endpoints: +0.03 at Wood,
+## +0.02 at Apex — smaller than the depth relief that comes off the qualifiers, so at a deep rung
+## the "champion" could and did land BELOW the last team in their own draw. Measured at 96 cups,
+## champion p minus that cup's own qualifier mean read
+##   Wood -0.05 | Copper -0.02 | Tin -0.40 | Bronze -0.27 | Iron -0.35 | SILVER +0.09 |
+##   Gold -0.39 | PLATINUM +0.03 | Masters -0.39 | Elite -0.20 | Apex -0.76
+## — and Silver and Platinum, the two rungs with a POSITIVE band (a titleholder easier than their
+## own qualifiers), are precisely the two largest ADVANCE inversions in the ladder (Silver 70%
+## after Iron 55%; Platinum 58% after Gold 36%).
+##
+## So the champion is now defined AS the qualifier ceiling plus an authored GAP. Two parameters,
+## one shaped function, and the invariant is structural: you cannot author a soft champion without
+## authoring a negative gap, and a negative gap is visible on the line that declares it.
+##
+## WHAT THE GAP EXPRESSES, in design terms: how much MORE the titleholder is than the hardest team
+## you had to beat to reach them. Shallow at the bottom, where the ladder is teaching and a rung
+## should be a lesson rather than a wall; deepening as it climbs, so the last thing between you and
+## the rank becomes progressively more of the test. It is a curve in `ladder_shape`, the same
+## non-linear ladder position every other field endpoint is interpolated along.
+## ⚠️ AND THE ANCHOR IS THE **RELIEVED** QUALIFIER CEILING — THE HARDEST TEAM ACTUALLY IN THE DRAW,
+## NOT THE UNRELIEVED CURVE. This was measured the wrong way round first and the reading is why:
+## anchored to the unrelieved ceiling, the EFFECTIVE gap silently became `gap + relief`, so at
+## Tamers Apex (depth relief 0.06 + summit relief) the Dynast stood 0.34 above their own draw
+## instead of the authored 0.22 and took the champion round to a measured 0% win rate over 32 cups.
+## A gap the code computes as "authored gap PLUS whatever relief happens to apply" is the same
+## class of accident this whole section exists to remove. `field_fill()` and `champion_fill_for()`
+## now share ONE `_qual_ceiling_ratio()`, so the gap is the gap at every rung.
+const FIELD_CHAMPION_GAP_BOTTOM := 0.12   ## Wood — the Paddock King is a step, not a wall
+const FIELD_CHAMPION_GAP_TOP := 0.18      ## Apex — the Dynast is a different question entirely
 const CHAMPION_REMATCH_BUMP := 0.04       ## they train too — see `champion_fill_for()`
 
 ## ⚠️ A DEEPER DRAW IS HARDER AT EQUAL TEAM STRENGTH, AND THE RULE ALONE CANNOT ABSORB IT. A cup
@@ -293,7 +330,32 @@ const FIELD_DEPTH_RELIEF_PER_ROUND := 0.03   ## ratio units per round beyond the
 ## both in tension with the relief, and the relief wins. The opener's softness is NOT mainly the
 ## relief: it is that `FIELD_OPENER_RATIO_TOP = 0.90` sits on a steep transfer curve. If a harder
 ## Apex opener is wanted, raise that endpoint and pay for it somewhere else; do not take the relief.
-const FIELD_APEX_QUAL_RELIEF := 0.18
+## ⚠️ THAT CONSTANT NO LONGER EXISTS — the opener is now DERIVED from the qualifier ceiling by
+## `FIELD_DRAW_RAMP_*`, and the paragraph above is kept only as the record of the old reading.
+## Its own diagnosis is what pointed at the ramp: the Apex opener was soft because the draw's
+## SHAPE was authored once for the whole ladder, not because of the relief.
+##
+## ⚠️ 0.18 -> 0.09 (round 12). THE READING ABOVE WAS TAKEN WITH THE OLD ACCIDENTAL CHAMPION BAND,
+## AND ITS CONCLUSION DOES NOT SURVIVE THE FIX. At the time it was measured, the Apex champion sat
+## at a ratio of 1.02 — barely above the qualifier line — so ADVANCE at the summit was carried
+## almost entirely by the four qualifying rounds, and taking relief off them was the only term
+## moving. That is why both halves of the target failed together: there was nothing else holding
+## the rung up. With the champion authored as a real gap over the qualifiers, the Dynast IS the
+## rung, which is what `FIELD_APEX_QUAL_RELIEF` was invented to fake. The relief therefore comes
+## down to the depth relief every other 5-round rung already gets, plus a small remainder for the
+## no-dropped-round rule the summit alone lives under.
+## ⚠️ IT IS NOT ZERO, AND THAT IS DELIBERATE. Apex is the one rung whose result is a PRODUCT of
+## five win rates with nothing forgiven; at a flat qualifier line its ADVANCE is a fifth power and
+## collapses. The residual relief is what pays for the drop rule, not for a weak Dynast.
+## ⚠️ AND BACK UP TO 0.19 ONCE THE QUALIFIER CEILING WAS RE-AUTHORED AT 1.20. The two numbers are
+## not independent: 0.06 was measured against a 1.00 ceiling. What the summit actually needs is a
+## qualifier line around a 0.82 per-round win rate — because 0.82^4 x a 0.40 Dynast is the ~18%
+## ADVANCE this rung is authored for — and holding that line while the rest of the ladder's ceiling
+## rose 20% means the relief rises with it. Expressed as a RATIO it is now 0.19/1.20 rather than
+## 0.18/1.00: proportionally almost unchanged, which is the honest reading of what it was ever
+## doing. What DID change is the ramp (`FIELD_DRAW_RAMP_TOP`), which is what makes the Apex opener
+## a real round rather than the fourth free one.
+const FIELD_APEX_QUAL_RELIEF := 0.09
 
 ## ⚠️ THE LADDER IS NOT LINEAR IN ITS OWN INDEX, AND WOOD IS WHY. Measured (`-- --response`),
 ## the fill -> win-rate curve is the same shape at every rung EXCEPT Wood, where it is nearly
@@ -337,51 +399,131 @@ const FIELD_SHAPE_EXP := 0.35
 ## the ladder read 75 -> 35 ADVANCE and 15.1 cups for the whole climb, i.e. flat and half price.
 ## Restoring 1.00 puts it back on 26.8 cups without touching a single per-rung ratio — which is
 ## the coupling doing its job, and is why this stayed ONE knob.
-const FIELD_ARCHETYPE_POWER_MULT := 1.00
+## ⚠️ 1.00 -> 0.85 (round 12). IT IS NOW ALSO PAYING FOR THE KIND CORRECTION THIS FILE STOPPED
+## APPLYING. `FIELD_KIND_PARITY_APPLIED` (below) drops `tactics.gd:FILL_MULT` from the ladder — and
+## the early ladder had been quietly ENJOYING that multiplier, because `archetypes_taught_by()`
+## starts as `[rushdown]` (0.856) and only reaches an average of 1.0 around Gold. Measured at 32
+## cups, turning FILL_MULT off cost Wood 16 points of ADVANCE (66% -> 50%) and Copper 16 (63% ->
+## 47%) while the top of the ladder barely moved — exactly the shape of the pool's own mean
+## multiplier. So this single global term re-anchors the whole field, which is what it is for: the
+## per-rung RATIOS are the difficulty curve and were not re-authored to absorb a units change.
+const FIELD_ARCHETYPE_POWER_MULT := 0.85
 
-## ── WHAT THESE CONSTANTS ACTUALLY PRODUCE (record it, or the next round re-derives it) ───────
-## `scenes/_probe_ladder_slope.tscn -- --seeds 96` — 96 cups per rung against the MEASURED climber
-## (`CLIMBER_FILL_BY_LEAGUE`). ADVANCE is the promotion rule; TITLE is the clean sweep; "cups" is
-## 1/ADVANCE, i.e. attempts per rung.
+## ── HOW MUCH OF `tactics.gd:FILL_MULT` THE LADDER APPLIES ─────────────────────────────────────
+## ⚠️ THIS IS THE OTHER HALF OF THE CHAMPION-BAND FIX, AND IT IS THE TERM THAT WAS DRIVING THE
+## SAWTOOTH ONCE THE GAP WAS AUTHORED. `tactics.gd:FILL_MULT` rescales a kind's fill so the six
+## kinds are worth the same — measured by `_probe_archetypes` AGAINST A GENERIC 0.65 BUILD. The
+## ladder does not fight a generic 0.65 build; it fights the CLIMBER. Measured at 32 cups per rung
+## with the gap authored and FILL_MULT fully applied, the champion round's win rate against the
+## climber read:
+##   Wood rushdown .856 -> .56 | Copper bulwark 1.000 -> .34 | Tin attrition 1.231 -> .09
+##   Bronze zone 1.066 -> .22  | Iron bulwark 1.000 -> .13   | Silver focusfire .769 -> .56
+##   Gold control 1.192 -> .00 | Platinum focusfire .769 -> .44 | Masters control 1.192 -> .06
+##   Tamer Elite rushdown .856 -> .16 | Apex zone 1.066 -> .00
+## r(FILL_MULT, champion win rate) = **-0.81** over eleven rungs, and it is not merely league
+## index in disguise: the two `focusfire` champions (.56 at Silver, .44 at Platinum) sit far ABOVE
+## rungs whose authored ratio is LOWER (Tin .09, Iron .13). Against the climber, FILL_MULT does not
+## equalise the kinds — it OVER-corrects them, by enough to swamp the entire authored difficulty
+## curve. That is why Silver and Platinum, the two `focusfire` rungs, were the ladder's two soft
+## champions and its two largest ADVANCE inversions.
+##
+## ⚠️ AND IT IS NOT `tactics.gd`'s NUMBER THAT IS WRONG — IT IS THE ASSUMPTION THAT ONE NUMBER
+## ANSWERS BOTH QUESTIONS. "Are the six kinds equal against a generic build" and "are they equal
+## against the climber" are different questions with different answers, and `tactics.gd`'s own
+## comment already says one knob per question. So the LADDER states how much of that correction it
+## applies, in its own file, as an exponent: the field is built at `fill * FILL_MULT^k`.
+##   k = 1.0 — the correction in full (what shipped, and what the row above measures)
+##   k = 0.0 — kinds neutral on the ladder: a cup round is worth its authored ratio, whatever kind
+##             the draw hands it
+## ⚠️ THIS ALSO REMOVES A DISCONTINUITY NOBODY AUTHORED. `make_cup_field()` draws each qualifying
+## round's kind from `archetypes_taught_by(idx)`, a pool that GROWS at five rungs — so under k=1
+## the mean difficulty of a rung's qualifiers stepped every time the pool's kind-mix changed.
+## ⚠️ RE-DERIVE IT WITH `_probe_ladder_slope.tscn` SECTION 1b, NEVER BY REASONING. If a future
+## change to `tactics.gd:FILL_MULT` re-calibrates it against the climber, this goes back toward 1.0
+## and the champion band must be re-read.
+##
+## ⚠️⚠️ ROUND-12 INTEGRATION — `r = -0.81` ABOVE IS A CONFOUNDED READING, AND THE HONEST ONE IS
+## WORSE FOR `FILL_MULT`, NOT BETTER. That correlation was taken over ELEVEN CHAMPION ROUNDS, one
+## per rung — so "which kind" is perfectly confounded with "which rung", and every rung differs in
+## fill, round depth, cap and team size. Measured properly by `_probe_sawtooth.tscn -- --kinds`
+## §7 (all six kinds fought at EVERY rung's own qualifier fill, 6,288 fights, k=0 so each kind is
+## built at its plain authored fill), the win rate against the climber is:
+##                rushdown bulwark attrition focusfire control  zone   spread
+##   POOLED         57%      78%      78%       73%      59%     77%     20
+##   worst rung (Tin)  78%   84%      47%       72%       9%     81%     75
+## r(FILL_MULT, pooled win rate) = **+0.15**. Not anti-correlated — UNCORRELATED. `FILL_MULT` is
+## not over-correcting the kinds against the climber, it is not correcting them at all, and it
+## leaves a 20-point pooled spread (75 points at Tin) that no authored ratio can see. Two of its
+## six values have the wrong sign outright: `attrition` is priced 1.231 (the WEAKEST kind, needing
+## 23% more fill) and measures joint-strongest at 78%; `rushdown` is priced 0.856 (strong) and
+## measures weakest at 57%.
+## ⚠️ SO K=0 IS THE RIGHT SETTING AND FOR A BETTER REASON THAN IT WAS SET. Applying a multiplier
+## that is uncorrelated with strength adds variance to the field and removes none. It stays at 0.0
+## until `tactics.gd:FILL_MULT` is re-derived from the §7 table above — and when it is, the six
+## values should come from THAT instrument, at the rung's own qualifier fill, never from a fight
+## against a generic 0.65 build.
+const FIELD_KIND_PARITY_APPLIED := 0.0
+
+## ── WHAT THESE CONSTANTS ACTUALLY PRODUCE ──────────────────────────────────────────
+## ⚠️ ONE CURRENT TABLE, DATED, AND EVERY SUPERSEDED ROW MARKED AS HISTORY. This block used to
+## print one row and call it "MONOTONE (0 inversions at n=96)" while a DIFFERENT row four lines
+## above it carried five inversions, because each round appended its reading instead of replacing
+## it. Rows from different rounds describe different players AND different fields; they are not
+## comparable, and stacking them is how this file came to contradict itself. Replace the CURRENT
+## table when you re-measure; move the old one under HISTORY with its date and its build.
+##
+## ── CURRENT — 2026-08-09, round 12 ───────────────────────────────────────────────
+## `scenes/_probe_ladder_slope.tscn -- --seeds 96`, 96 cups per rung against the AUTHORED climber
+## curve. ADVANCE is the promotion rule; TITLE is the clean sweep; "cups" is 1/ADVANCE.
+## BAND is champion win rate minus that cup's own qualifier mean — section 1b of the probe.
 ##
 ##   league       Wood Copp  Tin Bron Iron Silv Gold Plat Mast Elit Apex
-##   fill          .49  .44  .49  .59  .53  .50  .48  .44  .44  .42  .43
-##   ADVANCE %      68   78   66   46   55   70   36   58   33   35   15
-##   TITLE   %      35   32   17   10   14   35    8   17    3    7   15
-##   cups         1.5  1.3  1.5  2.2  1.8  1.4  2.7  1.7  3.0  2.8  6.9   = 26.8 for the climb
+##   fill          .55  .47  .45  .43  .42  .41  .40  .39  .38  .38  .37
+##   ADVANCE %      66   79   45   69   65   58   42   23   34   19   13
+##   TITLE   %      33   38    4   13   13   14    9    4    5    1   13
+##   BAND         -.14 -.11 -.47 -.39 -.42 -.48 -.45 -.46 -.43 -.55 -.54
+##   cups         1.5  1.3  2.2  1.5  1.5  1.7  2.4  4.4  2.9  5.3  8.0   = 32.7 for the climb
 ##
-## ⚠️ THE ROW ABOVE REPLACES A ROUND-10/11 ROW READING 66/72/72/56/60/68/46/42/26/32/15, AND THE
-## TWO ARE NOT COMPARABLE. That one describes a player whose kit was silently empty whenever it
-## classified as `Generalist` — see FIELD_ARCHETYPE_POWER_MULT below. Same rungs, different
-## player, and the cup totals happen to land in the same place (26.7 then, 26.8 now) only
-## because the relief was retired at the same time the player was armed.
+## WHAT IS FIXED: **0 of 11 rungs has a champion easier than its own qualifiers** (was 2 — Silver
+## +0.09 and Platinum +0.03), the band is negative everywhere and deepens up the ladder as designed,
+## Apex is no longer a binary gate (opener 94% -> 85%, qualifier mean 0.95 -> 0.82), and no rung is
+## unclearable. Wood -> Apex reads 66% -> 13%.
 ##
-## ⚠️ AND `CLIMBER_FILL_BY_LEAGUE` IS NOW STALE AGAIN, BY THE SAME MECHANISM. It is a measurement
-## of the autopilot, and this round changed the autopilot's world (potential applied, kits
-## re-drafted, the barn affordable, the bench reachable). The arc's own fill@exit now reads
-## roughly .59 .45 .57 .60 .53 .47 .48 .46 .43 — HIGHER in the mid-game than the table claims.
-## Re-measure with `scenes/_probe_ladder_slope.tscn -- --arc-table` before quoting it, and
-## re-run `-- --seeds 96` after pasting. This was NOT done in round 11: the field is priced
-## against a slightly weaker mid-game player than the one the game now produces, which makes
-## Bronze..Gold marginally harder than intended. Stated, not hidden.
-##   cups          1.5  1.4  1.4  1.8  1.7  1.5  2.2  2.4  3.8  3.1  6.9
+## ⚠️ WHAT IS **NOT** FIXED, STATED PLAINLY: INVERSION MASS IS 49.0 AGAINST A PRE-CHANGE 54.7.
+## The champion band was the diagnosed cause of the sawtooth and fixing it did NOT remove the
+## sawtooth. Three up-steps remain and none of them is a champion-band inversion:
+##   Copper 79 after Wood 66 (+14) — the long-standing soft rung; it read 78 after 68 before this
+##       round too. Wood is documented as structurally untunable from this file (`FIELD_SHAPE_EXP`)
+##       and Copper is the next-smallest dynamic range on the ladder.
+##   Bronze 69 after Tin 45 (+24) — this is TIN COLLAPSING, not Bronze rising. Tin's champion round
+##       measures p=0.13 where its neighbours read 0.30-0.34, and Tin is the `attrition` rung.
+##   Masters 34 after Platinum 23 (+11) — Platinum's champion is `focusfire` (p=0.20), Masters'
+##       is `control` (p=0.23), and Platinum's own draw is internally non-monotone (p[2]=0.49
+##       against p[3]=0.65) because qualifying kinds are drawn at random from the taught pool.
+## Every one of those is the ARCHETYPE KIND term, not the difficulty curve. See
+## `FIELD_KIND_PARITY_APPLIED` — the ladder now applies NONE of `tactics.gd:FILL_MULT`, and the
+## remaining spread is the kinds' RAW power difference against the climber, which no constant in
+## this file can address. The handover note carries the recalibration brief for `tactics.gd`.
 ##
-## Wood -> Apex 66% -> 15%, SLOPED, MONOTONE (0 inversions at n=96), 0 rungs the climber cannot
-## clear, headroom -0.06 -> -0.12, ~26.7 cups for the whole ladder.
+## ⚠️ AND THE CUP TOTAL ROSE, 26.8 -> 32.7. That is not comparable either (different player model,
+## different field), but it is above the 25-28 the brief asked for and Platinum/Tamer Elite/Apex
+## carry most of it (4.4 / 5.3 / 8.0). Apex at 13% ADVANCE sits just under the 15-20% target.
 ##
-## ⚠️ THE PREVIOUS ROW IS NOT COMPARABLE AND SAYING SO IS THE POINT. It read 63/81/72/59/59/53/44/
-## 38/25/31/28 at n=32 — but against the ANALYTIC climber, i.e. a different player. Replacing that
-## player with the measured one and re-tuning ONE constant (the champion band) landed within a few
-## points of it everywhere below Gold and lower at the top. The ladder did not get harder; the
-## player got honest. Two intermediate readings, both at n=96, for whoever needs the trail:
-##   measured climber, champion band still 1.02/1.06 : 62/71/71/53/59/67/48/40/19/27/11, 31.8 cups
-##       (that row is read back off its own printed cups line, 1.6 1.4 1.4 1.9 1.7 1.5 2.1 2.5
-##        5.3 3.7 8.7 — recorded as derived, not as a second measurement)
-##   measured climber, champion band 0.98/1.02       : the table above,                   26.7 cups
+## ── HISTORY — NOT COMPARABLE TO THE ABOVE OR TO EACH OTHER ───────────────────────────
+## Each row is a different (player model, field) pair. Quoting one against another is the error
+## this block exists to stop.
+##   round 12, pre-change (the baseline this round improved on), n=96, measured climber table,
+##       accidental champion band:  68 78 66 46 55 70 36 58 33 35 15  — 26.8 cups,
+##       5 inversions, INVERSION MASS 54.7, champions SOFT at Silver (+0.09) and Platinum (+0.03)
+##   round 10/11, n=96, player whose kit was silently empty when it classified as `Generalist`:
+##                                  66 72 72 56 60 68 46 42 26 32 15  — 26.7 cups
+##   round 10, n=32, ANALYTIC climber model (a player that does not exist):
+##                                  63 81 72 59 59 53 44 38 25 31 28
 ##
-## ⚠️ AND MIND THE SAMPLE SIZE BEFORE CHASING A WOBBLE. At n=32 this same build reported an
-## inversion at Masters/Tamer Elite (16 vs 34) that VANISHES at n=96 (26 vs 32). A proportion at
-## n=32 carries about ±9 points. `-- --seeds N` exists for exactly this; use it before tuning.
+## ⚠️ AND MIND THE SAMPLE SIZE BEFORE CHASING A WOBBLE. A proportion at n=32 carries about ±9
+## points and this file's verdict line counts INVERSIONS, so n=32 can manufacture one: the same
+## build read Masters 38 / Tamer Elite 22 at n=32 and Masters 34 / Tamer Elite 19 at n=96.
+## `-- --seeds N` exists for exactly this; use it before tuning.
 
 # ── the expected climber (a difficulty curve needs a model of the player) ───────────────
 ## ⚠️ PUTTING A PLAYER MODEL IN THE LADDER FILE IS DELIBERATE. A difficulty curve is a statement
@@ -440,7 +582,100 @@ const STAT_COUNT := 6.0
 ## at Gold, exactly where the team grows — but the magnitude is not, and a difficulty curve priced
 ## against a player half as strong as the real one is worse than one priced against a player who
 ## does not exist in a known direction.
-## ⚠️ SO THE TABLE BELOW IS THE MEASUREMENT, AND EVERY CELL IN IT HAS A SAMPLE COUNT.
+## ⚠️⚠️ AND AS OF ROUND 12 THE TABLE BELOW IS AUTHORED, NOT MEASURED. THE MEASUREMENT NOW
+## VALIDATES IT INSTEAD OF DEFINING IT, AND THIS IS THE SINGLE MOST CONSEQUENTIAL DECISION IN THIS
+## FILE. Read the argument before changing it back.
+##
+## The old rule was "measure the autopilot's fill@exit, paste it here, price the field as a ratio
+## to it". Its failure is not hypothetical — it has now happened twice in three rounds:
+##   round 10 table (measured):  .49 .44 .49 .59 .53 .50 .48 .44 .44 .42 .43
+##   round 12 re-measure (same instrument, same policy, `-- --arc-table`, n=5 per cell):
+##                               .57 .36 .47 .46 .38 .38 .39 .36 .38 .38 .39
+## Nothing about the ladder's DESIGN changed between those two rows. What changed was the
+## autopilot's world (potential applied, kits re-drafted, the barn affordable, the bench reachable)
+## — so it now climbs FASTER with a BIGGER, YOUNGER roster, and a faster climber carries LESS of
+## each rung's ceiling when it leaves. Because every `FIELD_*_RATIO_*` is a ratio to this table,
+## that re-authored the absolute difficulty of eight of eleven rungs by up to 22% (Bronze .59 ->
+## .46) with nobody deciding anything. A difficulty curve that re-shapes itself whenever the QA
+## autopilot is improved is not a difficulty curve; it is a side effect.
+##
+## ⚠️ AND THE ARTEFACTS GET BAKED IN PERMANENTLY. The Copper cell measures .36 against Wood's .57
+## — a 21-point cliff that is pure roster mechanics (`teamSizeByLeague` puts a fresh ~23-per-stat
+## recruit on the sheet at Copper) sampled on five seeds. Priced literally, Copper's whole field
+## drops 21% relative to Wood's because of when a body joins. That is not a statement anyone made
+## about how hard Copper should be.
+##
+## SO: the table is a SMOOTH AUTHORED CURVE with two parameters, and the measured row is kept
+## below it as the validation record. The design statement it makes is one sentence: **the cap
+## outruns the trainer — steeply as the team grows out of Wood, then slowly forever.** That is
+## exactly the shape the measurement shows once its two roster-mechanics wobbles are removed, and
+## it is a claim that survives the next autopilot change.
+##
+## ⚠️ WHAT VALIDATION MEANS HERE, SO IT DOES NOT ROT INTO A RITUAL. Re-run `-- --arc-table` after
+## any training/economy/team-size change and compare it to the row below. Agreement inside ~0.05
+## per rung = the authored curve still describes the player, change nothing. A SYSTEMATIC gap
+## (every rung off in the same direction) = move an ENDPOINT, one at a time, and re-run the slope.
+## A gap at ONE rung = investigate that rung; do NOT put a bump in the curve.
+##
+## ── the historical record: what has been MEASURED, and when ───────────────────────────────────
+## ⚠️ THESE ROWS ARE NOT COMPARABLE TO EACH OTHER. Each describes a different autopilot on a
+## different build, and quoting one against another is how this file accumulated a comment that
+## contradicted itself. They are kept only so a future re-measure can see the direction of drift.
+##   2026-08-08, round 10, "competent" policy, n=5 (n=3 at the top two rungs), 3 of 5 seeds
+##       reached Apex:               .49 .44 .49 .59 .53 .50 .48 .44 .44 .42 .43   [SUPERSEDED]
+##   2026-08-09, round 12, BEFORE this round's field changes, "competent", n=5 at every rung,
+##       5 of 5 seeds reached Apex:  .57 .36 .47 .46 .38 .38 .39 .36 .38 .38 .39
+##       control policy, same run:   .59 .28 .53 .58 .51 .48 .46 .44 .45 .45 .39
+##       (control reached [8,7,7,10,7] — it no longer stalls at Silver, so its column is no
+##        longer the fabricated-row hazard it was. It is still not the player the game intends.)
+##   2026-08-09, round 12, AFTER this round's field changes — THE VALIDATION RUN:
+##       competent, 5/5 seeds to Apex: .57 .46 .46 .41 .35 .35 .38 .39 .38 .40 .39   [CURRENT]
+##       control,   5/5 seeds to Apex: .53 .44 .46 .41 .42 .41 .40 .41 .37 .39 .38
+##       authored curve (what ships):  .55 .47 .45 .43 .42 .41 .40 .39 .38 .38 .37
+## ⚠️ THE AUTHORED CURVE IS WITHIN 0.02 OF THE COMPETENT MEASUREMENT AT NINE OF ELEVEN RUNGS (worst
+## 0.07, at Iron and Silver), and within 0.02 of the CONTROL column at ten of eleven. Two players
+## measured independently, both landing on the authored line: that is the validation the decision
+## above was betting on, and it came in.
+## ⚠️ AND THE COPPER CLIFF DID NOT REPRODUCE. The pre-change run measured Copper at .36 and Wood at
+## .57 — the 21-point drop that a MEASURED table would have baked into the difficulty curve
+## permanently. Re-measured after the change it reads .46. It was sampling, not a property of the
+## game. That single cell is the whole argument for authoring the curve, and it is why the row
+## above says "measured .36" beside a shipped 0.47 rather than the other way round.
+## ⚠️⚠️ ROUND-12 INTEGRATION: THE VALIDATION ABOVE WAS RUN AGAINST A SUBSIDISED PLAYER, AND HAS
+## BEEN RE-RUN AGAINST A REAL ONE. `_probe_ladder_slope.gd:_arc_fills("policy_all")` — the column
+## labelled "competent" in every row above — also set `v_free_bodies = true` and passed
+## `{"feeMult": 0.0}`: free recruits, free barn slots, free breeding and no cup entry fee. Measured
+## at 8 seeds on the round-11 ship ladder, the SAME policy completes 2/8 careers at full price
+## against 8/8 subsidised. That seam is now closed (the column pays full price) and the curve was
+## re-validated on 2026-08-09 by the integrator:
+##       competent AT FULL PRICE, n=5:  .54 .41 .46 .39 .38 .38 .35 .39 .38 .40 .39
+##       and independently, `_probe_career_arc.gd --policies --seeds 8`, COMPETENT:
+##                                      .54 .41 .47 .40 .39 .39 .36 .40 .39 .40 .39
+##       authored curve (what ships):   .55 .47 .45 .43 .42 .41 .40 .39 .38 .38 .37
+## Two instruments, two seed sets, agreeing to 0.01 at every rung: the measurement is solid.
+## ⚠️ AND IT SAYS THE CURVE IS ~0.04 HIGH THROUGH THE MID-LADDER. Copper +0.06, Bronze +0.04,
+## Iron +0.04, Gold +0.05; Platinum..Apex agree to 0.02. The authored line is right at both ends
+## and bows above the real player in the middle, so Copper..Gold are currently fielding a team
+## built for a climber ~10% richer than the one that actually arrives. DO NOT put a bump in the
+## curve to fix it — that is exactly what authoring it was for. `CLIMBER_FILL_WOOD` is right;
+## the shape between the endpoints (`ladder_shape`'s exponent) is what is wrong.
+## ⚠️ THE SUCCESSION CANARY WAS ASKING THE WRONG QUESTION and has been rewritten rather than
+## fixed. It fired on all five seeds ("bought no successor") because `_grow_successor()` returns
+## early when a spare already exists, and round 11's four-wire fix made the arc's MAINLINE recruit
+## `team_need + BENCH_SIZE`. Succession is REDUNDANT, not inert. The canary now asserts
+## `benchWeeks > 0` — that trained cover exists at all — and fails the run when it does not.
+##
+## ── the curve ─────────────────────────────────────────────────────────────────────────────────
+## fill(idx) = lerp(CLIMBER_FILL_WOOD, CLIMBER_FILL_APEX, ladder_shape(idx))
+## `ladder_shape` is the SAME non-linear ladder position every field endpoint uses, so the climber
+## and the field it faces bend on one curve rather than two.
+const CLIMBER_FILL_WOOD := 0.55   ## one monster, a cap of 100, base stats already at ~23
+const CLIMBER_FILL_APEX := 0.37   ## five monsters, a cap of 1100, a career's worth of weeks
+##
+## ⚠️ THE OLD PROSE BELOW IS THE MEASURED ERA'S REASONING AND IS RETAINED BECAUSE ITS FINDINGS ARE
+## STILL TRUE — the team-size dilution, the road tax, and why the ANALYTIC model was banned. Only
+## its conclusion ("so the table is the measurement") is superseded.
+## ⚠️ SO THE TABLE BELOW WAS THE MEASUREMENT, AND EVERY CELL IN IT HAD A SAMPLE COUNT.
 ## Source: `scenes/_probe_ladder_slope.tscn -- --arc-table`, §5. It runs the autopilot
 ## (`_probe_career_arc.gd`, via the ONE existing subclass in `_probe_gold_wall.gd` — no third copy
 ## of the career loop) over five seeds and records, per rung, the fraction of THAT rung's ceiling
@@ -485,23 +720,42 @@ const STAT_COUNT := 6.0
 ## ⚠️ AND THE COUPLING IS THE WHOLE POINT: every `FIELD_*_RATIO_*` is a ratio TO this number, so
 ## correcting it re-anchors the absolute fills WITHOUT re-tuning any difficulty ratio. The field
 ## moves with the player. If the slope changes after a re-measure, re-tune the FIELD, never this.
+##
+## ⚠️ THE ARRAY BELOW IS THE CURVE, SAMPLED — NOT ELEVEN VALUES. It is stored as an array for one
+## reason: `scripts/_probe_sawtooth.gd` reads `Career.CLIMBER_FILL_BY_LEAGUE` by name to run its
+## counterfactual, and that file is not this workstream's to edit. `_check_climber_curve()` asserts
+## at boot that every cell still equals `lerp(CLIMBER_FILL_WOOD, CLIMBER_FILL_APEX,
+## ladder_shape(i))` to 0.005 and push_error()s if a hand-edit has drifted from the curve. EDIT THE
+## TWO ENDPOINTS AND RE-SAMPLE; do not tune a cell.
 const CLIMBER_FILL_BY_LEAGUE: Array = [
-	0.49,  ## Wood        n=5
-	0.44,  ## Copper      n=5
-	0.49,  ## Tin         n=5
-	0.59,  ## Bronze      n=5   (the real bump — see above)
-	0.53,  ## Iron        n=5
-	0.50,  ## Silver      n=5
-	0.48,  ## Gold        n=5
-	0.44,  ## Platinum    n=5
-	0.44,  ## Masters     n=5
-	0.42,  ## Tamer Elite n=3   ⚠️ thin
-	0.43,  ## Tamers Apex n=3   ⚠️ thin
+	0.55,  ## Wood         (measured .57)
+	0.47,  ## Copper       (measured .36 — a roster-mechanics cliff, deliberately NOT baked in)
+	0.45,  ## Tin          (measured .47)
+	0.43,  ## Bronze       (measured .46)
+	0.42,  ## Iron         (measured .38)
+	0.41,  ## Silver       (measured .38)
+	0.40,  ## Gold         (measured .39)
+	0.39,  ## Platinum     (measured .36)
+	0.38,  ## Masters      (measured .38)
+	0.38,  ## Tamer Elite  (measured .38)
+	0.37,  ## Tamers Apex  (measured .39)
 ]
 
-## The fraction of rung `idx`'s ceiling the climbing player can be expected to carry. A LOOKUP,
-## not a formula — see the block above. Falls back to the nearest authored rung if the ladder is
-## ever lengthened without re-measuring, and says so in the console rather than inventing a value.
+
+## ⚠️ A GUARD, NOT A TEST — because the whole point of an authored curve is that nobody can quietly
+## turn it back into eleven hand-tuned numbers. Fires once at boot; costs nothing.
+func _check_climber_curve() -> void:
+	for i in range(CLIMBER_FILL_BY_LEAGUE.size()):
+		var want: float = lerpf(CLIMBER_FILL_WOOD, CLIMBER_FILL_APEX, ladder_shape(i))
+		if absf(float(CLIMBER_FILL_BY_LEAGUE[i]) - want) > 0.005:
+			push_error(("Career: CLIMBER_FILL_BY_LEAGUE[%d] = %.3f has drifted from the authored "
+				% [i, float(CLIMBER_FILL_BY_LEAGUE[i])])
+				+ "curve (%.3f). Edit CLIMBER_FILL_WOOD/APEX and re-sample, never a cell." % want)
+
+
+## The fraction of rung `idx`'s ceiling the climbing player can be expected to carry. A LOOKUP into
+## the sampled curve — see the block above. Falls back to the nearest authored rung if the ladder
+## is ever lengthened, and says so in the console rather than inventing a value.
 func expected_climber_fill(idx: int) -> float:
 	if CLIMBER_FILL_BY_LEAGUE.is_empty():
 		return 0.45
@@ -532,16 +786,45 @@ func field_fill(round_idx: int, rounds: int, idx: int = -1) -> float:
 	var league: int = idx if idx >= 0 else league_index
 	var r: int = maxi(1, rounds)
 	if round_idx >= r - 1:
-		return clampf(champion_fill_for(league), 0.05, 0.98)
-	var lt: float = ladder_shape(league)
-	var relief: float = float(maxi(0, r - 3)) * FIELD_DEPTH_RELIEF_PER_ROUND
-	if is_final_league(league):
-		relief += FIELD_APEX_QUAL_RELIEF
-	var opener: float = lerpf(FIELD_OPENER_RATIO_BOTTOM, FIELD_OPENER_RATIO_TOP, lt) - relief
-	var qual_top: float = lerpf(FIELD_QUAL_RATIO_BOTTOM, FIELD_QUAL_RATIO_TOP, lt) - relief
+		return clampf(champion_fill_for(league, r), 0.05, 0.98)
+	var opener: float = _opener_ratio(league, r)
+	var qual_top: float = _qual_ceiling_ratio(league, r)
 	# `r - 1` qualifying rounds, indices 0 .. r-2. With only one qualifier it IS the opener.
 	var t: float = 0.0 if r <= 2 else clampf(float(round_idx) / float(r - 2), 0.0, 1.0)
 	return clampf(lerpf(opener, qual_top, t) * expected_climber_fill(league), 0.05, 0.98)
+
+
+## How much the qualifying rounds of an `r`-round draw at `idx` come down. See
+## `FIELD_DEPTH_RELIEF_PER_ROUND` and `FIELD_APEX_QUAL_RELIEF`.
+func _qual_relief(idx: int, rounds: int) -> float:
+	var relief: float = float(maxi(0, maxi(1, rounds) - 3)) * FIELD_DEPTH_RELIEF_PER_ROUND
+	if is_final_league(idx):
+		relief += FIELD_APEX_QUAL_RELIEF
+	return relief
+
+
+func _opener_ratio(idx: int, rounds: int) -> float:
+	return _qual_ceiling_ratio(idx, rounds) \
+		- lerpf(FIELD_DRAW_RAMP_BOTTOM, FIELD_DRAW_RAMP_TOP, ladder_shape(idx))
+
+
+## THE HARDEST TEAM IN THE DRAW THAT IS NOT THE TITLEHOLDER — the champion's anchor.
+## ⚠️ ONE FUNCTION, TWO CALLERS, DELIBERATELY. The champion used to be an independent lerp beside
+## this one and the gap between them was whatever four unrelated endpoints happened to produce.
+func _qual_ceiling_ratio(idx: int, rounds: int) -> float:
+	return lerpf(FIELD_QUAL_RATIO_BOTTOM, FIELD_QUAL_RATIO_TOP, ladder_shape(idx)) \
+		- _qual_relief(idx, rounds)
+
+
+## The champion's ratio to the expected climber: the draw's own ceiling, plus the authored gap.
+## Public because the scouting screen and every instrument should read the gap rather than infer it.
+func champion_gap(idx: int) -> float:
+	return lerpf(FIELD_CHAMPION_GAP_BOTTOM, FIELD_CHAMPION_GAP_TOP, ladder_shape(idx))
+
+
+func champion_ratio_for(idx: int, rounds: int = -1) -> float:
+	var r: int = rounds if rounds > 0 else rival_count_for_league(idx)
+	return _qual_ceiling_ratio(idx, r) + champion_gap(idx)
 
 
 ## ⚠️ THE CHAMPION REMEMBERS — within the limits of what the save file actually carries.
@@ -551,10 +834,9 @@ func field_fill(round_idx: int, rounds: int, idx: int = -1) -> float:
 ## A per-session grudge counter would NOT survive a save/load — `save_game.gd` is not this
 ## workstream's file and serialises a fixed field list — so the escalation is derived from saved
 ## state rather than stored, deliberately.
-func champion_fill_for(idx: int) -> float:
+func champion_fill_for(idx: int, rounds: int = -1) -> float:
 	var beaten: bool = idx >= 0 and idx < leagues_won.size() and bool(leagues_won[idx])
-	var ratio: float = lerpf(FIELD_CHAMPION_RATIO_BOTTOM, FIELD_CHAMPION_RATIO_TOP, ladder_shape(idx))
-	var base: float = ratio * expected_climber_fill(idx)
+	var base: float = champion_ratio_for(idx, rounds) * expected_climber_fill(idx)
 	return clampf(base + (CHAMPION_REMATCH_BUMP if beaten else 0.0), 0.05, 0.98)
 
 
@@ -637,6 +919,14 @@ func make_league_rivals(n: int, league_idx: int = -1, fill: float = -1.0, seed_:
 	## ~0.56 and a 65%-filled player team swept all eleven leagues.
 	if archetype != "":
 		use_fill *= FIELD_ARCHETYPE_POWER_MULT
+		## ⚠️ UNDO `(1 - k)` OF `tactics.gd:FILL_MULT` BEFORE THE GENERATOR APPLIES IT. `roster.gd:
+		## make_rival_team` multiplies by `Tactics.archetype_fill(gid, fill)`, so passing
+		## `fill / m^(1-k)` lands the team at `fill * m^k`. The multiplier is READ from
+		## `archetype_fill(gid, 1.0)` rather than copied out of `FILL_MULT` — a second copy of that
+		## table is precisely this project's most expensive recurring bug.
+		## See `FIELD_KIND_PARITY_APPLIED` for the measurement that forced this.
+		var m: float = maxf(0.01, TacticsScript.archetype_fill(archetype, 1.0))
+		use_fill /= pow(m, 1.0 - FIELD_KIND_PARITY_APPLIED)
 	var team: Array = Roster.make_rival_team(n, clampf(use_fill, 0.0, 1.0), 1.0, archetype)
 	_cap_override = prev
 	return team

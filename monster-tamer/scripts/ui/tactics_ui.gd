@@ -12,6 +12,11 @@ extends Control
 
 const TacticsScript = preload("res://scripts/tactics.gd")
 const DeploymentBoardScript = preload("res://scripts/ui/deployment_board.gd")
+## ⚠️ THE CLAIM TEXT LIVES IN THE SCREEN THAT HAS TO ANSWER IT. `report_ui.gd:build_read()` is
+## the single generator for both bookends of a fight (`UX_LEGIBILITY.md` §1 rule 1) — this screen
+## states the claims, that screen grades the SAME strings. Preloaded for its statics only; no
+## instance of the report is ever made here.
+const ReadScript = preload("res://scripts/ui/report_ui.gd")
 
 const TEAM_SIZE := 5
 
@@ -26,6 +31,7 @@ var gameplan_id: String = ""
 var rival_rows: Array = []        # [{"panel": PanelContainer, "monster": <MonsterInstance>, "accent": Color}]
 var deployment_board: Control     # DeploymentBoard instance — untyped, see BUILD_CONTRACT §4 on bare class_name refs
 var mark_hint_label: Label
+var read_box: VBoxContainer      # "YOUR READ" — the claims this fight will be graded on
 var commit_btn: Button
 var commit_status_label: Label
 var committed: bool = false
@@ -61,6 +67,7 @@ func _ready() -> void:
 
 	_build_ui()
 	_refresh_mark_hint()
+	_refresh_read()
 
 
 func _build_ui() -> void:
@@ -135,6 +142,82 @@ func _build_ui() -> void:
 	bottom.add_child(commit_btn)
 
 
+# ── THE READ — what you are committing TO ─────────────────────────────────────────────────────
+#
+# ⚠️ THIS IS THE HALF OF "COMMIT, THEN OBSERVE" THE SCREEN WAS MISSING. Until now the player set
+# seven abstract knobs and pressed a button; nothing on this screen said what those knobs
+# PREDICTED, so there was nothing for the report to be right or wrong about. `FUN_ADDITIONS.md`
+# §1 is explicit that this is the single highest-value addition available: "you cannot feel
+# vindicated by an outcome you never committed to in words", and "a claim tells the player where
+# to look" — a 5v5 with a declared claim in it has a protagonist.
+#
+# ⚠️ THE CLAIMS ARE GENERATED FROM THE ORDERS, NEVER AUTHORED HERE. They update live as the
+# player changes anything, so the panel is a mirror of the plan and cannot drift from it — and
+# `report_ui.gd` grades the exact strings this panel showed, because both come out of the same
+# `build_read()`.
+
+func _build_read_panel(parent: VBoxContainer) -> void:
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.11, 0.13, 0.12)
+	sb.border_color = Color(0.5, 0.85, 0.6)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 10; sb.content_margin_right = 10
+	sb.content_margin_top = 8; sb.content_margin_bottom = 8
+	panel.add_theme_stylebox_override("panel", sb)
+	parent.add_child(panel)
+
+	read_box = VBoxContainer.new()
+	read_box.add_theme_constant_override("separation", 3)
+	panel.add_child(read_box)
+
+
+## Rebuilt from scratch on every order change — three claims at most, so this is cheap and there
+## is no partial-update path that can leave a stale sentence on screen.
+func _refresh_read() -> void:
+	if read_box == null:
+		return
+	for c in read_box.get_children():
+		c.queue_free()
+
+	var header := Label.new()
+	header.text = "YOUR READ — the report will grade exactly these"
+	header.add_theme_font_size_override("font_size", 13)
+	header.add_theme_color_override("font_color", Color(0.5, 0.85, 0.6))
+	read_box.add_child(header)
+
+	var claims: Array = ReadScript.build_read(team_a_plan, orders_a, team_a, team_b)
+	# ⚠️ THIS IS A GUARD, NOT THE "NO ORDERS" CASE, AND SAYING SO MATTERS. `build_read()` always
+	# produces at least the SHAPE claim, because a formation is a real placement the player has
+	# made whether or not they opened a dropdown — so the empty list only happens with an empty
+	# roster. Copy that read "you have given no order" would therefore have been unreachable text
+	# describing a state that cannot occur, which is how a screen ends up documenting a design
+	# nobody built.
+	if claims.is_empty():
+		_wrapped_row(read_box,
+			"No team is fielded yet, so there is nothing to claim.", 12, Color(0.75, 0.7, 0.5))
+		return
+
+	for c in claims:
+		var claim: Dictionary = c
+		var line := Label.new()
+		line.text = "· %s" % str(claim.get("claim", ""))
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD
+		line.add_theme_font_size_override("font_size", 14)
+		line.add_theme_color_override("font_color", Color(0.88, 0.92, 0.88))
+		read_box.add_child(line)
+
+		var gradeable: bool = bool(claim.get("gradeable", true))
+		var sub := Label.new()
+		sub.text = "    %s" % (str(claim.get("test", "")) if gradeable
+			else "⚠ NOT SIMULATED YET — %s, so this claim cannot be graded." % str(claim.get("why_ungradeable", "")))
+		sub.autowrap_mode = TextServer.AUTOWRAP_WORD
+		sub.add_theme_font_size_override("font_size", 11)
+		sub.add_theme_color_override("font_color", Color(0.6, 0.62, 0.65) if gradeable else Color(0.9, 0.65, 0.4))
+		read_box.add_child(sub)
+
+
 # ── Your team ─────────────────────────────────────────────────────────────────────────────────
 
 func _build_team_column(parent: HBoxContainer) -> void:
@@ -168,7 +251,8 @@ func _build_team_column(parent: HBoxContainer) -> void:
 				team_a_plan.erase("targetPriority")
 			else:
 				team_a_plan["targetPriority"] = id
-			_refresh_mark_hint(),
+			_refresh_mark_hint()
+			_refresh_read(),
 		true, 260)
 
 	_build_order_selector(team_controls, "Mana policy — team default", TacticsScript.MANA_POLICY_INFO, "normal",
@@ -179,7 +263,8 @@ func _build_team_column(parent: HBoxContainer) -> void:
 		func(id):
 			team_a_plan["positionalIntent"] = id
 			if deployment_board != null:
-				deployment_board.set_team_default_intent(id),
+				deployment_board.set_team_default_intent(id)
+			_refresh_read(),
 		true, 260)
 
 	# ⚠️ "Formation" is no longer a manual dropdown — it is DERIVED, live, from the deployment
@@ -248,7 +333,9 @@ func _add_team_monster_row(parent: VBoxContainer, m) -> void:
 	info_col.add_child(class_lbl)
 
 	_build_order_selector(row, "Temperament", TacticsScript.TEMPERAMENT_INFO, "balanced",
-		func(id): orders_a[m]["temperament"] = id,
+		func(id):
+			orders_a[m]["temperament"] = id
+			_refresh_read(),
 		false, 150)
 
 	# A THIRD state ("Team default") that isn't in Tactics.TARGET_PRIORITY_INFO — inheriting the
@@ -262,7 +349,8 @@ func _add_team_monster_row(parent: VBoxContainer, m) -> void:
 				orders_a[m].erase("targetPriority")
 			else:
 				orders_a[m]["targetPriority"] = id
-			_refresh_mark_hint(),
+			_refresh_mark_hint()
+			_refresh_read(),
 		false, 170)
 
 
@@ -327,6 +415,14 @@ func _build_rival_column(parent: HBoxContainer) -> void:
 
 	for m in team_b:
 		_add_rival_row(rival_list, m)
+
+	# ⚠️ THE READ SITS UNDER THE SCOUTING, NOT UNDER THE WHOLE SCREEN, AND THAT IS A MEASURED FIX.
+	# Placed full-width below both columns it stole ~130px of height from a shared HBox, and the
+	# per-monster order rows — the screen's only per-monster control — collapsed to one visible
+	# row inside their scroller (seen in scripts/_probe_read_shot.gd's capture). The rival column
+	# has dead space below its five entries and this is also where the claim BELONGS: it is the
+	# answer to the gameplan and counter-read directly above it.
+	_build_read_panel(col)
 
 
 func _add_rival_row(parent: VBoxContainer, m) -> void:
@@ -428,6 +524,7 @@ func _on_mark_rival(m) -> void:
 	for entry in rival_rows:
 		_style_rival_panel(entry["panel"], entry["accent"], entry["monster"] == m)
 	_refresh_mark_hint()
+	_refresh_read()
 
 
 ## Informs the read without solving it: tells the player whether "man mark" is actually armed,
@@ -464,6 +561,17 @@ func _on_commit() -> void:
 		deploy_positions[p["monster"]] = p["pos"]
 	TacticsScript.commit(team_a_plan, team_b_plan, orders_a, orders_b,
 		deploy_positions, deployment_board.current_intents(), team_a, team_b)
+	# ⚠️ THE CLAIMS TRAVEL WITH THE PLAN, AS A COPY, ON PURPOSE. `report_ui.gd` could rebuild them
+	# from `planA`/`ordersA` (and does, as a fallback for older commits) — but storing the exact
+	# strings the player just said yes to means the report grades the SENTENCE THEY READ, not a
+	# regenerated equivalent. If the generator ever changes between two builds of a save, the copy
+	# is the one that keeps the promise. Written as an extra key rather than through `commit()`'s
+	# signature because `tactics.gd` is not this stream's file; the dict already carries
+	# caller-added keys (`watch.gd` writes "layout" the same way).
+	TacticsScript.committed["read"] = {
+		"claims": ReadScript.build_read(team_a_plan, orders_a, team_a, team_b),
+		"gameplan": gameplan_id,
+	}
 	deployment_board.set_locked(true)
 	for ctl in _interactive:
 		ctl.disabled = true

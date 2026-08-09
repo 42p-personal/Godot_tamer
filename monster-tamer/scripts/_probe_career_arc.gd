@@ -88,6 +88,90 @@ const PRESERVE_MARGIN_WEEKS := 32   ## preserve a monster this close to retiring
 const RUN_TWICE := true          # determinism check
 const DETERMINISM_WEEKS := 80    # the reproducibility check re-runs a SHORT arc, see _ready()
 
+
+# =============================================================================
+# THE REFERENCE PLAYER — the policy layer (section 7)
+# =============================================================================
+## ⚠️ EVERY DIFFICULTY NUMBER THIS PROJECT HAS EVER QUOTED IS A STATEMENT ABOUT A PLAYER NOBODY
+## WROTE DOWN. `career.gd:CLIMBER_FILL_BY_LEAGUE` — the table every `FIELD_*_RATIO_*` is a ratio
+## to — is a measurement of THIS autopilot, and until now "this autopilot" was whatever the arc
+## loop happened to do. The naive policy (lowest-stat training, kit never re-drafted, no
+## successor) was an ACCIDENT of how this file was first written, not a design decision, and the
+## competent one existed only as five loose booleans on a subclass in another probe.
+##
+## So the policies are first-class here, and named. Each is a real player: it sees only what a
+## player sees, pays what a player pays, and never reads a rival's stats or the RNG.
+##
+##   NAIVE      — the autopilot exactly as it has always played. Biggest drill on the LOWEST stat
+##                (a points-maximiser that builds a flat generalist), kit drafted once at purchase
+##                and never re-drafted, no successor grown, monthly cup, default dynasty floors.
+##   COMPETENT  — the stable half played properly, AT FULL PRICE. Shaped training (lean into
+##                aptitude), the kit re-drafted as the body grows, a successor bought before the
+##                veteran retires. Pays every barn slot, every recruit, every entry fee.
+##   EXPERT     — COMPETENT plus dynasty pressure: bench and breed out of a thinner surplus and on
+##                a shorter cooldown, because `week.gd:stat_cap_for` is `league_cap × potential`
+##                and potential is the only thing that lifts a ceiling the top of the ladder
+##                cannot otherwise reach.
+##   SUBSIDISED — ⚠️ NOT A PLAYER, AND IT IS HERE TO BE DISQUALIFIED. COMPETENT with free
+##                recruits, free barn slots, free breeding and no entry fee. This is what round 11
+##                called "competent" and what `CLIMBER_FILL_BY_LEAGUE` is currently priced
+##                against. If it clears the ladder and COMPETENT does not, the gap is BUDGET, not
+##                SKILL — a legibility failure to be fixed by telling the player, not by tuning
+##                the field. Measured, never quoted as the reference player.
+const POLICIES := {
+	"NAIVE": {},
+	"COMPETENT": {"shaped": true, "redraft": true, "succession": true},
+	"EXPERT": {"shaped": true, "redraft": true, "succession": true,
+		"benchFloor": 500, "breedFloor": 400, "breedCooldown": 12, "freezer": 3},
+	"SUBSIDISED": {"shaped": true, "redraft": true, "succession": true,
+		"free": true, "feeMult": 0.0},
+	## ⚠️ THE TWO HALVES OF THE SUBSIDY, MEASURED SEPARATELY. "budget" is not an actionable
+	## finding; "the entry fee" or "the barn price" is. These split SUBSIDISED into its parts so
+	## the economy fix has an address.
+	"COMP_NOFEE": {"shaped": true, "redraft": true, "succession": true, "feeMult": 0.0},
+	"COMP_FREEBODY": {"shaped": true, "redraft": true, "succession": true, "free": true},
+}
+## The four rows that are always reported. The two decomposition rows are opt-in via `--only`,
+## because six policies x eight seeds is eleven minutes and the default should stay re-runnable.
+const POLICY_ORDER := ["NAIVE", "COMPETENT", "EXPERT", "SUBSIDISED"]
+const POLICY_SEEDS := [20260809, 771013, 313373, 4242424, 99180, 5150, 606060, 8888881]
+const POLICY_WEEKS := 1000
+const SUCCESSION_LEAD := 150     ## start growing the replacement this long before retirement
+
+# ── policy knobs, read by the arc loop and its seams. Defaults ARE the naive autopilot. ──
+## ⚠️ THESE LIVE ON THE PARENT ON PURPOSE. `_probe_gold_wall.gd:ArcVariant` used to carry its own
+## copies of shaped training, the successor loop and the free-body overrides; two implementations
+## of one player is exactly the drift this project keeps paying for. The subclass now sets these
+## and calls `super()`, so there is ONE autopilot and the policies are properties of it.
+var p_seed: int = SEED
+var p_shaped_training := false
+var p_redraft_kits := false
+var p_succession := false
+var p_free_bodies := false
+var p_immortal := false
+var p_bench_gold_floor: int = BENCH_GOLD_FLOOR
+var p_breed_gold_floor: int = BREED_GOLD_FLOOR
+var p_breed_cooldown: int = BREED_COOLDOWN
+var p_freezer_target: int = FREEZER_TARGET
+var p_succession_buys := 0
+var p_shape_moves := 0           ## liveness canary: re-drafts that actually changed a moveset
+
+
+## Set every policy knob from a `POLICIES` entry. Anything absent falls back to the naive default,
+## so a policy dictionary states only what it CHANGES.
+func apply_policy(name: String) -> Dictionary:
+	var p: Dictionary = POLICIES.get(name, {})
+	p_shaped_training = bool(p.get("shaped", false))
+	p_redraft_kits = bool(p.get("redraft", false))
+	p_succession = bool(p.get("succession", false))
+	p_free_bodies = bool(p.get("free", false))
+	p_bench_gold_floor = int(p.get("benchFloor", BENCH_GOLD_FLOOR))
+	p_breed_gold_floor = int(p.get("breedFloor", BREED_GOLD_FLOOR))
+	p_breed_cooldown = int(p.get("breedCooldown", BREED_COOLDOWN))
+	p_freezer_target = int(p.get("freezer", FREEZER_TARGET))
+	return {"feeMult": float(p.get("feeMult", 1.0))}
+
+
 # ── instrument state ─────────────────────────────────────────────────────────
 var _tree: SceneTree
 var _notes: Array[String] = []
@@ -109,6 +193,21 @@ func _ready() -> void:
 		_run_champion_gate()
 		print("\n=== career arc probe (gate only): OK ===")
 		_tree.quit(0)
+		return
+
+	## ⚠️ `--policies` RUNS SECTION 7 ALONE, for the same reason `--gate-only` exists: it is
+	## 4 policies x N seeds x up to 1000 weeks of career, and bolting it onto the default run
+	## would make the whole probe too slow to re-run casually. A probe nobody re-runs is not an
+	## instrument. `--seeds N` sets the sample; the default 5 matches `CLIMBER_FILL_BY_LEAGUE`.
+	if "--policies" in OS.get_cmdline_user_args() or "--policies" in OS.get_cmdline_args():
+		_run_policies()
+		print("\n=== instrument notes ===")
+		if _notes.is_empty():
+			print("  (none)")
+		for n in _notes:
+			print("  · %s" % n)
+		print("\n=== career arc probe (policies): %s ===" % ("OK" if _instrument_ok else "INSTRUMENT BROKEN"))
+		_tree.quit(0 if _instrument_ok else 1)
 		return
 
 	var arc_a: Dictionary = _run_arc(MAX_WEEKS)
@@ -186,13 +285,18 @@ func _konst(script: GDScript, name: String, fallback):
 	_fell_back.append("%s.%s" % [script.resource_path.get_file(), name])
 	return fallback
 
-func _barn_prices() -> Array: return _konst(ShopScript, "BARN_PRICES", [0, 0, 320, 700, 1400, 2600])
+## ⚠️ `p_free_bodies` IS A SUBSIDY, NOT A POLICY — see the POLICIES block. It exists so the
+## SUBSIDISED row can be measured and disqualified, and the three seams it touches are here.
+func _barn_prices() -> Array:
+	if p_free_bodies:
+		return [0, 0, 0, 0, 0, 0, 0, 0]
+	return _konst(ShopScript, "BARN_PRICES", [0, 0, 320, 700, 1400, 2600])
 func _base_purse() -> int: return int(_konst(TournamentScript, "BASE_PURSE", 220))
 func _purse_step() -> int: return int(_konst(TournamentScript, "PURSE_PER_LEAGUE", 140))
 func _drop_frac() -> Array: return _konst(TournamentScript, "REWARD_BY_DROP", [1.0, 0.5, 0.2])
 func _offer_count() -> int: return int(_konst(MarketScript, "OFFER_COUNT", 4))
 func _refund_frac() -> float: return float(_konst(MarketScript, "RELEASE_REFUND_FRAC", 0.35))
-func _breed_cost() -> int: return int(_konst(BreedScript, "BREED_COST", 300))
+func _breed_cost() -> int: return 0 if p_free_bodies else int(_konst(BreedScript, "BREED_COST", 300))
 ## ⚠️ THE HEAD-START / POTENTIAL-STEP / MAX-POTENTIAL MIRRORS ARE GONE ON PURPOSE. `_try_breed`
 ## calls `breeding_ui.gd:_make_child` directly now, so there is nothing left to re-derive — and
 ## one of the three (`POTENTIAL_STEP`) had already been renamed in that file, meaning this probe
@@ -236,9 +340,11 @@ func _reset_career() -> void:
 	Roster.reset_to_empty()
 	# ⚠️ Reaching into two seeded RNGs that the game seeds once at boot. Each experiment must start
 	# from the same stream or "run it again" means something different every time.
-	Roster.rng.seed = SEED
+	# `p_seed` defaults to SEED, so the naive arc is byte-identical to what it always was; the
+	# policy runner and `_probe_gold_wall.gd` set it to walk a spread of careers.
+	Roster.rng.seed = p_seed
 	WeekPlan.plans.clear()
-	WeekPlan._rng.seed = SEED
+	WeekPlan._rng.seed = p_seed
 	WeekPlan.reroll_food_prices()
 
 
@@ -261,6 +367,8 @@ func _roster_fill(monsters: Array, cap: float) -> float:
 
 ## `market_ui.gd:_estimate_value` — mirrored so a recruit costs the autopilot what it costs a player.
 func _offer_price(mi) -> int:
+	if p_free_bodies:
+		return 0
 	var cap: float = GameData.stat_cap()
 	var frac: float = clampf(_stat_total(mi) / maxf(1.0, cap * float(Classify.STATS.size())), 0.0, 1.0)
 	return int(round(120.0 + frac * 520.0))
@@ -319,6 +427,8 @@ func _purse_paid(idx: int, wins: int, rounds: int) -> int:
 ## against a clever-looking one, so this is what it uses. That the ceiling of training skill is a
 ## one-liner is finding T1 in docs/META_GAME_REVIEW.md.
 func _drill_plan_greedy(mi, league_cap: float) -> Dictionary:
+	if p_shaped_training:
+		return _drill_plan_shaped(mi, league_cap)
 	## ⚠️ THE CEILING IS PER MONSTER, NOT PER LEAGUE (`week.gd:stat_cap_for` = league cap ×
 	## potential). Passing the raw league cap made the planner call a bred monster "capped" while
 	## the tick was still happily training it — invisible while `potential` was pinned at ×1.00
@@ -337,6 +447,32 @@ func _drill_plan_greedy(mi, league_cap: float) -> Dictionary:
 			low = s
 	if mi.stamina >= WeekLib.EXTREME_DRILL_STAMINA:
 		return {"mode": "train", "id": "x" + low.to_lower()}
+	return {"mode": "rest", "id": ""}
+
+
+## THE COMPETENT PLAYER'S TRAINING BRAIN. Same drills, same stamina rules, same per-monster cap —
+## only the stat chosen changes: lean into what the body is GOOD at (aptitude × `week.gd:
+## focus_cost`, so the game's own focus tax pushes back) instead of levelling the spread.
+## ⚠️ IT DELIBERATELY MAKES FEWER POINTS. The naive policy maximises the stat TOTAL and therefore
+## builds a flat generalist; every rival is `roster.gd:_shape_to_class`d onto an archetype's axis.
+## `career.gd:expected_climber_fill` is a total over a cap and CANNOT SEE the difference, which is
+## precisely why the two policies have to be measured against each other rather than reasoned about.
+## Moved here from `_probe_gold_wall.gd:ArcVariant` — one autopilot, not two.
+func _drill_plan_shaped(mi, league_cap: float) -> Dictionary:
+	var cap: float = WeekLib.stat_cap_for(mi, league_cap)
+	var best := ""
+	var best_score := -1.0
+	for s in Classify.STATS:
+		if float(mi.stats.get(s, 0.0)) >= cap - 0.5:
+			continue
+		var score: float = WeekLib.stat_training_bonus(mi, s) * WeekLib.focus_cost(mi, s)
+		if score > best_score:
+			best_score = score
+			best = s
+	if best == "":
+		return {"mode": "idle", "id": ""}
+	if mi.stamina >= WeekLib.EXTREME_DRILL_STAMINA:
+		return {"mode": "train", "id": "x" + best.to_lower()}
 	return {"mode": "rest", "id": ""}
 
 
@@ -398,6 +534,10 @@ func _drill_plan(mi, league_cap: float) -> Dictionary:
 ##   rivalMult  : float — scales every rival team's fill (see `_fight_cup`)
 func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 	_reset_career()
+	# Per-run policy counters — they are the liveness canaries for section 7 and must not carry
+	# over from a previous arc, or a dead policy inherits a live one's evidence.
+	p_succession_buys = 0
+	p_shape_moves = 0
 
 	var per_league: Array = []
 	for i in range(Career.leagues.size()):
@@ -408,7 +548,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 		})
 
 	var last_cup_week := -CUP_INTERVAL
-	var last_breed_week := -BREED_COOLDOWN
+	var last_breed_week := -p_breed_cooldown
 	var league_start_week := 0
 	var stall_reason := ""
 	var gold_peak: int = Career.gold
@@ -445,7 +585,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 		# genuinely spare and there is already a slot standing empty.
 		var team_need: int = Career.current_team_size()
 		var need: int = team_need
-		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR \
+		if bool(opts.get("breed", true)) and Career.gold >= p_bench_gold_floor \
 				and Career.barn_capacity > team_need:
 			need = team_need + BENCH_SIZE
 		## ⚠️ THE BENCH WAS UNREACHABLE BY CONSTRUCTION AND EVERY "the autopilot never bred /
@@ -461,7 +601,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 		## the comment above — that buying a bench BODY eagerly made the arc worse — is untouched:
 		## this buys the ROOM, and the body is still gated on a slot already standing empty.
 		var barn_goal: int = team_need
-		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR:
+		if bool(opts.get("breed", true)) and Career.gold >= p_bench_gold_floor:
 			barn_goal = team_need + BENCH_SIZE
 		while Career.barn_capacity < barn_goal:
 			var nxt: int = Career.barn_capacity + 1
@@ -472,7 +612,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 			var bprice: int = _barn_prices()[nxt]
 			## The team's own stalls are bought down to GOLD_RESERVE; the bench stall only out of
 			## surplus, so a stable never starves its cup entries to buy a spare room.
-			var bfloor: int = GOLD_RESERVE if nxt <= team_need else BENCH_GOLD_FLOOR
+			var bfloor: int = GOLD_RESERVE if nxt <= team_need else p_bench_gold_floor
 			if Career.gold < bprice + bfloor:
 				break
 			Career.spend_gold(bprice)
@@ -482,7 +622,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 			decisions += 1
 		## Re-asked AFTER the barn has grown: the pre-loop test could only ever see LAST week's
 		## capacity, which is the other half of why the bench never filled.
-		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR \
+		if bool(opts.get("breed", true)) and Career.gold >= p_bench_gold_floor \
 				and Career.barn_capacity > team_need:
 			need = team_need + BENCH_SIZE
 		while Roster.monsters.size() < need and Roster.monsters.size() < Career.barn_capacity:
@@ -506,7 +646,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 		# ── the bench, the freezer and the dynasty ───────────────────────────
 		var mopts: Dictionary = {
 			"preserve": bool(opts.get("breed", true)),
-			"breed": bool(opts.get("breed", true)) and Career.week - last_breed_week >= BREED_COOLDOWN,
+			"breed": bool(opts.get("breed", true)) and Career.week - last_breed_week >= p_breed_cooldown,
 		}
 		var churn: Dictionary = _manage_roster(mopts)
 		if int(churn["bred"]) > 0:
@@ -703,7 +843,39 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 		"benchWeeks": bench_weeks,
 		"firstPreserveWeek": first_preserve_week, "firstBreedWeek": first_breed_week,
 		"frontierBlockedWeeks": frontier_blocked_weeks,
+		## ── section 7: the policy's own liveness + the BUDGET question ──────────────────────
+		## `successionBuys` and `kitRedraws` are the canaries (a policy that never fired measured
+		## nothing). `emptySlots` and `goldEnd` are the answer to "is COMPETENT skill or budget":
+		## a naive career that ends rich with empty stalls did not lose for want of money.
+		"successionBuys": p_succession_buys,
+		"kitRedraws": p_shape_moves,
+		"barnCapacity": Career.barn_capacity,
+		"rosterSize": Roster.monsters.size(),
+		"emptySlots": maxi(0, Career.barn_capacity - Roster.monsters.size()),
+		"shapeSpread": _shape_spread(),
 	}
+
+
+## Mean (max stat − min stat) / mean stat over the living roster — the readable proxy for "is this
+## a shaped specialist or a flat generalist". The liveness canary for `p_shaped_training`:
+## `career.gd:expected_climber_fill` is a TOTAL over a cap and cannot see this axis at all.
+func _shape_spread() -> float:
+	var acc := 0.0
+	var n := 0
+	for mi in Roster.monsters:
+		var hi := -INF
+		var lo := INF
+		var sum := 0.0
+		for s in Classify.STATS:
+			var v: float = float(mi.stats.get(s, 0.0))
+			hi = maxf(hi, v)
+			lo = minf(lo, v)
+			sum += v
+		var mean: float = sum / float(Classify.STATS.size())
+		if mean > 0.0:
+			acc += (hi - lo) / mean
+			n += 1
+	return acc / maxf(1.0, float(n))
 
 
 func _sum_field(rows: Array, key: String) -> int:
@@ -894,6 +1066,7 @@ func _manage_roster(opts: Dictionary) -> Dictionary:
 	var out := {"preserved": 0, "released": 0, "bred": 0, "breedGold": 0}
 	var team: int = Career.current_team_size()
 
+
 	# ── retirees first: a retired body occupies a barn slot and can do nothing with it ──
 	for mi in Roster.monsters.duplicate():
 		if not mi.retired:
@@ -903,7 +1076,7 @@ func _manage_roster(opts: Dictionary) -> Dictionary:
 		## as the dynasty run, and come out byte-identical. The harness correctly reported a dead
 		## input; the deadness was in this branch, not in the game. A stable that is not running a
 		## dynasty sells the retiree.
-		if bool(opts.get("preserve", true)) and Roster.frozen.size() < FREEZER_TARGET \
+		if bool(opts.get("preserve", true)) and Roster.frozen.size() < p_freezer_target \
 				and int(mi.get_meta("children", 0)) < _breed_max_children():
 			if Roster.preserve(mi):
 				out["preserved"] += 1
@@ -921,7 +1094,7 @@ func _manage_roster(opts: Dictionary) -> Dictionary:
 	## the arc stalled a league lower than an autopilot with no dynasty at all. A player retires a
 	## veteran when the replacement is ready, not before. `_sort_roster_best_first` has already
 	## put the team sheet in order, so "not in the top `team`" is exactly "has been replaced".
-	if bool(opts.get("preserve", true)) and Roster.frozen.size() < FREEZER_TARGET:
+	if bool(opts.get("preserve", true)) and Roster.frozen.size() < p_freezer_target:
 		_sort_roster_best_first()
 		var best = null
 		for i in range(Roster.monsters.size()):
@@ -936,11 +1109,77 @@ func _manage_roster(opts: Dictionary) -> Dictionary:
 			out["preserved"] += 1
 
 	# ── breed, when the freezer holds a pair and gold is genuinely spare ──
-	if bool(opts.get("breed", true)) and Roster.breeding_stock().size() >= 2 and Career.gold >= BREED_GOLD_FLOOR:
+	if bool(opts.get("breed", true)) and Roster.breeding_stock().size() >= 2 and Career.gold >= p_breed_gold_floor:
 		if _try_breed() != null:
 			out["bred"] += 1
 			out["breedGold"] += _breed_cost()
+
+	## ── the policy hooks — LAST, exactly where `_probe_gold_wall.gd:ArcVariant` ran them ─────
+	## ⚠️ THE ORDER IS LOAD-BEARING AND WAS GOT WRONG ONCE IN THIS FILE. Run BEFORE the block
+	## above, `p_immortal` un-retires everybody before the retiree branch can see them, so the
+	## freezer never fills and an "immortal" row silently also becomes a "no dynasty" row. These
+	## three ran after `super()` in the subclass they came from; they run after it here.
+	if p_immortal:
+		for mi in Roster.monsters:
+			mi.lifespan_years = 1000.0
+			mi.retired = false
+	## ⚠️ THE KIT IS DRAWN ONCE, AT PURCHASE, AND NEVER AGAIN — `week.gd:apply_activity` calls
+	## `recompute_class()` and `recompute_pools()` every week and never `assign_moveset()`. So a
+	## body recruited at ~23/stat drafts the floor of every line and carries it for life. A
+	## competent player re-draws the kit as the body grows; that this is a POLICY rather than
+	## something the game does for you is a legibility finding in its own right.
+	if p_redraft_kits:
+		for mi in Roster.monsters:
+			var before: String = str(mi.moveset)
+			var krng := RandomNumberGenerator.new()
+			krng.seed = hash(mi.id) * 31 + Career.week
+			mi.assign_moveset(krng)
+			if str(mi.moveset) != before:
+				p_shape_moves += 1
+	if p_succession:
+		_grow_successor()
 	return out
+
+
+## Keep ONE spare body in training whenever any fielded monster is inside `SUCCESSION_LEAD` weeks
+## of retiring. Pays the real barn price and the real market price (unless `p_free_bodies`), so a
+## policy that clears a rung on this says the wall was the AUTOPILOT'S PLAY; one that does not
+## says the wall is the game's. Moved here from `_probe_gold_wall.gd:ArcVariant` verbatim.
+func _grow_successor() -> void:
+	var team: int = Career.current_team_size()
+	var active: Array = Roster.monsters.filter(func(m): return not m.retired)
+	if active.size() > team:
+		return   # a spare already exists
+	var ageing := false
+	for mi in active:
+		if _weeks_left(mi) <= SUCCESSION_LEAD:
+			ageing = true
+			break
+	if not ageing:
+		return
+	while Career.barn_capacity <= team:
+		var nxt: int = Career.barn_capacity + 1
+		if nxt >= _barn_prices().size():
+			return
+		var bprice: int = _barn_prices()[nxt]
+		if Career.gold < bprice + 120:
+			return
+		Career.spend_gold(bprice)
+		Career.barn_capacity = nxt
+	if Roster.monsters.size() >= Career.barn_capacity:
+		return
+	var pick: Dictionary = {}
+	for o in _offers_this_week():
+		if int(o["price"]) + 120 > Career.gold:
+			continue
+		if pick.is_empty() or _stat_total(o["mi"]) > _stat_total(pick["mi"]):
+			pick = o
+	if pick.is_empty():
+		return
+	Career.spend_gold(int(pick["price"]))
+	pick["mi"].id = Roster.next_slot_id()
+	Roster.monsters.append(pick["mi"])
+	p_succession_buys += 1
 
 
 func _report_arc(a: Dictionary) -> void:
@@ -1479,3 +1718,273 @@ func _tie_rate(cap: float) -> int:
 		else:
 			WeekLib.apply_activity(mi, {"kind": "rest"}, 0, cap, "Wood")
 	return int(round(100.0 * float(ties) / maxf(1.0, float(samples))))
+
+
+# =============================================================================
+# 7. THE REFERENCE PLAYER — who is this game priced against?
+# =============================================================================
+## Run: …/Godot --headless --path . res://scenes/_probe_career_arc.tscn -- --policies [--seeds N]
+##
+## ⚠️ THIS SECTION EXISTS BECAUSE THE PROJECT HAS PRICED ITS ENTIRE DIFFICULTY CURVE AGAINST AN
+## UNNAMED PLAYER. `career.gd:CLIMBER_FILL_BY_LEAGUE` is a measurement of the autopilot; every
+## `FIELD_*_RATIO_*` is a ratio to it; and the autopilot's policy was never chosen — it is
+## whatever this file's first draft happened to do. Naming the policies makes the assumption
+## visible and, more importantly, makes the GAP between them measurable. The gap is the size of
+## the meta-game: a ladder both policies clear is a ladder where knowing which monster to make
+## does not matter, and a ladder only the expert clears has no on-ramp.
+##
+## ⚠️ EVERY ROW CARRIES A LIVENESS CANARY, because this project's other signature failure is an
+## instrument that measures nothing and reports a null. A policy that claims shaped training must
+## move the stat SPREAD; one that claims succession must actually buy a body; one that claims a
+## re-drafted kit must change a moveset. A row whose canary fails is printed VOID and exits 1.
+func _run_policies() -> void:
+	var n_seeds: int = _arg_int("--seeds", 5)
+	n_seeds = clampi(n_seeds, 1, POLICY_SEEDS.size())
+	print("\n─── 7. THE REFERENCE PLAYER (%d seeds x %d weeks per policy) ───" % [n_seeds, POLICY_WEEKS])
+	print("  WON is `Career.won_game` — the draw at Tamers Apex SWEPT. 'reached' index 10 only")
+	print("  means promoted INTO Apex, and reporting that as completion is a claim this project")
+	print("  has already had to retract once.\n")
+
+	## `--only A,B` restricts the run to named policies (the decomposition rows live here).
+	var only: String = _arg_str("--only", "")
+	var order: Array = POLICY_ORDER.duplicate()
+	if only != "":
+		order = Array(only.split(","))
+	_print_ladder_fingerprint()
+	var results: Dictionary = {}
+	for name in order:
+		results[str(name)] = _run_policy(str(name), n_seeds)
+	if only != "":
+		print("
+  %-14s  %-5s  %-26s  %-11s  %-9s  %s" % [
+			"policy", "WON", "reached (per seed)", "median wks", "gold end", "canary"])
+		for name in order:
+			var rr: Dictionary = results[str(name)]
+			print("  %-14s  %-5s  %-26s  %-11d  %-9d  %s" % [
+				str(name), "%d/%d" % [int(rr["won"]), n_seeds], str(rr["reached"]),
+				int(rr["medianWeeks"]), int(rr["medianGoldEnd"]), str(rr["canary"])])
+		return
+
+	# ── the policy table ────────────────────────────────────────────────────
+	print("\n  %-11s  %-5s  %-24s  %-6s  %-11s  %-8s  %-7s  %s" % [
+		"policy", "WON", "reached (per seed)", "median", "median wks", "gold end", "spread", "canary"])
+	for name in POLICY_ORDER:
+		var r: Dictionary = results[name]
+		print("  %-11s  %-5s  %-24s  %-6d  %-11d  %-8d  %-7.2f  %s" % [
+			name, "%d/%d" % [int(r["won"]), n_seeds], str(r["reached"]),
+			int(r["medianReached"]), int(r["medianWeeks"]), int(r["medianGoldEnd"]),
+			float(r["shapeSpread"]), str(r["canary"])])
+	print("  (reached: 0=Wood 5=Silver 6=Gold 7=Platinum 10=Tamers Apex.)")
+
+	# ── fill@exit per rung, the row `career.gd:CLIMBER_FILL_BY_LEAGUE` is built from ──
+	print("\n  fill@exit per rung — mean [min-max] (n arcs that stood on that rung):")
+	print("  %-12s  %-22s  %-22s  %-22s" % ["league", "NAIVE", "COMPETENT", "EXPERT"])
+	for i in range(Career.leagues.size()):
+		print("  %-12s  %-22s  %-22s  %-22s" % [
+			str(Career.league_at(i).get("name", "?")),
+			_fill_cell(results["NAIVE"]["fills"][i]),
+			_fill_cell(results["COMPETENT"]["fills"][i]),
+			_fill_cell(results["EXPERT"]["fills"][i])])
+	print("  ⚠️ A CELL WITH n=0 IS NOT A MEASUREMENT. Do not paste it into career.gd.")
+	print("  paste-ready COMPETENT row: [%s]" % _fill_row(results["COMPETENT"]["fills"]))
+	print("  paste-ready EXPERT    row: [%s]" % _fill_row(results["EXPERT"]["fills"]))
+
+	# ── the budget question ─────────────────────────────────────────────────
+	## ⚠️ THE MOST IMPORTANT FOUR LINES IN THIS SECTION. If the naive career ends with gold in the
+	## bank and stalls standing empty in the barn, then whatever COMPETENT bought, NAIVE could
+	## also have bought — and the difference between them is INFORMATION, not difficulty. That is
+	## a legibility bug, and no amount of field tuning fixes it.
+	print("\n  IS THE GAP SKILL OR BUDGET? (a naive career that ends rich with empty stalls did")
+	print("  not lose for want of money — it lost for want of knowing what to spend it on.)")
+	print("  %-11s  %-10s  %-10s  %-13s  %-11s  %-9s  %s" % [
+		"policy", "gold end", "gold peak", "empty stalls", "barn/roster", "recruits", "succession buys"])
+	for name in POLICY_ORDER:
+		var r: Dictionary = results[name]
+		print("  %-11s  %-10d  %-10d  %-13.1f  %-11s  %-9.1f  %.1f" % [
+			name, int(r["medianGoldEnd"]), int(r["medianGoldPeak"]), float(r["meanEmptySlots"]),
+			"%.1f/%.1f" % [float(r["meanBarn"]), float(r["meanRoster"])],
+			float(r["meanRecruits"]), float(r["meanSuccessionBuys"])])
+	print("  (bench monster-weeks: %s)" % _bench_row(results))
+
+	var naive: Dictionary = results["NAIVE"]
+	var comp: Dictionary = results["COMPETENT"]
+	var sub: Dictionary = results["SUBSIDISED"]
+	print("\n  reading:")
+	print("   · NAIVE      won %d/%d, median league %d" % [
+		int(naive["won"]), n_seeds, int(naive["medianReached"])])
+	print("   · COMPETENT  won %d/%d, median league %d   <- FULL PRICE" % [
+		int(comp["won"]), n_seeds, int(comp["medianReached"])])
+	print("   · SUBSIDISED won %d/%d, median league %d   <- free bodies + no entry fee" % [
+		int(sub["won"]), n_seeds, int(sub["medianReached"])])
+	if int(sub["won"]) > int(comp["won"]) and int(comp["won"]) <= int(naive["won"]):
+		print("   ⚠️ THE GAP IS BUDGET, NOT SKILL: only the SUBSIDISED row clears. That belongs in")
+		print("      the economy and in the UI, not in `career.gd`'s field constants.")
+	elif int(comp["won"]) > int(naive["won"]):
+		print("   ✓ the gap is SKILL: the competent policy clears at full price where naive does not.")
+	else:
+		print("   the two policies are indistinguishable on WON at this sample — the meta-game is")
+		print("   not yet paying for itself. See the design statement in docs/META_GAME_REVIEW.md.")
+
+
+## ⚠️ WHICH LADDER WAS THIS MEASURED AGAINST? A policy table is a statement about a FIELD, and
+## `career.gd`'s field constants are edited by a different workstream from this one. Two runs of
+## this section three minutes apart once reported NAIVE reaching Platinum and NAIVE stalling in
+## Wood, because the ladder changed underneath them — and neither number said so. It says so now.
+func _print_ladder_fingerprint() -> void:
+	var m: Dictionary = (Career.get_script() as GDScript).get_script_constant_map()
+	var keys: Array = m.keys().filter(func(k): return str(k).begins_with("FIELD_"))
+	keys.sort()
+	var parts: Array[String] = []
+	for k in keys:
+		parts.append("%s=%s" % [str(k).replace("FIELD_", ""), str(m[k])])
+	print("  ladder fingerprint: %s" % " · ".join(parts))
+	print("  climber table:      %s" % str(m.get("CLIMBER_FILL_BY_LEAGUE", "(absent)")))
+	print("  caps:               %s" % str(_league_caps()))
+
+
+func _league_caps() -> Array:
+	var out: Array = []
+	for i in range(Career.leagues.size()):
+		out.append(int(Career.stat_cap_for_league(i)))
+	return out
+
+
+## One policy, `n` seeds. Returns the row plus its per-rung fill@exit accumulators.
+func _run_policy(name: String, n: int) -> Dictionary:
+	var extra: Dictionary = apply_policy(name)
+	var opts: Dictionary = {"feeMult": float(extra.get("feeMult", 1.0))}
+	var reached: Array = []
+	var weeks: Array = []
+	var gold_end: Array = []
+	var gold_peak: Array = []
+	var won := 0
+	var empty := 0.0
+	var barn := 0.0
+	var roster := 0.0
+	var recruits := 0.0
+	var spread := 0.0
+	var buys := 0.0
+	var bench := 0.0
+	var redraws := 0
+	var fills: Array = []
+	for i in range(Career.leagues.size()):
+		fills.append([])
+	for s in range(n):
+		p_seed = int(POLICY_SEEDS[s])
+		var a: Dictionary = _run_arc(POLICY_WEEKS, opts)
+		reached.append(int(a["finalLeague"]))
+		weeks.append(int(a["weeks"]))
+		gold_end.append(int(a["goldEnd"]))
+		gold_peak.append(int(a["goldPeak"]))
+		if bool(a.get("won", false)):
+			won += 1
+		empty += float(a["emptySlots"])
+		barn += float(a["barnCapacity"])
+		roster += float(a["rosterSize"])
+		recruits += float(a["recruits"])
+		spread += float(a["shapeSpread"])
+		buys += float(a["successionBuys"])
+		bench += float(a.get("benchWeeks", 0))
+		redraws += int(a["kitRedraws"])
+		var rows: Array = a["perLeague"]
+		for i in range(rows.size()):
+			var r: Dictionary = rows[i]
+			# Only rungs the arc actually STOOD ON contribute; a 0.0 averaged in is a fabricated row.
+			if int(r["weeks"]) > 0 and float(r["fillAtExit"]) > 0.0:
+				(fills[i] as Array).append(float(r["fillAtExit"]))
+		print("    %-11s seed %-9d -> %-12s wk %4d  %s %5dg" % [
+			name, int(POLICY_SEEDS[s]), str(Career.league_at(int(a["finalLeague"])).get("name", "?")),
+			int(a["weeks"]), "WON " if bool(a.get("won", false)) else "    ", int(a["goldEnd"])])
+	apply_policy("NAIVE")   # leave the instrument in its default state for whatever runs next
+
+	var fn: float = float(n)
+	var sorted_reached: Array = reached.duplicate(); sorted_reached.sort()
+	var sorted_weeks: Array = weeks.duplicate(); sorted_weeks.sort()
+	var sorted_ge: Array = gold_end.duplicate(); sorted_ge.sort()
+	var sorted_gp: Array = gold_peak.duplicate(); sorted_gp.sort()
+	return {
+		"reached": str(reached), "won": won,
+		"medianReached": int(sorted_reached[sorted_reached.size() / 2]),
+		"medianWeeks": int(sorted_weeks[sorted_weeks.size() / 2]),
+		"medianGoldEnd": int(sorted_ge[sorted_ge.size() / 2]),
+		"medianGoldPeak": int(sorted_gp[sorted_gp.size() / 2]),
+		"meanEmptySlots": empty / fn, "meanBarn": barn / fn, "meanRoster": roster / fn,
+		"meanRecruits": recruits / fn, "shapeSpread": spread / fn,
+		"meanSuccessionBuys": buys / fn, "meanBenchWeeks": bench / fn, "kitRedraws": redraws,
+		"fills": fills,
+		"canary": _policy_canary(name, spread / fn, buys, bench, redraws),
+	}
+
+
+## ⚠️ THE ROW IS VOID UNLESS THE POLICY DEMONSTRABLY DID SOMETHING. Round 11's slope probe
+## measured a player fighting with no moves; the defence is not care, it is a canary.
+## ⚠️ THE SUCCESSION CANARY ACCEPTS EITHER EVIDENCE, AND THE REASON IS A FALSE ALARM ALREADY
+## PAID FOR ONCE IN `_probe_gold_wall.gd`. `_grow_successor` returns early when a spare already
+## exists — and the naive autopilot now keeps a bench of its own — so "bought nothing" can mean
+## "the stable was already covered", which is the policy WORKING. The row is void only if the
+## policy neither bought a successor NOR ever held a body outside the fielded team.
+func _policy_canary(name: String, spread: float, buys: float, bench: float, redraws: int) -> String:
+	var p: Dictionary = POLICIES.get(name, {})
+	var bad: Array[String] = []
+	if bool(p.get("redraft", false)) and redraws == 0:
+		bad.append("kit never re-drafted")
+	if bool(p.get("succession", false)) and buys <= 0.0 and bench <= 0.0:
+		bad.append("succession never fired and no spare was ever held")
+	if bool(p.get("shaped", false)) and spread < 0.05:
+		bad.append("shaped training left a FLAT roster (spread %.2f)" % spread)
+	if bad.is_empty():
+		return "ok"
+	_instrument_ok = false
+	_notes.append("⚠️ policy %s canary FAILED: %s — its row is VOID" % [name, ", ".join(bad)])
+	return "VOID: " + ", ".join(bad)
+
+
+func _bench_row(results: Dictionary) -> String:
+	var out: Array[String] = []
+	for name in POLICY_ORDER:
+		out.append("%s %.0f" % [name, float(results[name]["meanBenchWeeks"])])
+	return " · ".join(out)
+
+
+func _fill_cell(xs: Array) -> String:
+	if xs.is_empty():
+		return "    —        (0)"
+	var sum := 0.0
+	var lo := 9.0
+	var hi := 0.0
+	for x in xs:
+		sum += float(x)
+		lo = minf(lo, float(x))
+		hi = maxf(hi, float(x))
+	return "%.2f [%.2f-%.2f] (%d)" % [sum / float(xs.size()), lo, hi, xs.size()]
+
+
+func _fill_row(fills: Array) -> String:
+	var out: Array[String] = []
+	for xs in fills:
+		if (xs as Array).is_empty():
+			out.append(" n=0")
+			continue
+		var sum := 0.0
+		for x in xs:
+			sum += float(x)
+		out.append("%.2f" % (sum / float((xs as Array).size())))
+	return ", ".join(out)
+
+
+func _arg_str(flag: String, fallback: String) -> String:
+	var args: Array = OS.get_cmdline_user_args()
+	args.append_array(OS.get_cmdline_args())
+	for i in range(args.size() - 1):
+		if str(args[i]) == flag:
+			return str(args[i + 1])
+	return fallback
+
+
+func _arg_int(flag: String, fallback: int) -> int:
+	var args: Array = OS.get_cmdline_user_args()
+	args.append_array(OS.get_cmdline_args())
+	for i in range(args.size() - 1):
+		if str(args[i]) == flag:
+			return int(str(args[i + 1]))
+	return fallback

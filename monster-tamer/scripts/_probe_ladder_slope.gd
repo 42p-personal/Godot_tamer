@@ -121,6 +121,15 @@ func _ready() -> void:
 	if "--arc-table" in args:
 		var seeds: int = 2 if "--quick" in args else 5
 		_run_arc_table(seeds)
+		## ⚠️ THIS MODE USED TO EXIT 0 WITH ITS OWN CANARIES SCREAMING (round 12). `_fail` is set
+		## by the succession canary inside `_arc_fills`, and nothing read it here — so a run whose
+		## competent player had no bench at all reported "OK" and its table got pasted anyway.
+		## A canary that cannot fail the run is a comment.
+		if _fail:
+			print("=== ladder slope probe (arc table only): CANARY FAILED — "
+				+ "the measured player is not the one the column claims ===")
+			_tree.quit(1)
+			return
 		print("=== ladder slope probe (arc table only): OK ===")
 		_tree.quit(0)
 		return
@@ -181,9 +190,15 @@ func climbing_fill(idx: int) -> float:
 
 func _print_model() -> void:
 	print("\n─── THE CLIMBING PLAYER (the assumption every number below rests on) ───")
-	print("  ⚠️ NO LONGER A FORMULA. `career.gd:CLIMBER_FILL_BY_LEAGUE` is a MEASURED table — the")
-	print("  autopilot's own fill@exit per rung, five arcs per cell (three at the top two rungs),")
-	print("  produced by this probe's `-- --arc-table` mode. Re-measure it, never re-reason it.")
+	## ⚠️ ROUND 12: THE TABLE IS NOW AUTHORED AND THIS PROBE'S `--arc-table` MODE VALIDATES IT
+	## RATHER THAN DEFINING IT. It re-measured at .57 .36 .47 .46 .38 .38 .39 .36 .38 .38 .39
+	## against a round-10 row of .49 .44 .49 .59 .53 .50 .48 .44 .44 .42 .43 — same instrument,
+	## same policy, no difficulty decision in between, up to 22 points of silent re-pricing at a
+	## rung. A measurement that moves like that cannot be the DEFINITION of a difficulty curve.
+	print("  ⚠️ AUTHORED CURVE, VALIDATED BY MEASUREMENT (round 12). `career.gd` samples")
+	print("  lerp(CLIMBER_FILL_WOOD, CLIMBER_FILL_APEX, ladder_shape(idx)); `-- --arc-table` runs")
+	print("  the autopilot and CHECKS it. Systematic gap -> move an endpoint. One-rung gap ->")
+	print("  investigate that rung, never put a bump in the curve.")
 	print("  base stat of a fresh recruit: %.0f" % _base_avg())
 	var line := "  "
 	for idx in range(Career.leagues.size()):
@@ -265,11 +280,12 @@ func _measured_fill(team: Array, cap: float) -> float:
 ##   * CONTROL   — the autopilot exactly as it plays today. It stalls (median Silver over 5 seeds),
 ##                 so its top four rungs have FEW OR NO SAMPLES. A table with fabricated rows is
 ##                 worse than a formula, because it looks measured.
-##   * COMPETENT — the same autopilot with the stable half played properly (succession, an
-##                 affordable barn, no entry fee, shaped training, a re-drafted kit). This is the
-##                 round-11 diagnostician's "everything at once" row, which clears Tamers Apex on
-##                 3 of 5 seeds — i.e. the ONLY configuration that produces samples at the top of
-##                 the ladder at all.
+##   * COMPETENT — the same autopilot with the stable half played properly: shaped training, a
+##                 re-drafted kit, a successor kept in training. AT FULL PRICE.
+##                 ⚠️ ROUND 12: THIS COLUMN WAS SUBSIDISED UNTIL 2026-08-09 — free recruits, free
+##                 barn slots, free breeding and a waived entry fee — and the whole field was
+##                 priced against it. Measured at 8 seeds, the same policy completes 2/8 careers
+##                 at full price against 8/8 subsidised. A discount is not a skill.
 ## The field must be priced against the player the game intends to produce, which is the competent
 ## one; the control column is printed beside it so the gap is visible rather than assumed.
 const ARC_SEEDS := [20260809, 771013, 313373, 4242424, 99180]
@@ -309,18 +325,32 @@ func _arc_fills(kind: String, n_seeds: int) -> Array:
 		var v = GoldWallScript.ArcVariant.new()
 		v.v_seed = int(ARC_SEEDS[s])
 		if kind == "policy_all":
+			## ⚠️ ROUND 12 SEAM FIX — THIS COLUMN USED TO BE SUBSIDISED AND CALLED COMPETENT.
+			## It also set `v_free_bodies = true` and passed `{"feeMult": 0.0}`, i.e. free
+			## recruits, free barn slots, free breeding and no entry fee. Measured by
+			## `_probe_career_arc.gd --policies` at 8 seeds on the round-11 ship ladder, the SAME
+			## policy wins 2/8 careers at full price against 8/8 subsidised. So the table the
+			## whole field is priced against was priced against a player who does not pay for
+			## anything — a 4x difference in completion hiding behind a label. Competence is
+			## SHAPED TRAINING + A RE-DRAWN KIT + SUCCESSION. It is not a discount.
 			v.v_redraft_kits = true
-			v.v_free_bodies = true
 			v.v_succession = true
 			v.v_shaped_training = true
-		var opts: Dictionary = {"feeMult": 0.0} if kind == "policy_all" else {}
+		var opts: Dictionary = {}
 		var a: Dictionary = v._run_arc(ARC_WEEKS, opts)
 		var buys: int = v.succession_buys
 		v.free()
 		reached.append(int(a["finalLeague"]))
-		if kind == "policy_all" and buys == 0:
-			print("  ⚠️ succession canary: seed %d bought no successor — that arc is not the "
-				% int(ARC_SEEDS[s]) + "competent player it claims to be.")
+		## ⚠️ THE SUCCESSION CANARY ASKED THE WRONG QUESTION AND FAILED EVERY SEED (round 12).
+		## `_grow_successor()` returns early when `active.size() > team` — i.e. when a spare
+		## already exists — and round 11's four-wire fix made the arc's MAINLINE recruit
+		## `team_need + BENCH_SIZE`. So succession never has anything left to buy. The switch is
+		## REDUNDANT, not inert, and the thing it was invented to guarantee (a trained body
+		## outside the team sheet) is what must be asserted. `benchWeeks == 0` is the real
+		## failure: that is a stable one retirement away from a forfeit.
+		if kind == "policy_all" and int(a.get("benchWeeks", 0)) <= 0:
+			print("  ⚠️ succession canary: seed %d spent 0 monster-weeks on the bench (%d "
+				% [int(ARC_SEEDS[s]), buys] + "successor buys) — no trained cover exists.")
 			_fail = true
 		var rows: Array = a["perLeague"]
 		for i in range(rows.size()):
@@ -502,10 +532,20 @@ func _run_climb() -> Array:
 		var round_wins := 0
 		var round_total := 0
 		var need: int = Career.wins_needed_to_advance(idx, rounds)
+		## ⚠️ PER-ROUND HITS — the term the CHAMPION BAND is computed from (section 1b). It is
+		## measured here rather than in `_probe_sawtooth.gd` because that probe carries a COPY of
+		## `Career.field_fill()` and its canary refuses to run whenever the champion formula
+		## changes. This one calls `Career.make_cup_field()` directly, so it cannot drift.
+		var hits: Array = []
+		for r in range(rounds):
+			hits.append(0)
 		for a in range(seeds_climb):
 			var res: Dictionary = _run_cup(idx, fill, a)
 			var wins: Array = res["wins"]
 			var won_count := 0
+			for r in range(mini(wins.size(), hits.size())):
+				if bool(wins[r]):
+					hits[r] = int(hits[r]) + 1
 			if wins.size() > 0 and bool(wins[0]):
 				opener += 1
 			if wins.size() > 0 and bool(wins[wins.size() - 1]):
@@ -525,8 +565,16 @@ func _run_climb() -> Array:
 			## to zero, the ladder punishes its own pacing.
 			if bool(_run_cup(idx, fill * 0.85, a)["swept"]):
 				hurried += 1
+		var p: Array = []
+		for r in range(rounds):
+			p.append(float(hits[r]) / float(seeds_climb))
+		var qsum := 0.0
+		for r in range(rounds - 1):
+			qsum += float(p[r])
+		var qmean: float = qsum / float(maxi(1, rounds - 1))
 		out.append({
 			"idx": idx, "fill": fill, "rounds": rounds, "need": need,
+			"p": p, "qmean": qmean, "band": float(p[rounds - 1]) - qmean,
 			"opener": float(opener) / float(seeds_climb),
 			"champion": float(champ) / float(seeds_climb),
 			"sweep": float(sweeps) / float(seeds_climb),
@@ -618,6 +666,31 @@ func _report(climb: Array, thresh: Array) -> void:
 	print("  ADVANCE = the real rule (`Career.wins_needed_to_advance`); sweep = the TITLE.")
 	print("  (a CLIMB shows ADVANCE falling as the rungs go up. Flat = a time gate, not a ladder.)")
 
+	## ── 1b. THE CHAMPION BAND ────────────────────────────────────────────────────────────────
+	## ⚠️ THE DIRECT TEST OF "EVERY RUNG HAS A REAL CHAMPION". `band` = the champion round's win
+	## probability MINUS the mean of that cup's own qualifying rounds. It must be NEGATIVE at every
+	## rung (the titleholder is the hardest team in their own draw) and it should DEEPEN up the
+	## ladder. A POSITIVE band means the rung's "champion" is a soft round wearing a name — which
+	## is exactly what Silver (+0.09) and Platinum (+0.03) measured before this section existed,
+	## and those were the two largest ADVANCE inversions in the ladder.
+	print("\n─── 1b. THE CHAMPION BAND (champion p minus this cup's own qualifier mean) ───")
+	print("  league        p[0]  p[1]  p[2]  p[3]  p[4] | qual mean  champion   BAND")
+	var soft := 0
+	for row in climb:
+		var p: Array = row["p"]
+		var cells := ""
+		for r in range(5):
+			cells += ("%5.2f " % float(p[r])) if r < p.size() else "    . "
+		var band: float = float(row["band"])
+		if band >= 0.0:
+			soft += 1
+		print("  %-12s %s|   %.2f      %.2f     %+.2f %s" % [
+			Career.league_at(int(row["idx"])).get("name", "?"), cells,
+			float(row["qmean"]), float(p[p.size() - 1]), band,
+			"⚠️ NOT A CHAMPION" if band >= 0.0 else ""])
+	print("  rungs whose champion is EASIER than their own qualifiers: %d of %d   %s" % [
+		soft, climb.size(), "OK" if soft == 0 else "⚠️ SOFT CHAMPIONS"])
+
 	print("\n─── 2. THE THRESHOLD (lowest player fill that ADVANCES from half its cups) ───")
 	var head := "  league        t*   climb  headroom |"
 	for f in THRESH_FILLS:
@@ -664,6 +737,19 @@ func _report(climb: Array, thresh: Array) -> void:
 			inversions += 1
 	print("  rungs easier than the one below:   %d   %s" % [
 		inversions, "MONOTONE" if inversions == 0 else "⚠️ INVERTED somewhere"])
+	## ⚠️ INVERSION MASS — the same statistic `_probe_sawtooth.gd` reports, computed here so this
+	## probe can stand alone. A COUNT of inversions is threshold-sensitive (±9 pts at n=32 can
+	## manufacture or hide one); the MASS — the total of every upward rung-to-rung step — is
+	## continuous, so it moves smoothly with a real improvement instead of flipping.
+	var inv_mass := 0.0
+	var inv_count := 0
+	for i in range(1, climb.size()):
+		var d: float = float(climb[i]["promote"]) - float(climb[i - 1]["promote"])
+		if d > 0.0:
+			inv_mass += d
+			inv_count += 1
+	print("  INVERSION MASS (sum of up-steps): %5.1f over %d up-steps  (0.0 = perfectly monotone)" % [
+		inv_mass * 100.0, inv_count])
 	var cups := "  expected cups per rung:            "
 	for row in climb:
 		var p: float = maxf(0.01, float(row["promote"]))

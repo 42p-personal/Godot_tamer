@@ -146,24 +146,46 @@ func _scenario(want_size: int) -> void:
 		(str(res.get("winner")) == "A" and int(res.get("survivorsA", 0)) > 0)
 		or (str(res.get("winner")) == "B" and int(res.get("survivorsB", 0)) > 0))
 
-	# ⚠️ THE WRITE-BACK. The new sim never touches the MonsterInstance objects, so the career,
-	# the report screen and the topple loop would all read `alive == true` forever unless
-	# `_write_back_final` runs. This is the check that the roster learned the fight happened.
-	var roster_hp_moved := false
+	# ⚠️ THE WRITE-BACK, AND IT MOVED (round 12). This check used to read the roster the moment
+	# the fight RESOLVED and it now fails there, correctly: `arena_3d.gd:_write_back_final` was
+	# deliberately moved out of `_resolve_fight` and into `_finish()` because stamping the final
+	# state on before playback made `MonsterInstance.alive` the ANSWER rather than the current
+	# state, and the scoreboard, the camera and the topple pass all read it (`WATCH_AUDIT.md` §1).
+	# So the contract is now a SEQUENCE, and the probe asserts both halves of it: untouched while
+	# the replay is running, written back once the fight has been watched to the end.
+	var mid_replay_clean := true
 	for m in _team_a:
-		if float(m.hp) < float(m.max_hp):
-			roster_hp_moved = true
-	_check("the result is written back onto the roster (career/report read these)",
-		roster_hp_moved)
+		if float(m.hp) < float(m.max_hp) or not bool(m.alive):
+			mid_replay_clean = false
+	_check("the roster is UNTOUCHED while the replay is still playing (the replay owns the state)",
+		mid_replay_clean)
 
 	arena.queue_free()
 	await get_tree().process_frame
 
 	# Determinism THROUGH the screen: the same committed state must produce the same fight.
+	# ⚠️ THIS RUNS BEFORE THE SKIP, DELIBERATELY. `_finish()` does more than write back — it also
+	# calls `_offer_cup_continuation`, which calls `CupRun.record_round_result()` and advances the
+	# cup. Skipping the FIRST arena and then re-booting compares round N against round N+1: a
+	# different rival draw, and the determinism check fails on a state change the probe itself
+	# caused. Watch the second fight to the end instead, so the mutation is the last thing done.
 	var a2 := await _boot_arena()
 	var res2: Dictionary = a2.get("result")
 	_check("determinism through the battle screen: same entry state, same fight",
 		str(res.get("winner")) == str(res2.get("winner"))
 		and (res.get("frames", []) as Array).size() == (res2.get("frames", []) as Array).size())
+
+	# `_skip()` is the player's own "I have seen enough" button: it jumps to the last frame,
+	# drains the log, topples the dead and calls `_finish()`. Driving it is how the probe reaches
+	# the end of a fight without playing 140 frames of it in real time.
+	a2._skip()
+	await get_tree().process_frame
+	var roster_hp_moved := false
+	for m in _team_a:
+		if float(m.hp) < float(m.max_hp):
+			roster_hp_moved = true
+	_check("the result is written back onto the roster once watched (career/report read these)",
+		roster_hp_moved)
+
 	a2.queue_free()
 	await get_tree().process_frame

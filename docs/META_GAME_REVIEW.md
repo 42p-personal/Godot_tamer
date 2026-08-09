@@ -1,3 +1,223 @@
+# ⚠️ THE REFERENCE PLAYER — the standing definition (2026-08-09, round 12)
+
+**Every difficulty number this project has ever quoted is a statement about a player nobody
+wrote down.** `career.gd:CLIMBER_FILL_BY_LEAGUE` is a *measurement of the autopilot*; every
+`FIELD_*_RATIO_*` is a ratio to it; and the autopilot's policy was never chosen — it is whatever
+`_probe_career_arc.gd`'s first draft happened to do (biggest drill on the lowest stat, kit never
+re-drafted, no successor, monthly cup). That accident has been the definition of "the player"
+for the entire life of the ladder.
+
+It is now four named policies, first-class objects in the probe, each a real player: it sees only
+what a player sees, pays what a player pays, and never reads a rival's stats or the RNG.
+
+| policy | what it plays | pays |
+|---|---|---|
+| **NAIVE** | the autopilot exactly as it has always played: biggest drill on the LOWEST stat (a points-maximiser that builds a flat generalist), kit drafted once at purchase and never re-drafted, no successor grown, default dynasty floors | full price |
+| **COMPETENT** | the stable half played properly: shaped training (lean into aptitude), the kit re-drafted as the body grows, a successor bought before the veteran retires | **full price** |
+| **EXPERT** | COMPETENT + dynasty pressure — bench and breed out of a thinner surplus (500g/400g) on a 12-week cooldown, because `week.gd:stat_cap_for` is `league_cap × potential` and potential is the only thing that lifts a ceiling the top of the ladder cannot otherwise reach | full price |
+| **SUBSIDISED** | ⚠️ **NOT A PLAYER.** COMPETENT with free recruits, free barn slots, free breeding and no entry fee | nothing |
+
+Run it: `--policies [--seeds N] [--only A,B]`. Four policies × 8 seeds is ~7 minutes.
+
+```
+cd monster-tamer && "P:/Godot_v4.7.1-stable_win64.exe" --headless --path . \
+    res://scenes/_probe_career_arc.tscn -- --policies --seeds 8
+```
+
+## ⚠️ INTEGRATOR VERDICT (round 12, on the FINAL tree) — A HELD CONSTRAINT IS BROKEN
+
+The ladder-C table below was measured mid-round on an in-flight `career.gd`. It has been
+**re-run by the integrator on the shipped tree** and reproduces exactly — same fingerprint, same
+8 seeds, same numbers: NAIVE **7/8**, COMPETENT **6/8**, EXPERT **7/8**, SUBSIDISED **8/8**;
+median 458 / 366 / 366 / 258 weeks. This is not an artefact of a moving target.
+
+**That is a violation of a constraint this project deliberately chose.** An earlier round
+*rejected* a tuning in which the naive autopilot cleared Tamers Apex on 3 of 5 seeds, on the
+grounds that a lowest-stat-training, kit-never-redrafted, no-successor policy completing the game
+makes `CLAUDE.md`'s *"training and breeding are strategy, not maintenance"* **false by
+measurement**. The shipped ladder is at 7 of 8 — worse than the reading that was rejected, and
+the naive player now wins *more often* than the competent one (inside binomial noise at n=8, but
+the ordering is certainly not the intended one).
+
+⚠️ **It was NOT tuned out in this pass, deliberately.** The residual is the archetype spread
+(`tactics.gd:FILL_MULT`, measured uncorrelated with strength at r=+0.15 — see
+`career.gd:FIELD_KIND_PARITY_APPLIED`), and a blind global difficulty raise would trade this
+violation for two others already held: *0 unclearable rungs* and the cup budget, which is already
+over at **32.7** against a 25–28 target. Fix the kinds first, then re-read this table.
+
+## ⚠️ RETRACTED BY NAME
+
+**1. RETRACTED: "a competent stable policy CLEARS TAMERS APEX on 5 of 5 seeds"** (the round-12
+addendum below, and the `COMPETENT fill@exit` column in `career.gd`'s
+`CLIMBER_FILL_BY_LEAGUE` block). **That player did not pay for anything.** The column labelled
+"competent" was run with `v_free_bodies = true` and `feeMult = 0.0` — free recruits, free barn
+slots, free breeding and no cup entry fee. It is the row now called **SUBSIDISED**, and the
+entire difficulty curve is currently priced against it. Measured on the same build, the same
+policy at FULL PRICE reached Tamers Apex on 8 of 8 seeds but *won* on 2 of 8, against
+SUBSIDISED's 8 of 8. The mislabelling was not cosmetic: it is a 4× difference in completion.
+
+**2. RETRACTED: "the autopilot's verdicts are a *lower bound* on what a good player achieves."**
+(§6, standing warning 2.) On the ladder as it stood at 17:15 on 2026-08-09 the NAIVE autopilot
+**wins 7 of 8 careers**, one more than COMPETENT. A policy that wins as often as a better one is
+not a lower bound on anything; it is evidence that the ladder currently asks nothing of the
+stable half of the game. See the design statement below.
+
+**3. SUPERSEDED: "reached Tamers Apex" as a completion metric.** WON is now read off
+`Career.won_game` — the Apex draw SWEPT — and reported separately from `reached`. On every
+ladder measured this round, reaching index 10 and winning the game differ by 0–6 seeds out of 8.
+Reporting `reached` as completion is a claim this project has already had to retract once.
+
+## The measurement, and ⚠️ WHICH LADDER IT IS ABOUT
+
+⚠️ **THREE LADDERS WERE MEASURED IN ONE AFTERNOON BECAUSE `career.gd` WAS BEING RETUNED
+UNDERNEATH THE INSTRUMENT, AND THE SWING IS LARGER THAN ANYTHING THE POLICIES DO.** This is
+reported, not hidden, and it is why `_run_policies()` now prints a **ladder fingerprint** (every
+`FIELD_*` constant, the climber table and the cap schedule) before any row. A policy table
+without its fingerprint is unattributable and must not be quoted.
+
+| ladder | NAIVE | COMPETENT | EXPERT | SUBSIDISED | what changed |
+|---|---|---|---|---|---|
+| A — `04c8c2c` (round-11 ship state) | 1/8 | 2/8 | 4/8 | 8/8 | the ladder the round-12 diagnosis was measured on |
+| B — mid-edit, 17:03 | 0/8 (median league **Wood**) | 2/8 | 2/8 | 8/8 | champion band mid-rework; not a coherent state, recorded only to show the size of the swing |
+| **C — 17:15, the reading below** | **7/8** | **6/8** | **7/8** | **8/8** | champion band = gap-over-qualifier, `APEX_QUAL_RELIEF` 0.18→0.09, `ARCHETYPE_POWER_MULT` 1.00→0.85, climber table lowered to 0.55→0.37 |
+
+**Ladder C, the reading of record** (8 seeds × 1000 weeks per policy; WON is `Career.won_game`):
+
+```
+  ladder fingerprint: SHAPE_EXP=0.35 · APEX_QUAL_RELIEF=0.09 · ARCHETYPE_POWER_MULT=0.85 ·
+    CHAMPION_GAP_BOTTOM=0.12 · CHAMPION_GAP_TOP=0.18 · DRAW_RAMP_BOTTOM=0.15 ·
+    DRAW_RAMP_TOP=0.05 · DEPTH_RELIEF_PER_ROUND=0.03 · QUAL_RATIO_BOTTOM=0.95 · QUAL_RATIO_TOP=1.08
+  climber table: [0.55, 0.47, 0.45, 0.43, 0.42, 0.41, 0.40, 0.39, 0.38, 0.38, 0.37]
+
+  policy       WON   reached (per seed)              median wks  gold end  stat spread
+  NAIVE        7/8   [10,10,10,10,10,10,10,7]              458      3160         0.12
+  COMPETENT    6/8   [10, 8,10,10,10,10,10,10]             366      3107         1.14
+  EXPERT       7/8   [10,10,10,10,10,10,10,10]             366      3376         1.12
+  SUBSIDISED   8/8   [10,10,10,10,10,10,10,10]             258      4665         1.36
+```
+
+**fill@exit per rung — the row `CLIMBER_FILL_BY_LEAGUE` should be built from.** Mean [min–max]
+(n arcs that stood on that rung). ⚠️ A cell with n=0 is not a measurement.
+
+| league | NAIVE | COMPETENT | EXPERT |
+|---|---|---|---|
+| Wood | 0.53 [0.52–0.53] (8) | 0.54 [0.52–0.55] (8) | 0.54 (8) |
+| Copper | 0.43 [0.35–0.51] (8) | 0.41 [0.38–0.42] (8) | 0.41 (8) |
+| Tin | 0.48 [0.39–0.54] (8) | 0.47 [0.38–0.48] (8) | 0.47 (8) |
+| Bronze | 0.42 [0.34–0.51] (8) | 0.40 [0.38–0.43] (8) | 0.40 (8) |
+| Iron | 0.42 [0.39–0.45] (8) | 0.39 [0.35–0.44] (8) | 0.39 (8) |
+| Silver | 0.42 [0.40–0.45] (8) | 0.39 [0.32–0.45] (8) | 0.39 (8) |
+| Gold | 0.40 [0.35–0.44] (8) | 0.36 [0.30–0.39] (8) | 0.36 (8) |
+| Platinum | 0.40 [0.38–0.43] (8) | 0.40 [0.34–0.44] (8) | 0.40 (8) |
+| Masters | 0.38 [0.36–0.42] (7) | 0.39 [0.34–0.42] (8) | 0.39 (8) |
+| Tamer Elite | 0.40 [0.38–0.41] (7) | 0.40 [0.35–0.43] (7) | 0.40 (8) |
+| Tamers Apex | 0.38 [0.34–0.43] (7) | 0.39 [0.34–0.43] (7) | 0.39 (8) |
+
+**Paste-ready COMPETENT row (ladder C):**
+`[0.54, 0.41, 0.47, 0.40, 0.39, 0.39, 0.36, 0.40, 0.39, 0.40, 0.39]`
+
+⚠️ **AND THE MOST INFORMATIVE THING IN THAT TABLE IS THAT THE THREE COLUMNS AGREE.** COMPETENT's
+fill@exit is within 0.01–0.04 of NAIVE's at every rung, and *below* it at six of eleven. Shaped
+training deliberately makes fewer points — it spends the same weeks buying a SHAPE (stat spread
+1.14 against 0.12) — and `expected_climber_fill` is a stat total over a cap, so **the model the
+whole field is priced against is structurally blind to the axis that separates the two players.**
+A competent stable does not look stronger to `career.gd`. It just wins 92 weeks faster.
+
+## Is the gap SKILL or BUDGET? (brief item 4)
+
+The hypothesis was: if the naive career ends rich with empty stalls, the difference is
+information, not difficulty. **Measured, that specific hypothesis is FALSE, and what replaces it
+is sharper.**
+
+| policy | gold end | gold peak | empty stalls | barn/roster | recruits | bench monster-weeks |
+|---|---|---|---|---|---|---|
+| NAIVE | 3160 | 3531 | **0.0** | 5.8/5.8 | 7.4 | 4 |
+| COMPETENT | 3107 | 3107 | **0.0** | 5.6/5.6 | 5.5 | 17 |
+| EXPERT | 3376 | 3376 | 0.0 | 5.6/5.6 | 5.9 | 17 |
+| SUBSIDISED | 4665 | 4665 | 0.0 | 6.0/6.0 | 6.0 | 110 |
+
+- **Nobody ends with an empty stall.** Every policy fills its barn. The naive player is not
+  sitting on money it does not know how to spend; the barn is full and the gold is spent.
+- **But money still decides more than policy does.** On ladder A the *same* policy went 2/8 at
+  full price and 8/8 free — six completions bought by the budget alone, against one completion
+  (1/8→2/8) bought by the policy. On ladder C the ladder is soft enough that everything wins, so
+  the effect is only visible in PACE: SUBSIDISED finishes in 258 weeks against COMPETENT's 366.
+- **Money is scarce early and worthless late.** On ladder A the naive career peaked at 1031g
+  while a fifth barn stall cost more than that, and the competent one *ended* with 14,062g
+  unspent. The economy has a shape problem, not a level problem: the sink that matters (bodies
+  and stalls) is priced above early income and irrelevant to late income.
+
+**Splitting the subsidy in half gives the finding an address** (`--only
+COMPETENT,COMP_NOFEE,COMP_FREEBODY`, same 8 seeds, same ladder-C fingerprint):
+
+```
+  COMPETENT       6/8   median 366 weeks   full price
+  COMP_NOFEE      8/8   median 302 weeks   entry fee waived, bodies at full price
+  COMP_FREEBODY   8/8   median 254 weeks   recruits/stalls/breeding free, fee at full price
+```
+
+**Each half of the subsidy, alone, is worth as much as the whole**: either one takes completion
+from 6/8 to 8/8 and cuts 64–112 weeks off the climb. Neither price is a rounding error and
+neither is the sole culprit — the stable is squeezed from both ends at once. `BASE_FEE +
+FEE_PER_LEAGUE` and `BARN_PRICES`/recruit pricing should be re-derived **together**, against the
+income the *previous* rung actually pays, and re-measured with these three rows.
+
+**So the redirect for round 13 is not "tell the player what to buy".** It is: *the early economy
+gates the stable, and the late economy has no sink at all.* That is an economy-shape finding
+(and `E2`/`B3` in this document already point at it), not a legibility one.
+
+## ⚠️ THE DESIGN STATEMENT — how large SHOULD the gap be? (brief item 3)
+
+This is a design decision, not a measurement, and the measurement above is why it has to be made
+now: **on the current ladder the answer is "zero", and zero is the one value the vision rules
+out.** `CLAUDE.md` is explicit that *knowing WHICH monster to make is the skill*, and a ladder a
+naive autopilot clears 7 times in 8 makes the entire stable half of the game optional.
+
+**Proposed target spread, in `WON` out of 8 seeds at 1000 weeks:**
+
+| policy | target WON | target median weeks | what the player experiences |
+|---|---|---|---|
+| **NAIVE** | **0–1 / 8**, stalling at **Gold–Platinum** (index 6–7) | — | a real climb: six or seven promotions, roughly two-thirds of the ladder, and then a wall it can feel. This is the ON-RAMP, and it must be generous — a naive player should see most of the content. |
+| **COMPETENT** | **5–6 / 8** | ~350–450 | the game is completable by someone who plays the stable properly, but not casually. The two lost seeds are the honest tail, not a punishment. |
+| **EXPERT** | **7–8 / 8** | ~280–330, i.e. **~20% faster** | past competent, skill buys PACE and certainty, not access. |
+
+**The load-bearing assertion: the naive/competent gap belongs at the TOP of the ladder, not
+spread along it.** Wood→Gold should be clearable on training alone — that is where the player is
+still learning what a stat does. Platinum→Apex should require the things only the stable half
+provides: a shaped roster, a re-drafted kit, a successor ready before the veteran retires, and
+above Gold a bloodline (`stat_cap_for` = `league_cap × potential`; §3 already records that no
+monster can fill a Platinum-or-above cap in one lifetime).
+
+**What that implies for where the field is priced, concretely:**
+
+1. **The field must be priced against COMPETENT at FULL PRICE** — the row now measured, never
+   SUBSIDISED. Retraction 1 above is the whole reason this sentence exists.
+2. **`expected_climber_fill` cannot express the target on its own.** It is a stat total over a
+   cap, and the measurement above shows COMPETENT and NAIVE differ by ≤0.04 on it while differing
+   by 92 weeks and (on ladder A) by a factor of two in completion. A ladder tuned only on fill
+   *cannot* make the top rungs ask for a shaped, re-drafted, succeeded roster, because it cannot
+   see one. **The top-four champions need to differ in KIND** (§5 item 7) — that is the mechanism
+   by which the meta-game becomes load-bearing, and it is now the highest-value item in this
+   document.
+3. **Do not buy the gap by lowering the naive player's ceiling.** Making Wood–Gold harder
+   removes the on-ramp and hits the naive player where the design wants them comfortable.
+
+## Re-running, and the two things to check first
+
+```
+--policies --seeds 8                      # the four-row table + fill@exit + the budget block
+--policies --seeds 8 --only COMPETENT,COMP_NOFEE,COMP_FREEBODY   # split the subsidy in two
+```
+
+1. **The ladder fingerprint printed at the top.** If it does not match the ladder you mean to
+   talk about, nothing below it is quotable. Three ladders in one afternoon.
+2. **The canary column.** Every policy row asserts it actually did something — shaped training
+   must move the stat SPREAD, succession must buy a body or hold a bench, a re-drafted kit must
+   change a moveset. A row that fails prints `VOID` and the probe exits 1. This exists because
+   round 11's slope probe measured a player fighting with no moves.
+
+---
+
 # ⚠️ ROUND 12 ADDENDUM — RETRACTIONS (2026-08-09, integrator)
 
 Three claims in this document are withdrawn by name. All three were measured against a build
@@ -349,14 +569,17 @@ Exit 0 means the instrument is sound. Watch these six, in this order:
 | frontier UNENTERABLE weeks | **37%** | whether the wall is difficulty or economy |
 | first preserve / first birth | **336 / never** | whether the generational half is reachable |
 | gold at end vs peak | **266 / 1582** | whether the fee turned the faucet into a wager |
+| **`--policies` WON spread** | **NAIVE 7/8 · COMPETENT 6/8 · EXPERT 7/8** | whether the meta-game is load-bearing at all. Target: 0-1 / 5-6 / 7-8. See the top of this file. |
 
 ⚠️ **THREE STANDING WARNINGS FOR WHOEVER READS THIS NEXT.**
 1. **Believe section 6 before section 1.** An arc figure from an instrument that has not proved it
    responds is worth nothing, and this probe has produced exactly that class of number before.
-2. **The autopilot's play is a policy, not a law.** It trains lowest-stat-first, never sets
-   tactics, and picks a breeding emphasis by doubling down on the line's best stat. A better
-   player beats it. Its verdicts are a *lower bound* on what a good player achieves and an *upper
-   bound* on nothing.
+2. **The autopilot's play is a policy, not a law.** ⚠️ **AND THE SECOND HALF OF THIS WARNING IS
+   RETRACTED — see "THE REFERENCE PLAYER" at the top of this file.** The policy is now named
+   (NAIVE) and measured against three others; on the ladder as it stood at 17:15 on 2026-08-09 it
+   wins 7 of 8 careers, one MORE than COMPETENT, so it is not a lower bound on anything. What
+   survives is the first sentence: it trains lowest-stat-first, never sets tactics, and picks a
+   breeding emphasis by doubling down on the line's best stat.
 3. **It still cannot tell you whether any of this is FUN.** 392 fights and 188 minutes of menus is
    a measurement of quantity. `docs/OUTSTANDING.md` §3 is still open, and there is still not one
    human playtest record in this repo.

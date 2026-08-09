@@ -45,6 +45,29 @@ static func sheet() -> Dictionary:
 			{"wave": "noise", "noise_lp": 0.55, "dur": 0.05, "amp": 0.3,
 				"atk": 0.001, "dec": 0.02, "sus": 0.0, "rel": 0.03, "seed": 12},
 		],
+		# A HEAVY LANDING — the third grade of the same swing, below the body hit rather than above
+		# it. Lower fundamental, longer tail, a fatter transient: it is the SAME family as
+		# `hit_body`, so nobody has to learn a new sound, but it is unmistakably a bigger blow.
+		#
+		# ⚠️ IT EXISTS BECAUSE THE BIGGEST DAMAGE IN THE GAME WAS THE LEAST LEGIBLE BY EAR.
+		# Measured over three seeded 5v5s: a basic `strike` spans 8–23 damage, while `cast_done`
+		# spans 1–80 (p50 17, p90 60) and `proj_hit` 10–74. Every non-crit cast landed on the same
+		# resolution chord at the same gain, and every non-crit arrow — 74 damage or 10 — fell on
+		# the one absolute threshold (`dmg >= 8`) that was authored for basic attacks. So an 80
+		# damage spell and a 9 damage poke made the same noise, in a game whose entire loop is
+		# watching a fight you cannot intervene in.
+		#
+		# ⚠️ IT IS DELIBERATELY NOT THE CRIT AND NOT THE DEATH. The crit is the driven square (an
+		# ORTHOGONAL fact — a roll went your way), the death owns 38 Hz alone. Heavy sits between
+		# `hit_body` and `death` in register and is the only thing in that gap.
+		"hit_heavy": [
+			{"wave": "sine", "f0": 132, "f1": 54, "dur": 0.34, "amp": 1.0,
+				"atk": 0.001, "dec": 0.11, "sus": 0.26, "rel": 0.19},
+			{"wave": "saw", "f0": 96, "f1": 44, "dur": 0.24, "amp": 0.3, "drive": 1.4,
+				"atk": 0.002, "dec": 0.08, "sus": 0.2, "rel": 0.13},
+			{"wave": "noise", "noise_lp": 0.22, "dur": 0.15, "amp": 0.62,
+				"atk": 0.001, "dec": 0.05, "sus": 0.05, "rel": 0.08, "seed": 14},
+		],
 		# A CRIT. Driven square over the thump: harmonics the body hit does not have, so it cuts
 		# through a scrum without simply being louder than everything else.
 		"hit_crit": [

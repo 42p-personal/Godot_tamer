@@ -372,6 +372,35 @@ const PLATE_GAP := 3.0          # pixels between stacked plates
 
 const CAM_FOLLOW_RATE := 2.4    # exponential smoothing rate/second for center+zoom
 
+# ── THE DIRECTOR (ACTION mode). ⚠️ FITTING IS NOT FILMING. Framing the bounding box of every
+# living unit means the more spread the fight, the further the camera pulls back — so the one
+# moment the shot most needs to be tight (a 5v5 strung out across a 440x246 ground) is the moment
+# it is widest. `docs/ENGAGEMENT_DESIGN.md` records the same insight from the other side: an arena
+# larger than the screen makes a diffuse fight unfilmable, so the camera and the chase are one
+# problem. ACTION mode therefore picks a SUBJECT and frames its engagement.
+#
+# ⚠️ THE STICKINESS RULE, STATED, because a cut that lands on the wrong thing is worse than no
+# cut: the camera holds its subject for CAM_DWELL playback seconds no matter what. After that it
+# only changes subject if the challenger's interest exceeds the incumbent's by CAM_SWITCH_MARGIN.
+# The single override is death — when the subject falls the shot holds it for CAM_DEATH_HOLD (so
+# the kill reads) and is then free to move immediately. Nothing else can jump the shot.
+const CAM_DWELL := 2.2            # playback seconds a subject is held unconditionally
+const CAM_SWITCH_MARGIN := 1.5    # challenger must be this much more interesting to take the shot
+const CAM_DEATH_HOLD := 1.1       # seconds the shot stays on a subject that just died
+const CAM_ENGAGE_R := 26.0        # ground units around the subject that count as "this fight"
+const CAM_HIT_MEMORY := 0.7       # seconds a landed hit keeps a unit interesting
+const CAM_SNAP_SPANS := 3.0       # a subject change further than this many spans CUTS, not eases
+
+var _cam_subject: int = -1
+var _cam_subject_since: float = -999.0
+var _hit_at: Dictionary = {}      # unit idx -> playback seconds of its last landed hit taken
+var _death_at: Dictionary = {}    # unit idx -> playback seconds it fell
+var _cam_want_snap := false
+## The enemy half of the approach shot's closest-pair — framed WITH the subject so the gap is the
+## thing on screen. -1 outside the approach shot.
+var _cam_partner: int = -1
+const CAM_APPROACH_R := 90.0     # ground units: past this the two lines get their own shot
+
 ## ⚠️ TWO TEMPORARY OBSERVATION SWITCHES (studio owner, 2026-08-05): "lets remove the objects from
 ## the arena for now... lets make a large arena with clear deployment zones and see how the
 ## monsters move and interact. the camera should be able to cover the arena."
@@ -613,7 +642,15 @@ var _cam_span := 30.0
 ## "stuck to one monster"). ACTION is that all-units follow, ARENA the wide instrument, FREE is
 ## manual: hold LMB to pan, wheel to zoom — any mouse camera input enters FREE; C returns.
 enum CamMode { TEAM, ACTION, ARENA, FREE }
-var _cam_mode: int = CamMode.TEAM
+# ⚠️ ACTION IS THE DEFAULT NOW. It used to be indistinguishable from TEAM — both fitted the
+# bounding box of the units `_write_back_final` had already marked as the fight's survivors, so
+# `docs/WATCH_AUDIT.md` measured the two modes returning BYTE-IDENTICAL framing and pressing `C`
+# between them doing nothing. ACTION is a director (`_director_target`); TEAM is the owner's box
+# seat over your own line; ARENA is the whole ground. Three genuinely different shots.
+var _audio: Node = null            # battle_audio.gd, or null — an OPTIONAL dependency (see _ready)
+var _audio_speed := -1.0           # last value pushed to the mixer; only changes are pushed
+var _audio_muted := false
+var _cam_mode: int = CamMode.ACTION
 var _free_center: Vector3 = Vector3.ZERO
 var _free_span: float = 60.0
 var _panning := false
@@ -641,6 +678,18 @@ func _ready() -> void:
 	spectators = SpecScript.new()
 	add_child(spectators)
 	spectators.build(ground_size, _to_world, 1.0)   # full house for the demo; FAME takes this over
+	# ── AUDIO ─────────────────────────────────────────────────────────────────────────────────
+	# ⚠️ 700 LINES OF MIX ENGINEERING REACHED ONLY THE DEV SCENE UNTIL NOW. `docs/WATCH_AUDIT.md`
+	# §5: `battle_audio.gd` + `cues.gd` handle all 22 sim event kinds, and the production 5v5
+	# behind "Watch a Battle" played in total silence because nothing here called them. It is an
+	# OPTIONAL dependency exactly as it is in `_watch_sim.gd` — a missing file or a bank that will
+	# not render leaves `_audio` null and the fight silent, which is the game we already had,
+	# rather than taking the watch scene down.
+	if ResourceLoader.exists("res://scripts/audio/battle_audio.gd"):
+		var audio_script = load("res://scripts/audio/battle_audio.gd")
+		if audio_script != null:
+			_audio = audio_script.new()
+			add_child(_audio)
 	for gmv in GameData.moves:
 		_move_by_name[str(gmv["name"])] = gmv
 	_build_world()
@@ -808,10 +857,9 @@ var _obstacles: Array = []
 #     furniture only. `SPATIAL_COMBAT_DESIGN.md`'s graded cover is unbuilt on the new stack.
 #   • `targetId` — absent. Nothing reads it here, so nothing broke; noted so a future focus-line
 #     overlay knows it must be added sim-side rather than guessed at.
-#   • `manmark` — `combat_tree` has a "marked" priority but it reads `ordered_id`, a blackboard
-#     key `sim.gd` documents as "arrives when the tactics screen wires in (v1: keys absent)".
-#     The order therefore degrades to the team default here rather than silently doing nothing
-#     under a different name.
+#   • ~~`manmark`~~ — WIRED 2026-08-09. `combat_tree.build()` seeds `ordered_id` from the tactics
+#     dict itself on the first descent, so the mark never needed the sim to fill a blackboard key.
+#     `_new_sim_tactics` now sends `target_priority: "marked"` + `ordered_id`. See there.
 #
 # ⚠️⚠️ AND THE ONE THAT COSTS A WHOLE FIGHT IF YOU MISS IT: THE TWO ENGINES USE DIFFERENT
 # COORDINATE ORIGINS. `Spatial.deploy_positions`/`deploy_zone`/`clamp_to_ground` — and therefore
@@ -923,8 +971,24 @@ func _new_sim_tactics(m, side: String) -> Dictionary:
 	match tp:
 		"casters": t["target_priority"] = "casters"
 		"tanks": t["target_priority"] = "tanks"
-		# "manmark" has no live consumer (see the contract note above) — it degrades to the
-		# documented team default rather than to a different-but-plausible-looking behaviour.
+		"manmark":
+			# ⚠️ THIS WAS THE NINTH BUILT-AND-UNREACHABLE FEATURE. The comment above used to say
+			# `manmark` "has no live consumer"; it has one — `combat_tree.build()` takes
+			# `target_priority == "marked"`, seeds `ordered_id` from the tactics dict on its first
+			# descent, releases a dead mark and holds it against the execute-window steal, and
+			# `_probe_combat_tree.gd` asserts the whole path. Man mark is the ONE order that asks
+			# the player to do scouting work, and until now it was a gold border on a portrait.
+			# A mark with nobody marked is the documented fall-through (`tactics.gd` §pick_target).
+			var mark = plan.get("markedUnit")
+			var mi_k: int = all_units.find(mark) if mark != null else -1
+			if mi_k >= team_a.size():
+				t["target_priority"] = "marked"
+				t["ordered_id"] = "b%02d" % (mi_k - team_a.size())
+			elif mi_k >= 0:
+				t["target_priority"] = "marked"
+				t["ordered_id"] = "a%02d" % mi_k
+			else:
+				t["target_priority"] = "weakest"
 		_: t["target_priority"] = "weakest"
 
 	var intent := str(own.get("positionalIntent", plan.get("positionalIntent", "")))
@@ -1083,14 +1147,25 @@ func _adapt_result(raw: Dictionary) -> Dictionary:
 				"progress": 0.0,
 				"kind": _shot_kind_of(str(pd.get("move", "")))})
 
-		out_frames.append({"t": t, "units": units_out, "shots": shots, "projectiles": projs})
+		# ⚠️ THE RAW EVENT ARRAY TRAVELS WITH THE FRAME, UNTRANSLATED. `_adapt_event` renames
+		# `strike` to `hit`, drops `from`, and returns {} for twelve kinds — feeding THAT to the
+		# audio layer would silence most of the mix while looking correctly wired, which is this
+		# project's signature failure in a new costume. The audio interface speaks the SIM's
+		# vocabulary on purpose (`docs/WATCH_AUDIT.md` §5), so the sim's own events are kept
+		# alongside the adapted log rather than reconstructed from it.
+		out_frames.append({"t": t, "units": units_out, "shots": shots, "projectiles": projs,
+			"events": events})
 
 	var duration: float = float(int(raw.get("ticks", 0))) * NewSim.DT
 	var winner := str(raw.get("winner", ""))
 	if winner == "":
 		winner = "draw"
 	log.append({"kind": "end", "winner": winner, "duration": duration, "t": duration})
-	_write_back_final(out_frames)
+	# ⚠️ THE WRITE-BACK USED TO HAPPEN HERE AND IT SPOILED THE ENTIRE FIGHT. See
+	# `_write_back_final`'s own comment: stamping the FINAL state onto the monster objects before
+	# playback begins made `MonsterInstance.alive` the ANSWER rather than the current state, and
+	# three systems read it — the scoreboard, the camera and the topple pass. It now runs in
+	# `_finish()`, after the last frame has been shown. `docs/WATCH_AUDIT.md` §1.
 	return {"winner": winner, "duration": duration, "log": log,
 		"survivorsA": last_alive_a, "survivorsB": last_alive_b,
 		"groundSize": ground_size, "obstacles": _obstacles, "frames": out_frames,
@@ -1142,6 +1217,56 @@ func _adapt_event(e: Dictionary, t: float) -> Dictionary:
 				"reason": "%s kicked it" % from_n, "t": t}
 		"death":
 			return {"kind": "death", "unit": _name_of_sim_id(str(e.get("id", ""))), "t": t}
+		# ── THE FOUR THAT WERE SILENT. `docs/WATCH_AUDIT.md` §4 ranked them by what their absence
+		# costs the viewer; this is that order. Everything here is carried by the event itself —
+		# the renderer resolves ids to names and centre-frame to corner-frame, and invents nothing.
+		"taunted":
+			# ⚠️ #1, and the reason it stayed invisible for so long is worth keeping written down:
+			# `_log_event` had a branch that floated "TAUNTED" when a `status_applied` arrived with
+			# `status == "taunt"`, and that branch could NEVER FIRE — taunt is not one of the
+			# fifteen `fieldStatus` kinds, the sim stores it as `tgt["taunt"]` and announces it
+			# with its own `taunted` event. Code that looks like it handles a mechanic is how a
+			# mechanic goes missing. A forced target change is the single most important thing a
+			# tank does and the single most inexplicable thing to watch unexplained.
+			return {"kind": "taunted", "by": from_n, "unit": to_n,
+				"seconds": float(e.get("seconds", 0.0)), "t": t}
+		"aoe":
+			# ⚠️ #2, and the sim wrote the spec: "THE BURST MUST BE VISIBLE OR IT IS NOT A
+			# MECHANIC… The renderer draws this ring; it derives nothing — centre, radius and
+			# count come from here" (`sim.gd:1585`). The whole "AoE is weak into one body and
+			# strong into three" design is invisible without it.
+			return {"kind": "aoe", "caster": from_n, "move": str(e.get("move", "")),
+				"centre": (e.get("centre", Vector2.ZERO) as Vector2) + ground_size * 0.5,
+				"radius": float(e.get("radius", 0.0)), "targets": int(e.get("targets", 0)),
+				"falloff": float(e.get("falloff", 1.0)), "t": t}
+		"fizzle":
+			# ⚠️ #3 is the ambiguity the interrupt fix already ruled unacceptable: a cast bar that
+			# silently disappears reads as "finished?" or "cancelled?" with no way to tell. Same
+			# ambiguity, same fix — grey the bar and say why.
+			return {"kind": "fizzle", "unit": from_n, "move": str(e.get("move", "")), "t": t}
+		"debuff":
+			# ⚠️ #4 is an ASYMMETRY the player will read as a rule. `buff` has a full grammar —
+			# ring under the target, charge on the caster, green log line — and `debuff` had
+			# nothing, so a viewer watched their own team visibly strengthen and never once saw an
+			# enemy weakened. That teaches a false lesson about what the kits do.
+			return {"kind": "debuff", "by": from_n, "unit": to_n, "move": str(e.get("move", "")),
+				"seconds": float(e.get("seconds", 0.0)), "t": t}
+		# ── AND THE TWO THAT ONLY BECAME MEASURABLE ONCE THE ROSTER COULD PRODUCE THEM.
+		# ⚠️ `docs/WATCH_AUDIT.md` §4 listed `thorns` and `ward_soak` as "never fired, and that is
+		# its own finding" — they were unrankable because the production roster had no thorns body
+		# and no ward. With `watch.gd`'s composition fixed they fire 13 and 3 times in one fight,
+		# and they are the two most confusing unexplained numbers on the board: HP that comes off
+		# the ATTACKER, and damage that lands and does nothing.
+		"thorns":
+			# The reflect is a DEFENDER's mechanic that hurts the ATTACKER — the one event whose
+			# damage travels backwards along the arrow the viewer just watched.
+			return {"kind": "thorns", "by": from_n, "unit": to_n,
+				"dmg": int(e.get("dmg", 0)), "t": t}
+		"ward_soak":
+			# `cues.gd` names the soak as one of the three contrasts the whole cue sheet exists to
+			# carry. Silently eating a hit is indistinguishable from a miss on screen.
+			return {"kind": "ward_soak", "by": from_n, "unit": to_n,
+				"amount": int(e.get("amount", 0)), "t": t}
 	return {}
 
 
@@ -1169,6 +1294,25 @@ func _write_back_final(out_frames: Array) -> void:
 		m.hp = maxf(0.0, float(rec.get("hp", 0.0)))
 		m.mp = float(rec.get("mp", 0.0))
 		m.alive = bool(rec.get("alive", false))
+
+
+## ⚠️ IS THIS UNIT STANDING **IN THE FRAME THE PLAYER IS LOOKING AT**? Every watch-surface
+## question about aliveness must come through here, never from `all_units[k].alive` — that field
+## is the fight's RESULT (written back by `_write_back_final` once playback ends) and reading it
+## during the replay is how the scoreboard came to announce the winner at frame zero and the
+## camera came to follow the eventual survivors from the opening walk (`docs/WATCH_AUDIT.md` §1,
+## measured at 100% of frames disagreeing with the screen).
+##
+## `last_rec` is written by `_apply_frame` for the frame currently displayed, so this is the
+## displayed truth by construction. Before the first frame is applied it is empty and everyone
+## reads as standing, which is correct: nobody has died yet.
+func _alive_now(k: int) -> bool:
+	if k < 0 or k >= nodes.size():
+		return false
+	var rec: Dictionary = (nodes[k] as Dictionary).get("last_rec", {})
+	if rec.is_empty():
+		return true
+	return bool(rec.get("alive", true))
 
 
 func _show_resolving(v: bool) -> void:
@@ -2783,9 +2927,13 @@ func _camera_target() -> Dictionary:
 		var need_z: float = bd * 0.5 * sin(deg_to_rad(CAM_PITCH_DEG))
 		return {"center": Vector3.ZERO, "span": maxf(need_x, need_z) * 1.04}
 
+	# ⚠️ ACTION mode is now a DIRECTOR, not a fitter — it finds where the fight is and frames that.
+	if _cam_mode == CamMode.ACTION:
+		return _director_target()
+
 	var pts: Array = []
 	for k in range(nodes.size()):
-		if k >= all_units.size() or not all_units[k].alive:
+		if k >= all_units.size() or not _alive_now(k):
 			continue
 		# TEAM mode: frame YOUR side (team A) — the fight from the owner's box seat. The enemy
 		# enters frame exactly when it engages your line, which is when it matters.
@@ -2815,6 +2963,158 @@ func _camera_target() -> Dictionary:
 	return {"center": center, "span": span}
 
 
+## Playback time in seconds — the replay's own clock, NOT the wall clock. Everything the director
+## remembers (dwell, a recent hit, a recent death) is measured on this, so the shot behaves the
+## same at 0.5x as at 4x and a scrub backwards rewinds the camera's memory with the fight.
+func _play_t() -> float:
+	return frame_pos * NewSim.DT
+
+
+## How much this unit deserves the shot RIGHT NOW. Every term is read from the frame being
+## displayed or from an event the player has already been shown — the renderer invents no state
+## here, it only decides where to point (`docs/BUILD_CONTRACT.md` §2: presentation may prioritise,
+## it may not compute a game fact).
+func _cam_interest(k: int) -> float:
+	var t := _play_t()
+	if not _alive_now(k):
+		# A body that has just fallen is the most important thing on the board for a moment, and
+		# nothing at all after that.
+		var d: float = t - float(_death_at.get(k, -999.0))
+		return 12.0 if (d >= 0.0 and d < CAM_DEATH_HOLD) else -1.0
+	var rec: Dictionary = (nodes[k] as Dictionary).get("last_rec", {})
+	var w := 1.0
+	var st := str(rec.get("state", "idle"))
+	if st == "attack":
+		w += 3.0
+	elif st == "cast":
+		w += 2.6      # the windup IS the drama — it is the interrupt window
+	elif st == "stunned":
+		w += 1.6
+	if not (rec.get("statuses", []) as Array).is_empty():
+		w += 0.8
+	var mx: float = float(all_units[k].max_hp) if k < all_units.size() else 0.0
+	if mx > 0.0:
+		var frac: float = float(rec.get("hp", mx)) / mx
+		if frac < 0.35:
+			w += 2.5
+		elif frac < 0.7:
+			w += 0.9
+	var since_hit: float = t - float(_hit_at.get(k, -999.0))
+	if since_hit >= 0.0 and since_hit < CAM_HIT_MEMORY:
+		w += 3.5 * (1.0 - since_hit / CAM_HIT_MEMORY)
+	if k == selected_idx:
+		w += 4.0      # the player asked to watch this one
+	return w
+
+
+## The unit on the player's side of the closest living A-vs-B pair — the contact that is about to
+## happen. Returns -1 if either side is empty. Positions come from the frame; nothing derived.
+func _closest_opposing_pair() -> int:
+	var na: int = team_a.size()
+	var best := -1
+	var best_d := 1e12
+	for a in range(0, na):
+		if not _alive_now(a):
+			continue
+		var pa: Vector3 = (nodes[a]["holder"] as Node3D).position
+		for b in range(na, nodes.size()):
+			if not _alive_now(b):
+				continue
+			var d: float = pa.distance_squared_to((nodes[b]["holder"] as Node3D).position)
+			if d < best_d:
+				best_d = d
+				best = a
+				_cam_partner = b
+	if best < 0:
+		_cam_partner = -1
+	return best
+
+
+## Pick a subject under the stickiness rule above, then frame ITS ENGAGEMENT — the subject plus
+## everything standing within `CAM_ENGAGE_R` of it. That is what makes this direction rather than
+## averaging: the far wing of a strung-out fight is deliberately left out of shot, and the pips
+## in `_update_offscreen_pips()` are what stop that from being a lie.
+func _director_target() -> Dictionary:
+	var t := _play_t()
+	var best := -1
+	var best_w := -1.0
+	for k in range(nodes.size()):
+		var w := _cam_interest(k)
+		if w > best_w:
+			best_w = w
+			best = k
+	# ⚠️ THE APPROACH IS 40% OF EVERY FIGHT AND THE DIRECTOR HAS NO SIGNAL DURING IT. Measured:
+	# first damage lands at t=9.6-9.9s of a 22s fight (`docs/WATCH_AUDIT.md` §0), so for the first
+	# nine seconds nobody is casting, nobody is hurt, nobody has been hit — every interest score
+	# is the 1.0 floor and the subject is whichever unit happens to be first in the roster. That
+	# produced a shot of one rival standing alone while all five of the player's monsters were off
+	# frame (`watch_..._cam1_04_t008.0.png`).
+	#
+	# The approach has exactly one piece of drama and it is the GAP: which two lines are about to
+	# meet, and how long is left. So when nothing else is happening the shot goes to the closest
+	# opposing pair — the contact that is about to happen — and the tension is legible instead of
+	# being dead air over an arbitrary monster.
+	# ⚠️ THE APPROACH SHOT BYPASSES THE DWELL RULE, AND IT HAS TO. The first cut of this made the
+	# closest pair merely a CANDIDATE, and it never won: with every interest score sitting on the
+	# 1.0 floor, no challenger can beat an incumbent by the 1.5x switch margin, so the camera kept
+	# whichever unit it happened to grab in the first frame for the whole nine-second approach.
+	# Stickiness protects a shot from being stolen mid-drama; during dead air there is no drama to
+	# protect, so the rule is suspended rather than fought.
+	_cam_partner = -1
+	var approach: bool = best_w < 2.0
+	if approach:
+		var pair := _closest_opposing_pair()
+		if pair >= 0:
+			if pair != _cam_subject:
+				_cam_subject = pair
+				_cam_subject_since = t
+			best = pair
+	var cur_w: float = _cam_interest(_cam_subject) if _cam_subject >= 0 else -1.0
+	var held: float = t - _cam_subject_since
+	var take := false
+	if _cam_subject < 0 or cur_w < 0.0:
+		take = true                                   # no subject, or the subject is gone
+	elif not approach and held >= CAM_DWELL and best_w > cur_w * CAM_SWITCH_MARGIN:
+		take = true                                   # earned the cut
+	if take and best >= 0 and best != _cam_subject:
+		var old_pos := Vector3.ZERO
+		if _cam_subject >= 0:
+			old_pos = (nodes[_cam_subject]["holder"] as Node3D).position
+		var new_pos: Vector3 = (nodes[best]["holder"] as Node3D).position
+		# A long move is a CUT (the eye accepts it as a new shot); a short one EASES (it reads as
+		# the same shot following the action). A three-second swoop across the board is the worst
+		# of both and is what a pure fitter does every time the fight spreads.
+		_cam_want_snap = _cam_subject >= 0 and old_pos.distance_to(new_pos) > _cam_span * CAM_SNAP_SPANS
+		_cam_subject = best
+		_cam_subject_since = t
+	# The partner belongs to the CHALLENGER's shot. If the dwell rule kept the old subject, the
+	# approach pair is not what we are framing and must not widen it.
+	if _cam_subject != best:
+		_cam_partner = -1
+	if _cam_subject < 0:
+		return {"center": Vector3.ZERO, "span": _cam_max_span}
+
+	var focus: Vector3 = (nodes[_cam_subject]["holder"] as Node3D).position
+	var mn := focus
+	var mx := focus
+	for k in range(nodes.size()):
+		if k == _cam_subject or not _alive_now(k):
+			continue
+		var p: Vector3 = (nodes[k]["holder"] as Node3D).position
+		# The approach partner is in shot whatever the engagement radius says — it IS the shot.
+		var reach: float = (CAM_APPROACH_R if k == _cam_partner else CAM_ENGAGE_R) * WORLD_SCALE
+		if focus.distance_to(p) > reach:
+			continue
+		mn.x = minf(mn.x, p.x); mn.z = minf(mn.z, p.z)
+		mx.x = maxf(mx.x, p.x); mx.z = maxf(mx.z, p.z)
+	var center := Vector3((mn.x + mx.x) * 0.5, 0.0, (mn.z + mx.z) * 0.5)
+	var half_x := (mx.x - mn.x) * 0.5 + CAM_BODY_RADIUS
+	var half_z := (mx.z - mn.z) * 0.5 + CAM_BODY_RADIUS
+	var span := maxf(half_x, half_z) * CAM_PADDING + CAM_HEADROOM + CAM_HEIGHT_ALLOWANCE
+	span = clampf(span, CAM_MIN_SPAN, _cam_max_span)
+	return {"center": center, "span": span}
+
+
 ## Places the camera at the CURRENT `_cam_center`/`_cam_span`, geometrically guaranteed to look
 ## exactly at `_cam_center` regardless of span: distance R is chosen so the span fills the FOV,
 ## then decomposed into height/depth by the fixed pitch, and `look_at` does the rest — no
@@ -2834,6 +3134,10 @@ func _update_camera(delta: float) -> void:
 		return
 	var target: Dictionary = _camera_target()
 	var a := 1.0 - exp(-CAM_FOLLOW_RATE * delta)
+	# The director asked for a CUT: land on the new shot this frame rather than sailing to it.
+	if _cam_want_snap:
+		_cam_want_snap = false
+		a = 1.0
 	_cam_center = _cam_center.lerp(target["center"], a)
 	_cam_span = lerpf(_cam_span, target["span"], a)
 	_apply_camera_now()
@@ -2859,6 +3163,7 @@ func _build_units() -> void:
 		m.side = side
 		var holder := Node3D.new()
 		add_child(holder)
+		var team_ring := _add_team_ring(holder, side)
 
 		# ⚠️ THE RIGGED PATH IS TRIED FIRST, AND ITS ABSENCE IS NOT AN ERROR. The roster is 65
 		# species and models arrive one at a time, so for most of this project's life MOST units
@@ -2883,7 +3188,9 @@ func _build_units() -> void:
 				"mp_fill": rplate.get_meta("mp_fill"), "mp_text": rplate.get_meta("mp_text"), "cast_bg": rplate.get_meta("cast_bg"),
 				"cast_fill": rplate.get_meta("cast_fill"), "cast_lbl": rplate.get_meta("cast_lbl"), "cast_icon": rplate.get_meta("cast_icon"),
 				"status_row": rplate.get_meta("status_row"), "intent_lbl": rplate.get_meta("intent_lbl"),
-				"border": rplate.get_meta("border"), "last_rec": {},
+				"border": rplate.get_meta("border"), "last_rec": {}, "team_ring": team_ring,
+				"head": rplate.get_meta("head"), "mp_bg": rplate.get_meta("mp_bg"),
+				"status_strip": rplate.get_meta("status_strip"),
 				"_status_sig": "", "_state_sig": "",
 				"dead": false,
 			})
@@ -2937,10 +3244,52 @@ func _build_units() -> void:
 			"mp_fill": plate.get_meta("mp_fill"), "mp_text": plate.get_meta("mp_text"), "cast_bg": plate.get_meta("cast_bg"),
 			"cast_fill": plate.get_meta("cast_fill"), "cast_lbl": plate.get_meta("cast_lbl"), "cast_icon": plate.get_meta("cast_icon"),
 			"status_row": plate.get_meta("status_row"), "intent_lbl": plate.get_meta("intent_lbl"),
-			"border": plate.get_meta("border"), "last_rec": {},
+			"border": plate.get_meta("border"), "last_rec": {}, "team_ring": team_ring,
+			"head": plate.get_meta("head"), "mp_bg": plate.get_meta("mp_bg"),
+			"status_strip": plate.get_meta("status_strip"),
 			"_status_sig": "", "_state_sig": "",
 			"dead": false,
 		})
+
+
+## ⚠️ THE TEAM TELL MUST BE ON THE BODY. This is the finding from looking at a real scrum capture
+## (`watch_four_pillar_t35_cam0_06_t012.0.png`): eight overlapping creatures of eight different
+## species colours, and NOTHING on any of them said which side it was on. The only team channel
+## in the fight was the badge on a nameplate, and nameplates are 52-69% orphaned from the head
+## they annotate and collide 1.8-4.1 times a frame — so in exactly the ten seconds that decide
+## the match, the team channel is gone.
+##
+## A ring on the ground under the feet cannot be orphaned, cannot collide, cannot be lifted, and
+## survives every camera distance including ARENA mode. It is a CHILD OF THE HOLDER, so it tracks
+## the unit for free and there is no second place that has to remember to move it.
+##
+## ⚠️ Guild Colours rule: this is `Art.team_identity()`, the same swatch every other screen uses
+## for "whose is this" — never a new palette, and never the channel colours, which mean something
+## else entirely (`docs/ART_THEME.md`: three colour systems that must never collide).
+func _add_team_ring(holder: Node3D, side: String) -> MeshInstance3D:
+	var ring := MeshInstance3D.new()
+	var tor := TorusMesh.new()
+	tor.inner_radius = 0.92
+	tor.outer_radius = 1.42
+	tor.rings = 24
+	tor.ring_segments = 6
+	ring.mesh = tor
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var col: Color = Art.team_identity(0 if side == "A" else 1)["colour"]
+	# ⚠️ THE FIRST ATTEMPT LERPED 42% TO WHITE AND BOTH SIDES READ AS THE SAME PALE RING at
+	# fight distance — the livery colours (slate blue / oxblood) are deliberately muted, and
+	# desaturating them further to survive a dark floor destroyed the only thing the ring is for.
+	# The value lift now comes from raising the colour's own VALUE, keeping its hue and saturation
+	# intact, so blue stays blue and oxblood stays red.
+	var hsv := Color.from_hsv(col.h, maxf(col.s, 0.62), maxf(col.v, 0.86))
+	mat.albedo_color = Color(hsv.r, hsv.g, hsv.b, 0.95)
+	ring.material_override = mat
+	ring.position = Vector3(0, 0.06, 0)
+	ring.scale = Vector3(1.0, 0.35, 1.0)   # flattened: a ring on the floor, not a tyre
+	holder.add_child(ring)
+	return ring
 
 
 ## One MultiMeshInstance3D for every unit's ground shadow, per-instance COLOUR (not just
@@ -3172,6 +3521,11 @@ func _make_plate(m, side: String, idx: int) -> Control:
 	panel.set_meta("cast_icon", cast_icon)
 	panel.set_meta("status_row", status_row)
 	panel.set_meta("intent_lbl", intent_lbl)
+	# The rows a QUIET unit's plate collapses (see `_update_plates`' two-tier pass). Kept as metas
+	# so the tier logic never has to know the plate's node layout.
+	panel.set_meta("head", head)
+	panel.set_meta("mp_bg", mp_bg)
+	panel.set_meta("status_strip", status_strip)
 	panel.set_meta("border", sb)
 	return panel
 
@@ -3352,11 +3706,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		# the creatures" are in genuine tension at 5v5 and one span cannot serve both, so this is a
 		# key rather than a constant somebody has to pick.
 		elif event.keycode == KEY_C:
-			# Cycle TEAM → ACTION → ARENA → TEAM; from FREE, C returns home to TEAM.
+			# Cycle ACTION → TEAM → ARENA → ACTION; from FREE, C returns home to ACTION.
 			match _cam_mode:
-				CamMode.TEAM: _cam_mode = CamMode.ACTION
-				CamMode.ACTION: _cam_mode = CamMode.ARENA
-				_: _cam_mode = CamMode.TEAM
+				CamMode.ACTION: _cam_mode = CamMode.TEAM
+				CamMode.TEAM: _cam_mode = CamMode.ARENA
+				_: _cam_mode = CamMode.ACTION
 			get_viewport().set_input_as_handled()
 		# Slow the replay down to watch a specific exchange, or speed through the approach.
 		elif event.keycode == KEY_BRACKETLEFT:
@@ -3368,6 +3722,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_SPACE:
 			speed = 0.0 if speed > 0.0 else 1.0
 			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_LEFT:
+			_seek(frame_pos * NewSim.DT - 3.0)
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_RIGHT:
+			_seek(frame_pos * NewSim.DT + 3.0)
+			get_viewport().set_input_as_handled()
 
 
 func _cycle_selection(reverse: bool) -> void:
@@ -3378,7 +3738,7 @@ func _cycle_selection(reverse: bool) -> void:
 	var step := -1 if reverse else 1
 	for _i in range(n):
 		start = (start + step + n) % n
-		if start < all_units.size() and all_units[start].alive:
+		if start < all_units.size() and _alive_now(start):
 			_select_unit(start)
 			return
 
@@ -3387,9 +3747,25 @@ func _cycle_selection(reverse: bool) -> void:
 # PLAYBACK — interpolate the frame stream
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 
+## Every per-frame watch surface in one call. ⚠️ The squad HUD used to be updated ONLY on the
+## active-playback path, so it was stale through the opening hold, stale while paused, and stale
+## on the final frame — the three moments a viewer is most likely to actually be reading it.
+func _update_watch_surfaces() -> void:
+	if scrub != null and not frames.is_empty():
+		scrub.max_value = float(frames.size() - 1) * NewSim.DT
+		# `set_value_no_signal` — writing the playhead back into the slider must not be mistaken
+		# for the player dragging it, or every frame would trigger a seek.
+		scrub.set_value_no_signal(frame_pos * NewSim.DT)
+	_update_plates()
+	_update_standing_hud()
+	_update_offscreen_pips()
+	_update_tethers()
+	_sync_audio_transport()
+
+
 func _process(delta: float) -> void:
 	if not playing:
-		_update_plates()
+		_update_watch_surfaces()
 		_update_camera(delta)
 		return
 	# ⚠️ Check for a frame stream BEFORE the opening hold, not after. The hold path called
@@ -3406,12 +3782,11 @@ func _process(delta: float) -> void:
 	opening_timer += delta * speed
 	if opening_timer < OPENING_HOLD:
 		_apply_frame(0.0)
-		_update_plates()
+		_update_watch_surfaces()
 		_update_camera(delta)
 		return
 
 	_update_innate_tells()
-	_update_standing_hud()
 	# Frames are one simulation tick apart, so advancing at `1 / DT` frames per second replays the
 	# fight at true speed. ⚠️ Interpolating BETWEEN frames is what makes 10 Hz simulation look
 	# smooth without the renderer inventing any motion of its own.
@@ -3425,10 +3800,11 @@ func _process(delta: float) -> void:
 		_drain_log(event_log.size())
 		playing = false
 		_finish()
+		_update_watch_surfaces()
 		_update_camera(delta)
 		return
 	_apply_frame(frame_pos)
-	_update_plates()
+	_update_watch_surfaces()
 	_update_camera(delta)
 
 
@@ -3443,7 +3819,8 @@ func _apply_frame(fpos: float) -> void:
 
 	# Transition-only ticker entries (`docs/UX_LEGIBILITY.md` §1 rule 2) — checked once per NEW
 	# discrete tick, never once per interpolated sub-frame, so a fast playback speed can't spam it.
-	if i != _seen_tick:
+	var new_tick: bool = i != _seen_tick
+	if new_tick:
 		_seen_tick = i
 		_check_intent_transitions(fa)
 
@@ -3470,6 +3847,15 @@ func _apply_frame(fpos: float) -> void:
 		# keeps the record.
 		if not alive:
 			(nd["plate"] as Control).visible = false
+		# ⚠️ A CORPSE'S TEAM RING DIMS BUT DOES NOT VANISH. The bodies stay on the field, so where
+		# a side LOST its monsters is a real spatial fact a viewer can read off the floor — which
+		# flank collapsed, whether the line held. At full brightness it competed with the living;
+		# gone entirely it would take that read away.
+		var tr = nd.get("team_ring")
+		if tr != null and is_instance_valid(tr):
+			var trm: StandardMaterial3D = (tr as MeshInstance3D).material_override
+			if trm != null:
+				trm.albedo_color.a = 0.95 if alive else 0.30
 
 		if shadow_mm != null and k < shadow_mm.instance_count:
 			shadow_mm.set_instance_transform(k, Transform3D(Basis(Vector3(1, 0, 0), deg_to_rad(-90)), world + Vector3(0, 0.03, 0)))
@@ -3556,16 +3942,43 @@ func _apply_frame(fpos: float) -> void:
 			anim.set_state(str(rec.get("state", "idle")), f if f is Vector2 else Vector2(0, 1),
 				md if md is Vector2 else Vector2.ZERO)
 
-	for shot in fa.get("shots", []):
-		_draw_shot(shot)
-		# A landed hit shakes its VICTIM — the exchange reads as two-sided rather than one unit
-		# lunging into empty air.
-		if bool(shot.get("hit", false)):
-			var vid := int(shot.get("toId", -1))
-			if vid >= 0 and vid < nodes.size():
-				var va = nodes[vid].get("anim")
-				if va != null:
-					va.flinch()
+	# ⚠️⚠️ ONCE PER SIM TICK, NOT ONCE PER RENDERED FRAME. This loop had no tick gate, and
+	# `_apply_frame` runs every `_process`: at 1x speed `frame_pos` advances 0.167 frames per
+	# render frame, so `frames[i]` stayed current for ~6 render frames and EVERY SHOT WAS
+	# PRESENTED SIX TIMES — six bursts, six tracers, six camera punches and six damage floats for
+	# one hit (24 at 0.25x, where the player has deliberately slowed down to read it). That is the
+	# single largest cause of the unreadable scrum in `docs/WATCH_AUDIT.md` §0: the eight identical
+	# `10`s over eight overlapping bodies were never eight hits. The fan-out in `_float_text`,
+	# added to separate simultaneous hits, was faithfully fanning out duplicates of one hit.
+	#
+	# ⚠️ AND THE GATE MUST STAY EVEN IF THE SHOT ART CHANGES. Anything one-shot — a burst, a float,
+	# a punch, a sound — belongs inside it. Anything continuous (positions, bars, glows) belongs
+	# outside, driven by the interpolation, as it already is above.
+	if new_tick:
+		# ⚠️ ONE NUMBER PER VICTIM PER TICK. Three hits landing on one body in the same tick used
+		# to stack three floats; the tick now sums them, so the number on a body is what that body
+		# lost this beat. The individual attributions are still in the log and in the tracers.
+		var dmg_by_victim: Dictionary = {}
+		for shot in fa.get("shots", []):
+			_draw_shot(shot, dmg_by_victim)
+			# A landed hit shakes its VICTIM — the exchange reads as two-sided rather than one
+			# unit lunging into empty air.
+			if bool(shot.get("hit", false)):
+				var vid := int(shot.get("toId", -1))
+				if vid >= 0 and vid < nodes.size():
+					var va = nodes[vid].get("anim")
+					if va != null:
+						va.flinch()
+					# The director's memory of who is under fire (`_cam_interest`), and the
+					# squad-level focus read (`_update_focus_read`).
+					_hit_at[vid] = _play_t()
+					_recent_hits.append({"t": _play_t(), "from": int(shot.get("fromId", -1)),
+						"to": vid})
+		_flush_damage_floats(dmg_by_victim)
+		# ⚠️ AUDIO FIRES HERE AND NOWHERE ELSE — inside the tick gate, for the same reason the
+		# bursts and floats do. Outside it, every cue would play ~6 times at 1x and ~24 at 0.25x:
+		# the six-times bug this gate was built to remove, reintroduced in the audio layer.
+		_play_tick_audio(fa)
 
 	_sync_projectiles(fa, fb, t)
 
@@ -3632,6 +4045,7 @@ func _sync_intent_glyph(nd: Dictionary, state: String) -> void:
 ## `intent` string change since the last tick we looked at". Silently does nothing while the sim
 ## doesn't populate `intent` (every entry is `""`), which is the correct degrade, not a bug.
 func _check_intent_transitions(fa: Dictionary) -> void:
+	var grouped: Dictionary = {}   # "side|reason" -> [names]
 	for rec in fa.get("units", []):
 		var uid: int = int(rec.get("id", -1))
 		var intent: String = str(rec.get("intent", ""))
@@ -3641,9 +4055,50 @@ func _check_intent_transitions(fa: Dictionary) -> void:
 			continue
 		_last_intent[uid] = intent
 		var reason: String = str(rec.get("reason", ""))
-		var txt := reason if reason != "" else intent
-		log_view.append_text("[color=#9fb6d9]%s: %s[/color]\n" % [_unit_name(uid), txt])
+		var txt := _humanise_ids(reason if reason != "" else intent)
+		# ⚠️ COLLAPSE THE SQUAD INTO ONE LINE. The ticker used to print five identical lines —
+		# `Gruulk: target: b02 (weakest)` / `Terrock: target: b02 (weakest)` / … — five reads that
+		# say one thing. And that ONE thing, "the whole squad has agreed on a target", is the most
+		# interesting fact the ticker ever carries and the only genuinely squad-level one in it
+		# (`docs/WATCH_AUDIT.md` §6). Grouped by side and by reason, it finally says so.
+		var key := "%s|%s" % ["A" if uid < team_a.size() else "B", txt]
+		var g: Array = grouped.get(key, [])
+		g.append(_unit_name(uid))
+		grouped[key] = g
+	for key in grouped.keys():
+		var names: Array = grouped[key]
+		var txt2: String = str(key).split("|", true, 1)[1]
+		if names.size() >= 3:
+			log_view.append_text("[color=#9fb6d9]%d monsters — %s[/color]\n" % [names.size(), txt2])
+		else:
+			log_view.append_text("[color=#9fb6d9]%s: %s[/color]\n" % [
+				", ".join(PackedStringArray(names)), txt2])
+	if not grouped.is_empty():
 		call_deferred("_snap_log")
+
+
+## ⚠️ THE PLAYER NEVER SEES `a03` ANYWHERE ELSE IN THE GAME. The behaviour tree writes its
+## reasons with the sim's own unit ids — "bulling through a03 to a02", "peel b01 off a04" — and
+## those strings go straight onto the screen. `docs/UX_LEGIBILITY.md` §1 rule 1 is that the
+## vocabulary is never invented twice; a machine key leaking into the ticker invents it a third
+## time. Every `a`/`b` + two digits token is resolved to the name the nameplates already use.
+func _humanise_ids(text: String) -> String:
+	if text == "":
+		return text
+	var out := ""
+	var i := 0
+	while i < text.length():
+		var c := text[i]
+		if (c == "a" or c == "b") and i + 2 < text.length() \
+			and text[i + 1].is_valid_int() and text[i + 2].is_valid_int() \
+			and (i == 0 or not text[i - 1].is_valid_identifier()) \
+			and (i + 3 >= text.length() or not text[i + 3].is_valid_int()):
+			out += _name_of_sim_id(text.substr(i, 3))
+			i += 3
+			continue
+		out += c
+		i += 1
+	return out
 
 
 func _unit_name(uid: int) -> String:
@@ -3652,7 +4107,7 @@ func _unit_name(uid: int) -> String:
 	return "?"
 
 
-func _draw_shot(shot: Dictionary) -> void:
+func _draw_shot(shot: Dictionary, acc: Dictionary = {}) -> void:
 	var from_id: int = int(shot.get("fromId", -1))
 	var to_id: int = int(shot.get("toId", -1))
 	if to_id < 0 or to_id >= nodes.size():
@@ -3708,7 +4163,16 @@ func _draw_shot(shot: Dictionary) -> void:
 		num_col = num_col.lerp(Color.WHITE, 0.35)
 		if crit:
 			num_col = num_col.lerp(Color(1.0, 0.84, 0.36), 0.5)
-		_float_text(to_id, label, num_col)
+		# Accumulate into this tick's per-victim total; `_flush_damage_floats` emits one float per
+		# body. `label` is kept for the single-hit case, where the crit "!" and the "BACK" tell
+		# are exactly the reads the accessibility pass added and must not be summed away.
+		var e_acc: Dictionary = acc.get(to_id, {"dmg": 0, "n": 0, "crit": false, "label": "", "col": num_col})
+		e_acc["dmg"] = int(e_acc["dmg"]) + dmg_i
+		e_acc["n"] = int(e_acc["n"]) + 1
+		e_acc["crit"] = bool(e_acc["crit"]) or crit
+		e_acc["label"] = label
+		e_acc["col"] = num_col
+		acc[to_id] = e_acc
 	else:
 		_float_text(to_id, "MISS", Color(0.78, 0.78, 0.84))
 	# A tracer for anything not swung in melee, so ranged and magic read as reaching across.
@@ -3729,6 +4193,80 @@ func _draw_shot(shot: Dictionary) -> void:
 			# (dimmer, faster than a tracer — this is attribution, not reach) survives density.
 			_tracer((nodes[from_id]["holder"] as Node3D).position,
 					(nodes[to_id]["holder"] as Node3D).position, 0.35, 0.12)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# AUDIO — the sim's own events, at the sim's own tick rate, positioned on the sim's own bodies.
+#
+# ⚠️ THE WHOLE INTERFACE IS `on_event(raw_event, actor_pos, impact_pos)`. The mixer reads nothing
+# else about the fight — the same rule the renderer follows, for the same reason: two sources of
+# truth drift. Two kinds resolve their position differently and both are stated rather than
+# guessed: a `death` names its unit as `id` (not `to`), and an `aoe` happens at a point on the
+# GROUND (`centre`), not on a body.
+#
+# ⚠️ AND IT MUST BE SILENT DURING A SCRUB. `_seek` replays the whole match's events to rebuild the
+# log; without the mute that would fire the entire mix in a single frame. Same contract as
+# `_fx_muted`, deliberately keyed off the same flag so the two layers cannot get out of step.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+func _sim_world_pos(sim_id: String) -> Vector3:
+	if sim_id == "":
+		return Vector3.ZERO
+	var slot: int = sim_id.substr(1).to_int()
+	var k: int = slot if sim_id.begins_with("a") else team_a.size() + slot
+	if k < 0 or k >= nodes.size():
+		return Vector3.ZERO
+	return (nodes[k]["holder"] as Node3D).position
+
+
+func _play_tick_audio(fa: Dictionary) -> void:
+	if _audio == null or _fx_muted:
+		return
+	for e in (fa.get("events", []) as Array):
+		var ev: Dictionary = e
+		var kind := str(ev.get("kind", ""))
+		var cpos: Vector3 = _sim_world_pos(str(ev.get("from", "")))
+		var apos: Vector3 = _sim_world_pos(str(ev.get("to", "")))
+		if kind == "death":
+			apos = _sim_world_pos(str(ev.get("id", "")))
+		elif kind == "aoe":
+			var c: Vector2 = ev.get("centre", Vector2.ZERO)
+			# Centre-frame -> corner-frame -> world, the same translation every other consumer of
+			# a sim position on this screen makes (see the ⚠️⚠️ coordinate note in _run_new_sim).
+			apos = _to_world(c + ground_size * 0.5)
+		if apos == Vector3.ZERO:
+			apos = cpos
+		if cpos == Vector3.ZERO:
+			cpos = apos
+		_audio.on_event(ev, cpos, apos)
+
+
+## The transport follows the playback controls from ONE place, because `speed` is written from
+## five call sites (three keys, the button row, the pause toggle) and a mixer that tracked only
+## some of them would drift out of step with the picture. Pushed only on CHANGE — `set_muted`
+## walks every voice, which is not a per-frame cost worth paying for a value that rarely moves.
+func _sync_audio_transport() -> void:
+	if _audio == null:
+		return
+	var want_muted: bool = speed <= 0.0 or not playing
+	if not is_equal_approx(speed, _audio_speed) and speed > 0.0:
+		_audio_speed = speed
+		_audio.set_speed(speed)
+	if want_muted != _audio_muted:
+		_audio_muted = want_muted
+		_audio.set_muted(want_muted)
+
+
+## One damage number per victim per tick. A single hit keeps its own label verbatim (crit "!",
+## rear "BACK"); two or more are summed and marked with a hit count, because "34 ×3" is a read a
+## viewer can take in at fight speed and three separate numbers on one overlapping body is not.
+func _flush_damage_floats(acc: Dictionary) -> void:
+	for vid in acc.keys():
+		var e: Dictionary = acc[vid]
+		var n: int = int(e.get("n", 1))
+		var txt: String = str(e.get("label", "")) if n <= 1 else "%d ×%d%s" % [
+			int(e.get("dmg", 0)), n, "!" if bool(e.get("crit", false)) else ""]
+		_float_text(int(vid), txt, e.get("col", Color(0.9, 0.9, 0.9)))
 
 
 func _tracer(a: Vector3, b: Vector3, alpha: float = 0.9, dur: float = 0.22) -> void:
@@ -3903,7 +4441,17 @@ func _index_of_unit_named(nm: String) -> int:
 
 var _float_recent := {}   # unit idx -> {t, n} — staggers same-moment floats (UX audit #3)
 
-func _float_text(idx: int, text: String, col: Color) -> void:
+## ⚠️ `scale` IS A LEGIBILITY HIERARCHY, NOT A COSMETIC KNOB. Every float used to be the same
+## size, so a REACTIVE number (thorns reflecting 6, a ward eating 14) shouted exactly as loudly as
+## the blow that caused it. Measured on the first cut of the thorns presentation: four identical
+## `6 THORNS` labels in one scrum frame, larger than the `16 ×2` damage float they were reacting
+## to — the audit's "eight identical white 10s" failure, rebuilt from new parts. A secondary read
+## is drawn secondary; the primary number stays the biggest thing on the body.
+func _float_text(idx: int, text: String, col: Color, scale: float = 1.0) -> void:
+	# ⚠️ Muted while a scrub rebuilds the log — see `_seek`. Without this a jump to t=20s spawns
+	# every damage number of the fight at once.
+	if _fx_muted:
+		return
 	# Same-tick hits on one body used to spawn at the identical offset — a multi-hit or two
 	# attackers turned the payoff numbers into one unreadable smear at exactly the moment the
 	# player most wants to read them. Floats within 0.4s on the same unit now fan out.
@@ -3923,7 +4471,7 @@ func _float_text(idx: int, text: String, col: Color) -> void:
 	lbl.outline_size = 30
 	lbl.outline_modulate = Color(0, 0, 0, 0.9)
 	lbl.modulate = col
-	lbl.pixel_size = 0.0075
+	lbl.pixel_size = 0.0075 * clampf(scale, 0.3, 2.0)
 	lbl.no_depth_test = true
 	add_child(lbl)
 	# World-space fan: same-moment floats on one body step sideways then up a row (a Label3D
@@ -3943,6 +4491,8 @@ func _float_text(idx: int, text: String, col: Color) -> void:
 ## polish here; without it a hit that deals damage has no tell on the BODY at all, only a floating
 ## number, and `docs/ACCESSIBILITY.md` counts the number as one channel rather than two.
 func _hit_flash(idx: int) -> void:
+	if _fx_muted:
+		return
 	if idx < 0 or idx >= nodes.size():
 		return
 	var nd: Dictionary = nodes[idx]
@@ -3958,23 +4508,6 @@ func _hit_flash(idx: int) -> void:
 
 
 var _aoe_rings := {}   # unit index -> MeshInstance3D (the AoE windup telegraph)
-var _standing_lbl: Label = null
-
-func _update_standing_hud() -> void:
-	if _standing_lbl == null:
-		_standing_lbl = Label.new()
-		_standing_lbl.add_theme_font_size_override("font_size", 13)
-		_standing_lbl.add_theme_color_override("font_color", Color(0.92, 0.92, 0.95))
-		_standing_lbl.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 110, 46)
-		add_child(_standing_lbl)
-	var a_up := 0
-	var b_up := 0
-	for m in team_a:
-		if m.alive: a_up += 1
-	for m in team_b:
-		if m.alive: b_up += 1
-	_standing_lbl.text = "Team A  %d monster%s remaining\nTeam B  %d monster%s remaining" % [
-		a_up, "" if a_up == 1 else "s", b_up, "" if b_up == 1 else "s"]
 var _innate_rings := {}   # unit index -> MeshInstance3D (persistent innate-zone tells)
 
 ## INNATE ZONE TELLS — the care loop's spatial innates made visible. A zoner (auraEnemySlow)
@@ -4041,6 +4574,8 @@ var _shake := 0.0        # camera punch magnitude, decays exponentially
 ## One call per impactful moment. `stop` dips playback (0.35 = strong hit-stop), `shake` kicks
 ## the camera. Both decay on their own — stacking punches extends, never accumulates runaway.
 func _punch(stop: float, shake: float) -> void:
+	if _fx_muted:
+		return
 	_feel_slow = minf(_feel_slow, 1.0 - clampf(stop, 0.0, 0.85))
 	_shake = maxf(_shake, shake)
 	# The stands feel the shake too (user direction): any camera punch rolls a small per-model
@@ -4079,12 +4614,100 @@ func _show_aoe_ring(idx: int, radius: float, channel: String) -> void:
 	ring.visible = true
 
 
+## THE AoE IMPACT. `_show_aoe_ring` above is the TELEGRAPH — the ring that sits under a caster
+## while an allEnemies move winds up. This is the other half: the moment it lands, at the centre
+## and radius the SIM reported, expanding once and fading. The sim's own comment at `sim.gd:1585`
+## is the specification; every number here comes off the event.
+func _aoe_burst(centre_ground: Vector2, radius: float, targets: int) -> void:
+	if _fx_muted or radius <= 0.0:
+		return
+	var ring := MeshInstance3D.new()
+	var tor := TorusMesh.new()
+	var r: float = radius * WORLD_SCALE
+	tor.inner_radius = maxf(0.2, r - 0.45)
+	tor.outer_radius = r
+	tor.rings = 48
+	ring.mesh = tor
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# ⚠️ THE COUNT IS THE MECHANIC. "Weak into one body, strong into three" is the whole falloff
+	# design, so the burst reads heavier the more bodies it caught — that is the fact the viewer
+	# is meant to learn, and a fixed ring would hide it.
+	var heat: float = clampf(float(targets - 1) / 3.0, 0.0, 1.0)
+	mat.albedo_color = Color(1.0, 0.62, 0.28).lerp(Color(1.0, 0.30, 0.22), heat)
+	mat.albedo_color.a = 0.30 + 0.45 * heat
+	ring.material_override = mat
+	ring.position = _to_world(centre_ground) + Vector3(0, 0.12, 0)
+	ring.scale = Vector3(0.55, 1.0, 0.55)
+	add_child(ring)
+	var dur: float = 0.5 / maxf(0.25, speed)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(ring, "scale", Vector3.ONE, dur)
+	tw.tween_property(mat, "albedo_color:a", 0.0, dur)
+	tw.chain().tween_callback(ring.queue_free)
+	if targets >= 2:
+		_punch(0.2 + 0.08 * float(targets), 0.12 + 0.05 * float(targets))
+
+
+## A LASTING LINE BETWEEN TWO BODIES. `_tracer` is a 0.22s flick built for attribution of a blow;
+## this is for a RELATION that persists — a taunt compelling one monster onto another. It follows
+## both units while it lives, because a static line between two moving bodies would be a lie the
+## moment either of them stepped.
+var _tethers: Array = []
+
+func _tether(from_idx: int, to_idx: int, col: Color, dur: float) -> void:
+	if _fx_muted:
+		return
+	if from_idx < 0 or to_idx < 0 or from_idx >= nodes.size() or to_idx >= nodes.size():
+		return
+	var im := MeshInstance3D.new()
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_color = col
+	mat.no_depth_test = true
+	im.material_override = mat
+	add_child(im)
+	_tethers.append({"node": im, "mat": mat, "a": from_idx, "b": to_idx, "until": _play_t() + dur,
+		"dur": dur, "col": col})
+
+
+func _update_tethers() -> void:
+	var t := _play_t()
+	var keep: Array = []
+	for th in _tethers:
+		var d: Dictionary = th
+		var im: MeshInstance3D = d["node"]
+		var left: float = float(d["until"]) - t
+		if left <= 0.0 or left > float(d["dur"]) or not is_instance_valid(im):
+			if is_instance_valid(im):
+				im.queue_free()
+			continue
+		var a: Vector3 = (nodes[int(d["a"])]["holder"] as Node3D).position + Vector3(0, UNIT_HEIGHT * 0.55, 0)
+		var b: Vector3 = (nodes[int(d["b"])]["holder"] as Node3D).position + Vector3(0, UNIT_HEIGHT * 0.55, 0)
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_LINES)
+		st.set_color(Color(d["col"]))
+		st.add_vertex(a)
+		st.set_color(Color(d["col"]))
+		st.add_vertex(b)
+		im.mesh = st.commit()
+		(d["mat"] as StandardMaterial3D).albedo_color.a = clampf(left / float(d["dur"]), 0.0, 1.0)
+		keep.append(d)
+	_tethers = keep
+
+
 func _hide_aoe_ring(idx: int) -> void:
 	if _aoe_rings.has(idx):
 		(_aoe_rings[idx] as MeshInstance3D).visible = false
 
 
 func _topple(idx: int) -> void:
+	if _fx_muted:
+		return
 	if vfx != null and idx >= 0 and idx < nodes.size():
 		vfx.burst((nodes[idx]["holder"] as Node3D).position + Vector3(0, UNIT_HEIGHT * 0.4, 0),
 			"smoke", Color(0.55, 0.55, 0.60), 1.8, 16)
@@ -4092,6 +4715,9 @@ func _topple(idx: int) -> void:
 	if nd["dead"]:
 		return
 	nd["dead"] = true
+	# The director holds the shot on a body that has just fallen (`CAM_DEATH_HOLD`) so the kill
+	# reads instead of the camera leaving for the next exchange mid-collapse.
+	_death_at[idx] = _play_t()
 	(nd["plate"] as Control).modulate = Color(1, 1, 1, 0.4)
 	if selected_idx == idx:
 		_select_unit(-1)
@@ -4108,6 +4734,7 @@ func _topple(idx: int) -> void:
 	spr.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	var side_sign := -1.0 if idx < team_a.size() else 1.0
 	var tw := create_tween()
+	nd["topple_tw"] = tw     # so a backwards scrub can kill it — see `_undo_deaths`
 	tw.set_parallel(true)
 	tw.tween_property(spr, "rotation_degrees:z", 80.0 * side_sign, 0.4)
 	tw.tween_property(spr, "position:y", UNIT_HEIGHT * 0.2, 0.4)
@@ -4122,6 +4749,87 @@ func _topple(idx: int) -> void:
 const PLATE_QUIET := 0.45
 const PLATE_HURT_HP := 0.98      # anything below full HP has a story
 const PLATE_DEAD := 0.32
+
+## ⚠️ FEWER PLATES, NOT SMALLER ONES — this file's own conclusion, three shrinks ago:
+## "148 -> 104 -> 82 … THIS IS THE FLOOR. Any further reduction has to come from showing FEWER
+## plates, not smaller ones." The quiet-unit FADE was the answer at the time and it was not
+## enough: `docs/WATCH_AUDIT.md` §2 measured 52-69% of plates orphaned from their own unit and
+## the annotation occupying 2.4x the screen area of the fight it annotates. A dimmed plate is
+## still a full-size rectangle competing for the same pixels.
+##
+## So a plate now has TWO SIZES. A unit doing something the player must read — casting, hurt,
+## under a status, striking, selected, or the one the camera is on — keeps the full Plater plate.
+## Everyone else collapses to the health bar alone: no name row, no mana, no status strip, and
+## scaled down. The name is not lost, it is DEFERRED — the body carries the team ring, and one
+## Tab or click restores the full plate on demand (`docs/UX_LEGIBILITY.md`'s disclosure tiers).
+const PLATE_MINI_SCALE := 0.62
+## ⚠️ A HARD CAP, NOT A PREDICATE. The first cut of this was a boolean test — casting, hurt, under
+## a status, striking — and it measured almost NO improvement, because in the ten-second scrum
+## that decides the match EVERY unit satisfies it. A rule that stops applying exactly when the
+## screen is busiest is not a declutter rule. So the tier is now a RANKING with a ceiling: at most
+## `PLATE_FULL_MAX` full plates on screen, always the most newsworthy ones, everyone else
+## collapsed. The clutter is bounded by construction instead of by hope.
+const PLATE_FULL_MAX := 4
+
+## How much this unit's plate deserves to be a full one. Same sourcing rule as `_cam_interest`:
+## every term comes off the displayed frame or off the roster, none of it is invented here.
+func _plate_priority(idx: int, nd: Dictionary) -> float:
+	if idx == selected_idx:
+		return 1000.0                     # the player asked for this one
+	if idx == _cam_subject:
+		return 900.0                      # the shot is on it; it must be named
+	var rec: Dictionary = nd.get("last_rec", {})
+	if rec.is_empty():
+		return 800.0                      # the deploy shot names everybody, once
+	var w := 0.0
+	var st := str(rec.get("state", "idle"))
+	if st == "cast":
+		w += 300.0                        # the cast bar IS the plate's reason to exist here
+	elif st == "stunned":
+		w += 220.0
+	elif st == "attack":
+		w += 60.0
+	var mx: float = float(all_units[idx].max_hp) if idx < all_units.size() else 0.0
+	if mx > 0.0:
+		w += 400.0 * (1.0 - clampf(float(rec.get("hp", mx)) / mx, 0.0, 1.0))
+	w += 40.0 * float((rec.get("statuses", []) as Array).size())
+	return w
+
+
+## Populated once per frame by `_update_plates`; read by the placement pass and by the sort.
+var _plate_full_set: Dictionary = {}
+
+func _plate_is_full(idx: int, _nd: Dictionary) -> bool:
+	return bool(_plate_full_set.get(idx, false))
+
+
+func _choose_full_plates() -> void:
+	var rank: Array = []
+	for k in range(nodes.size()):
+		if not _alive_now(k):
+			continue
+		rank.append({"k": k, "w": _plate_priority(k, nodes[k])})
+	rank.sort_custom(func(a, b):
+		if not is_equal_approx(float(a["w"]), float(b["w"])):
+			return float(a["w"]) > float(b["w"])
+		return int(a["k"]) < int(b["k"]))     # stable tie-break: no slot-swapping between frames
+	_plate_full_set.clear()
+	for i in range(mini(PLATE_FULL_MAX, rank.size())):
+		_plate_full_set[int(rank[i]["k"])] = true
+
+
+func _apply_plate_tier(idx: int, nd: Dictionary) -> void:
+	var full := _plate_is_full(idx, nd)
+	if nd.get("_tier_full", null) == full:
+		return
+	nd["_tier_full"] = full
+	var plate: Control = nd["plate"]
+	(nd["head"] as Control).visible = full
+	(nd["mp_bg"] as Control).visible = full
+	(nd["status_strip"] as Control).visible = full
+	plate.scale = Vector2.ONE if full else Vector2(PLATE_MINI_SCALE, PLATE_MINI_SCALE)
+	plate.reset_size()
+
 
 func _plate_emphasis(idx: int, nd: Dictionary) -> float:
 	var rec: Dictionary = nd.get("last_rec", {})
@@ -4149,9 +4857,196 @@ func _plate_emphasis(idx: int, nd: Dictionary) -> float:
 	return PLATE_QUIET
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# THE SQUAD READ — `docs/FUN_ADDITIONS.md`: "the unit of attention in a 5v5 must be the SQUAD,
+# not the monster."
+#
+# ⚠️ WHAT WAS HERE BEFORE WAS THE ONLY SQUAD-LEVEL SURFACE IN THE GAME AND IT WAS INVERTED. It
+# counted `MonsterInstance.alive`, which `_write_back_final` had already set to the fight's final
+# state, so it announced the winner at frame zero and then disagreed with the screen for 100% of
+# the fight (`docs/WATCH_AUDIT.md` §1a — 749 of 750 frames). It also spoke in "Team A"/"Team B",
+# a vocabulary that appears nowhere else in the game.
+#
+# It now reads from the DISPLAYED FRAME and says three things a survivor count cannot:
+#   · how many are standing, as pips — countable at a glance, and a non-colour channel
+#   · how much squad is LEFT, as pooled HP, which is the difference between 4-on-4 even and
+#     4-on-4 already lost
+#   · who the fight is being decided on — the body currently taking fire from two or more
+# ⚠️ Pooled HP is an AGGREGATE OF STREAM VALUES, not a derived game fact: every term is a `hp`
+# and a `max_hp` the plates already display individually. The renderer adds them up; it does not
+# know anything the frame did not tell it.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+var _hud_panel: PanelContainer = null
+var _hud_pips := {}     # side -> Label
+var _hud_fill := {}     # side -> ColorRect
+var _hud_pct := {}      # side -> Label
+var _hud_focus: Label = null
+const HUD_BAR_W := 210.0
+## The top band the scoreboard owns. Nameplates clamp below it — see `_update_plates`.
+const HUD_RESERVE_Y := 92.0
+## Landed hits kept for the focus read, {t, from, to}. Pruned to FOCUS_WINDOW every update.
+var _recent_hits: Array = []
+const FOCUS_WINDOW := 2.5      # playback seconds a hit still counts toward "being focused"
+const FOCUS_MIN_ATTACKERS := 2 # one attacker is a duel, two or more is a squad decision
+
+
+func _build_squad_hud() -> void:
+	if _hud_panel != null or overlay == null:
+		return
+	_hud_panel = PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.04, 0.04, 0.06, 0.80)
+	sb.set_corner_radius_all(6)
+	sb.content_margin_left = 14; sb.content_margin_right = 14
+	sb.content_margin_top = 8; sb.content_margin_bottom = 8
+	_hud_panel.add_theme_stylebox_override("panel", sb)
+	_hud_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_panel.anchor_left = 0.5; _hud_panel.anchor_right = 0.5
+	_hud_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hud_panel.offset_top = 10
+	# ⚠️ Above the nameplates. `_update_plates` gives each plate a `z_index` of its depth rank, so
+	# a plate could out-rank a z_index-0 panel and draw over the scoreboard.
+	_hud_panel.z_index = 60
+	overlay.add_child(_hud_panel)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 3)
+	_hud_panel.add_child(col)
+	for side in ["A", "B"]:
+		var ident: Dictionary = Art.team_identity(0 if side == "A" else 1)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		col.add_child(row)
+		var badge := Label.new()
+		badge.text = "%s %s" % [str(ident["badge"]), "Your squad" if side == "A" else "The rival"]
+		badge.custom_minimum_size = Vector2(150, 0)
+		badge.add_theme_font_size_override("font_size", 15)
+		badge.add_theme_color_override("font_color", (ident["colour"] as Color).lerp(Color.WHITE, 0.45))
+		row.add_child(badge)
+		var pips := Label.new()
+		pips.custom_minimum_size = Vector2(86, 0)
+		pips.add_theme_font_size_override("font_size", 15)
+		pips.add_theme_color_override("font_color", Color(0.94, 0.94, 0.96))
+		row.add_child(pips)
+		_hud_pips[side] = pips
+		var trough := ColorRect.new()
+		trough.color = Color(0.13, 0.13, 0.16, 0.9)
+		trough.custom_minimum_size = Vector2(HUD_BAR_W, 13)
+		row.add_child(trough)
+		var fill := ColorRect.new()
+		fill.color = (ident["colour"] as Color).lerp(Color.WHITE, 0.25)
+		fill.position = Vector2.ZERO
+		fill.size = Vector2(HUD_BAR_W, 13)
+		trough.add_child(fill)
+		_hud_fill[side] = fill
+		var pct := Label.new()
+		pct.custom_minimum_size = Vector2(54, 0)
+		pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		pct.add_theme_font_size_override("font_size", 14)
+		pct.add_theme_color_override("font_color", Color(0.85, 0.85, 0.90))
+		row.add_child(pct)
+		_hud_pct[side] = pct
+	_hud_focus = Label.new()
+	_hud_focus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hud_focus.add_theme_font_size_override("font_size", 14)
+	_hud_focus.add_theme_color_override("font_color", Color(1.0, 0.72, 0.36))
+	col.add_child(_hud_focus)
+
+
+func _update_standing_hud() -> void:
+	_build_squad_hud()
+	if _hud_panel == null:
+		return
+	var na: int = team_a.size()
+	for side in ["A", "B"]:
+		var lo: int = 0 if side == "A" else na
+		var hi: int = na if side == "A" else all_units.size()
+		var up := 0
+		var hp := 0.0
+		var pool := 0.0
+		var pips := ""
+		for k in range(lo, hi):
+			var mx: float = float(all_units[k].max_hp)
+			pool += mx
+			if _alive_now(k):
+				up += 1
+				pips += "●"
+				hp += float((nodes[k].get("last_rec", {}) as Dictionary).get("hp", mx))
+			else:
+				pips += "○"
+		var frac: float = 0.0 if pool <= 0.0 else clampf(hp / pool, 0.0, 1.0)
+		(_hud_pips[side] as Label).text = "%s %d/%d" % [pips, up, hi - lo]
+		(_hud_fill[side] as ColorRect).size = Vector2(HUD_BAR_W * frac, 13)
+		(_hud_pct[side] as Label).text = "%d%%" % int(round(frac * 100.0))
+	_update_focus_read()
+
+
+## WHO IS THE FIGHT BEING DECIDED ON. A body taking fire from two or more enemies inside a 2.5s
+## window is the squad's actual decision made visible — `docs/TACTICS_BRAINSTORM.md` records that
+## focus fire is architecturally weak because target priority lives on the individual, so five
+## monsters agree only by coincidence; when they DO agree, that is the most interesting fact on
+## the board and until now nothing said it.
+func _update_focus_read() -> void:
+	var t := _play_t()
+	var keep: Array = []
+	for h in _recent_hits:
+		if t - float((h as Dictionary)["t"]) <= FOCUS_WINDOW and t >= float((h as Dictionary)["t"]):
+			keep.append(h)
+	_recent_hits = keep
+	var attackers: Dictionary = {}   # victim -> {attacker: true}
+	for h in _recent_hits:
+		var v: int = int((h as Dictionary)["to"])
+		var s: Dictionary = attackers.get(v, {})
+		s[int((h as Dictionary)["from"])] = true
+		attackers[v] = s
+	var best := -1
+	var best_n := 0
+	for v in attackers.keys():
+		var n: int = (attackers[v] as Dictionary).size()
+		if n > best_n and _alive_now(int(v)):
+			best_n = n
+			best = int(v)
+	if best < 0 or best_n < FOCUS_MIN_ATTACKERS:
+		_hud_focus.text = ""
+		_set_focus_ring(-1)
+		return
+	var side_txt := "The rival is" if best < team_a.size() else "Your squad is"
+	_hud_focus.text = "%s focusing %s — %d on one" % [side_txt, _unit_name(best), best_n]
+	_set_focus_ring(best)
+
+
+var _focus_ring: MeshInstance3D = null
+var _focus_ring_on := -1
+
+## The same fact, ON THE BODY. The HUD line says who; this says WHERE, which is the half a text
+## line cannot carry in a scrum.
+func _set_focus_ring(idx: int) -> void:
+	if _focus_ring == null:
+		_focus_ring = MeshInstance3D.new()
+		var tor := TorusMesh.new()
+		tor.inner_radius = 1.5
+		tor.outer_radius = 2.0
+		tor.rings = 32
+		_focus_ring.mesh = tor
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(1.0, 0.62, 0.28, 0.75)
+		_focus_ring.material_override = mat
+		add_child(_focus_ring)
+	_focus_ring_on = idx
+	if idx < 0 or idx >= nodes.size():
+		_focus_ring.visible = false
+		return
+	_focus_ring.visible = true
+	_focus_ring.position = (nodes[idx]["holder"] as Node3D).position + Vector3(0, 0.1, 0)
+
+
 func _update_plates() -> void:
 	if camera == null:
 		return
+	if _focus_ring != null and _focus_ring_on >= 0 and _focus_ring_on < nodes.size():
+		_focus_ring.position = (nodes[_focus_ring_on]["holder"] as Node3D).position + Vector3(0, 0.1, 0)
 	# ⚠️ DECLUTTER PASS. Five plates in a scrum land on the same few screen pixels and stack into an
 	# unreadable wall — the thing that hid the fight when the camera pulled back to 38 degrees.
 	# Two rules, in this order:
@@ -4160,6 +5055,7 @@ func _update_plates() -> void:
 	#   2. Nudge a plate UP whenever it would overlap one already placed this frame. Vertical, not
 	#      horizontal, because a plate must stay above its own unit to be attributable at all —
 	#      sliding it sideways breaks the one thing it is for.
+	_choose_full_plates()
 	var placed: Array = []   # Rect2 of each plate already positioned this frame
 	# ⚠️ STACK IN A STABLE ORDER, DRAW BY DEPTH — two different questions the old code answered
 	# with one sort. Processing by camera distance made the lift order reshuffle every frame as
@@ -4174,6 +5070,17 @@ func _update_plates() -> void:
 	by_depth.sort_custom(func(a, b): return float(a["d"]) > float(b["d"]))
 	for rank in range(by_depth.size()):
 		(nodes[int(by_depth[rank]["k"])]["plate"] as Control).z_index = rank
+	# ⚠️ THE UNITS THAT MATTER GET THE PIXELS. Placement now runs FULL plates first and MINI
+	# plates second, so a crowded frame spends its space on the monster that is casting, hurt or
+	# under a status rather than on whichever unit happens to sit lowest in the roster. Still a
+	# FIXED order within each tier (`k`), so a scrum stacks the same way every frame and plates
+	# do not swap slots as units shuffle — the bug the note above records.
+	order.sort_custom(func(a, b):
+		var fa2: bool = _plate_is_full(int(a["k"]), nodes[int(a["k"])])
+		var fb2: bool = _plate_is_full(int(b["k"]), nodes[int(b["k"])])
+		if fa2 != fb2:
+			return fa2
+		return int(a["k"]) < int(b["k"]))
 
 	for entry in order:
 		var k: int = int(entry["k"])
@@ -4184,30 +5091,76 @@ func _update_plates() -> void:
 		# hide-and-reshow fight would be invisible in any headless probe and obvious on screen.
 		if bool(nd.get("dead", false)) or not bool((nd.get("last_rec", {}) as Dictionary).get("alive", true)):
 			plate.visible = false
+			_set_leader(k, false, Vector2.ZERO, Vector2.ZERO)
 			continue
 		var world: Vector3 = (nd["holder"] as Node3D).global_position + Vector3(0, UNIT_HEIGHT + 0.7, 0)
 		if camera.is_position_behind(world):
 			plate.visible = false
+			_set_leader(k, false, Vector2.ZERO, Vector2.ZERO)
+			continue
+		# ⚠️ AN OFF-SCREEN UNIT'S PLATE MUST NOT BE DRAGGED BACK INTO FRAME. The viewport clamp
+		# below exists so a LIFTED plate cannot escape the top of the screen; applied to a unit
+		# that is genuinely outside the shot it did something else entirely — it pinned a row of
+		# health bars to the left edge, each annotating a monster nowhere near it, duplicating the
+		# edge pip that is the correct representation for exactly this case. Seen on
+		# `watch_four_pillar_t35_cam1_04_t008.0.png`: four stray bars stacked down the left margin.
+		# Off the shot, the pip speaks; the plate stays quiet.
+		var vp0: Vector2 = get_viewport().get_visible_rect().size
+		var anchor_px: Vector2 = camera.unproject_position(world)
+		if anchor_px.x < -40.0 or anchor_px.x > vp0.x + 40.0 			or anchor_px.y < -40.0 or anchor_px.y > vp0.y + 40.0:
+			plate.visible = false
+			_set_leader(k, false, Vector2.ZERO, Vector2.ZERO)
 			continue
 		plate.visible = true
-		var pos: Vector2 = camera.unproject_position(world) - Vector2(plate.size.x * 0.5, plate.size.y)
+		# Full plate or collapsed health bar — decided per unit, per frame, from the frame stream.
+		_apply_plate_tier(k, nd)
+		# ⚠️ SIZE MUST INCLUDE SCALE. A mini plate is `scale`d, and `Control.size` does not know
+		# that — measuring the declutter rect off the unscaled size would reserve half the screen
+		# for a plate that draws at two thirds, and the pass would think it had cleared overlaps
+		# it had not.
+		var psize: Vector2 = plate.size * plate.scale
+		var pos: Vector2 = camera.unproject_position(world) - Vector2(psize.x * 0.5, psize.y)
 
-		# Lift until clear of everything already placed. Bounded: after PLATE_MAX_LIFT steps we
-		# accept the overlap rather than launch a plate off the top of the screen, which would be
-		# a worse failure than a slightly crowded corner.
-		var rect := Rect2(pos, plate.size)
+		# ⚠️ A MINI PLATE NEVER LIFTS — IT YIELDS. Lifting is what ORPHANS a plate from its own
+		# unit, and `docs/WATCH_AUDIT.md` §2 measured 52-69% of plates lifted more than a body
+		# height from the head they annotate, which makes them unattributable and therefore
+		# useless. That cost is worth paying for a monster mid-cast at 20% HP. It is not worth
+		# paying for a monster at full health walking forwards, whose team ring already says
+		# who and whose side. So a quiet unit's collapsed bar sits on its own head or not at all.
+		var rect := Rect2(pos, psize)
 		var lifts := 0
-		while lifts < PLATE_MAX_LIFT:
-			var clash := false
+		if not bool(nd.get("_tier_full", true)):
 			for r in placed:
 				if rect.intersects(r as Rect2):
-					clash = true
+					plate.visible = false
 					break
-			if not clash:
-				break
-			pos.y -= plate.size.y + PLATE_GAP
-			rect = Rect2(pos, plate.size)
-			lifts += 1
+			if not plate.visible:
+				_set_leader(k, false, Vector2.ZERO, Vector2.ZERO)
+				continue
+		else:
+			# Lift until clear of everything already placed. Bounded: after PLATE_MAX_LIFT steps
+			# we accept the overlap rather than launch a plate off the top of the screen, which
+			# would be a worse failure than a slightly crowded corner.
+			while lifts < PLATE_MAX_LIFT:
+				var clash := false
+				for r in placed:
+					if rect.intersects(r as Rect2):
+						clash = true
+						break
+				if not clash:
+					break
+				# ⚠️ STOP AT THE SCOREBOARD BAND — DO NOT LIFT INTO IT AND GET CLAMPED BACK.
+				# The first cut clamped `pos.y` to the band AFTER the loop, which quietly undid
+				# the stacking: three plates that had been lifted into three tidy rows were all
+				# pushed back onto the same row and overlapped horizontally instead
+				# (`watch_central_mass_t80_cam1_08_t016.0.png` — "Titanus◆ Grynt Mirejaw" run
+				# together). A clamp applied after a placement pass invalidates the placement
+				# pass. The ceiling belongs INSIDE the loop.
+				if pos.y - (psize.y + PLATE_GAP) < HUD_RESERVE_Y:
+					break
+				pos.y -= psize.y + PLATE_GAP
+				rect = Rect2(pos, psize)
+				lifts += 1
 
 		# ⚠️ CLAMP INTO THE VIEWPORT. Lifting a plate to dodge an overlap can push it clean off the
 		# top of the screen, which is a worse failure than the crowding it was avoiding — the unit
@@ -4224,23 +5177,235 @@ func _update_plates() -> void:
 		plate.modulate.a = _plate_emphasis(k, nd)
 
 		var vp: Vector2 = get_viewport().get_visible_rect().size
-		pos.x = clampf(pos.x, 4.0, maxf(4.0, vp.x - plate.size.x - 4.0))
-		pos.y = clampf(pos.y, 4.0, maxf(4.0, vp.y - plate.size.y - 4.0))
+		pos.x = clampf(pos.x, 4.0, maxf(4.0, vp.x - psize.x - 4.0))
+		# ⚠️ RESERVE THE TOP BAND FOR THE SQUAD SCOREBOARD. The lift loop pushes crowded plates
+		# upward, and with the scoreboard now living at the top centre they climbed straight
+		# through it — the one surface that answers "who is winning" was being buried by the ten
+		# surfaces that answer "how is this individual". First measured on
+		# `watch_four_pillar_t35_cam1_06_t012.0.png`, where three plates sat across it.
+		pos.y = clampf(pos.y, HUD_RESERVE_Y, maxf(HUD_RESERVE_Y, vp.y - psize.y - 4.0))
 		plate.position = pos
+		# ⚠️ A LIFTED PLATE NEEDS A LEADER LINE, OR IT IS NOT ANNOTATION — IT IS DECORATION.
+		# `docs/WATCH_AUDIT.md` §2's "orphaned" measure (a plate more than a body-height from the
+		# head it belongs to) is a proxy for the real failure, which is *unattributable*. Capping
+		# the plate count and collapsing quiet units both help and neither can eliminate lifting:
+		# four full plates over one scrum is four 90px rectangles that must stack somewhere. A
+		# connector fixes attribution directly instead of trying to make lifting unnecessary — the
+		# standard call-out solution, and the one this file had not tried.
+		var head_px: Vector2 = camera.unproject_position(
+			(nd["holder"] as Node3D).global_position + Vector3(0, UNIT_HEIGHT, 0))
+		_set_leader(k, lifts > 0, Vector2(pos.x + psize.x * 0.5, pos.y + psize.y), head_px)
 		# ⚠️ Record the CLAMPED rect, not the pre-clamp one — a plate pushed back down by the
 		# viewport clamp occupies different pixels, and registering the wrong rect would let the
 		# next plate overlap it anyway.
-		placed.append(Rect2(pos, plate.size))
+		placed.append(Rect2(pos, psize))
 		# The lifted plate no longer sits on its unit's head, so it must still be attributable.
 		# Fade it slightly as it climbs — a plate far from its unit reads as less certain, which
 		# is honest, and the fade also stops a stack of lifted plates competing for attention.
 		plate.modulate.a = 1.0 if lifts == 0 else maxf(0.55, 1.0 - 0.15 * float(lifts))
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# OFF-SCREEN CONSEQUENCE — the thing that makes a directed camera honest.
+#
+# ⚠️ A CAMERA THAT CHOOSES A SUBJECT IS A CAMERA THAT HIDES EVERYTHING ELSE, AND IN A GAME THE
+# PLAYER CANNOT INTERVENE IN, HIDING IS LYING. The old fitter never had this problem because it
+# never chose; it paid for that by pulling back until a monster was 43 pixels tall
+# (`docs/WATCH_AUDIT.md` §3). The trade is only acceptable if what leaves the shot still reports:
+# a pip on the edge of the frame, in the unit's own team colour and badge, carrying its name and
+# its HP, flaring when it takes a hit and going dark when it falls. Your monster dying on the far
+# wing is then something you WATCH HAPPEN, not something you discover in the report.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+var _pips := {}        # unit idx -> {panel, label}
+const PIP_MARGIN := 26.0
+
+func _update_offscreen_pips() -> void:
+	if camera == null or plates_root == null:
+		return
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var t := _play_t()
+	for k in range(nodes.size()):
+		var pip: Dictionary = _ensure_pip(k)
+		var panel: PanelContainer = pip["panel"]
+		# ⚠️ ARENA mode already holds everyone in frame, and FREE is the player's own shot — a pip
+		# in either is clutter answering a question nobody asked.
+		if not _alive_now(k) or _cam_mode == CamMode.ARENA:
+			panel.visible = false
+			continue
+		var world: Vector3 = (nodes[k]["holder"] as Node3D).global_position + Vector3(0, UNIT_HEIGHT * 0.5, 0)
+		var behind: bool = camera.is_position_behind(world)
+		var sp: Vector2 = camera.unproject_position(world)
+		if behind:
+			# `unproject_position` mirrors points behind the lens; reflect through the centre so
+			# the pip sits on the side the unit actually is.
+			sp = vp * 0.5 + (vp * 0.5 - sp)
+		var inside: bool = (not behind) and sp.x > PIP_MARGIN and sp.x < vp.x - PIP_MARGIN \
+			and sp.y > PIP_MARGIN and sp.y < vp.y - PIP_MARGIN
+		if inside:
+			panel.visible = false
+			continue
+		panel.visible = true
+		var lbl: Label = pip["label"]
+		var mx: float = float(all_units[k].max_hp) if k < all_units.size() else 0.0
+		var rec: Dictionary = (nodes[k] as Dictionary).get("last_rec", {})
+		var frac: float = 1.0 if mx <= 0.0 else clampf(float(rec.get("hp", mx)) / mx, 0.0, 1.0)
+		var ident: Dictionary = Art.team_identity(0 if k < team_a.size() else 1)
+		lbl.text = "%s %s  %d%%" % [str(ident["badge"]), _unit_name(k), int(round(frac * 100.0))]
+		# A hit taken off-screen FLARES. Without it the pip is a roster listing, not a report.
+		var since: float = t - float(_hit_at.get(k, -999.0))
+		var hot: bool = since >= 0.0 and since < CAM_HIT_MEMORY
+		lbl.add_theme_color_override("font_color",
+			Color(1.0, 0.55, 0.45) if hot else (ident["colour"] as Color).lerp(Color.WHITE, 0.55))
+		panel.size = Vector2.ZERO   # let it shrink to content
+		var half: Vector2 = panel.size * 0.5
+		panel.position = Vector2(
+			clampf(sp.x - half.x, 4.0, maxf(4.0, vp.x - panel.size.x - 4.0)),
+			# Below the scoreboard band, for the same reason the plates are.
+			clampf(sp.y - half.y, HUD_RESERVE_Y, maxf(HUD_RESERVE_Y, vp.y - panel.size.y - 4.0)))
+
+
+func _ensure_pip(k: int) -> Dictionary:
+	if _pips.has(k):
+		return _pips[k]
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.03, 0.03, 0.05, 0.86)
+	sb.set_corner_radius_all(4)
+	sb.border_color = Art.team_identity(0 if k < team_a.size() else 1)["colour"]
+	sb.set_border_width_all(2)
+	sb.content_margin_left = 6; sb.content_margin_right = 6
+	sb.content_margin_top = 1; sb.content_margin_bottom = 1
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.visible = false
+	plates_root.add_child(panel)
+	var lbl := Label.new()
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	lbl.add_theme_constant_override("outline_size", 3)
+	panel.add_child(lbl)
+	_pips[k] = {"panel": panel, "label": lbl}
+	return _pips[k]
+
+
+var _leaders := {}   # unit idx -> Line2D connecting a lifted plate to its own unit
+
+func _set_leader(k: int, on: bool, from_px: Vector2, to_px: Vector2) -> void:
+	var ln: Line2D = _leaders.get(k)
+	if ln == null:
+		if not on:
+			return
+		ln = Line2D.new()
+		ln.width = 2.0
+		ln.default_color = Color(Art.team_identity(0 if k < team_a.size() else 1)["colour"], 0.0)
+		ln.z_index = -1     # under the plates, over the world
+		plates_root.add_child(ln)
+		_leaders[k] = ln
+	ln.visible = on
+	if not on:
+		return
+	ln.points = PackedVector2Array([from_px, to_px])
+	# Fades with distance: a short connector is barely there, a long one has to be findable.
+	var d: float = from_px.distance_to(to_px)
+	var col: Color = Art.team_identity(0 if k < team_a.size() else 1)["colour"]
+	ln.default_color = Color(col.lerp(Color.WHITE, 0.5), clampf(0.22 + d / 900.0, 0.22, 0.72))
+
+
 func _drain_log(upto: int) -> void:
 	while logged_upto < upto and logged_upto < event_log.size():
 		_log_event(event_log[logged_upto])
 		logged_upto += 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# SCRUB — going BACK.
+#
+# ⚠️ "COMMIT, THEN OBSERVE" IS UNDERMINED IF THE OBSERVATION IS ONE-SHOT. `docs/WATCH_AUDIT.md`
+# measured first blood at 46% of the fight with the match resolving in the ten seconds after it;
+# a viewer who looks away once has missed the entire decisive exchange, and the moment they think
+# "wait, why did that happen?" the answer is already gone. Speed and pause existed; there was no
+# way back. The replay is an ARRAY OF FRAMES, so there is no reason for that except that nobody
+# built it.
+#
+# ⚠️ SEEKING BACKWARDS MUST UNDO EVERYTHING THE FORWARD PASS DID ONCE. Three kinds of state are
+# one-way: the text log (`logged_upto` only climbs), the death topple (a tween that rotates a body
+# and hides its plate), and the director's memory. All three are rebuilt here. And the log rebuild
+# runs with the EFFECT LAYER MUTED — replaying 130 events to catch up must not fire 130 bursts,
+# 130 floats and 130 camera punches in one frame, which is what a naive re-drain does.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+var _fx_muted := false
+var scrub: HSlider = null
+
+func _seek(seconds: float) -> void:
+	if frames.is_empty():
+		return
+	var last: float = float(frames.size() - 1)
+	var target: float = clampf(seconds / NewSim.DT, 0.0, last)
+	var backwards: bool = target < frame_pos
+	frame_pos = target
+	_seen_tick = -1
+	opening_timer = OPENING_HOLD    # a scrub means the player is past the opening beat
+	if backwards:
+		_undo_deaths()
+		banner.visible = false
+	# Rebuild the read-back log from scratch, silently.
+	var stash = vfx
+	_fx_muted = true
+	vfx = null
+	# ⚠️ The mixer is fight-local: a cast rise in flight and the running damage reference both
+	# belong to the stretch being scrubbed away. `_fx_muted` already stops the catch-up drain
+	# from firing cues (`_play_tick_audio` checks it); this clears what was already sounding.
+	if _audio != null:
+		_audio.reset()
+	log_view.clear()
+	logged_upto = 0
+	_last_intent.clear()
+	_recent_hits.clear()
+	_float_recent.clear()
+	var upto := 0
+	var now_t: float = target * NewSim.DT
+	while upto < event_log.size() and float(event_log[upto].get("t", 0.0)) <= now_t:
+		upto += 1
+	_drain_log(upto)
+	vfx = stash
+	_fx_muted = false
+	_apply_frame(frame_pos)
+	_update_watch_surfaces()
+	playing = target < last
+	_snap_log()
+
+
+## Put every toppled body back on its feet. Called only when the player scrubs BACKWARDS past a
+## death — a corpse that stays down while its HP bar reads 80% is a worse lie than no scrub.
+func _undo_deaths() -> void:
+	for k in range(nodes.size()):
+		var nd: Dictionary = nodes[k]
+		if not bool(nd.get("dead", false)):
+			continue
+		nd["dead"] = false
+		_death_at.erase(k)
+		_hit_at.erase(k)
+		# ⚠️ KILL THE TOPPLE TWEEN FIRST. It is still animating rotation/alpha for up to 0.45s and
+		# would silently re-apply them over the reset a frame later.
+		var tw = nd.get("topple_tw")
+		if tw != null and is_instance_valid(tw) and tw.is_valid():
+			tw.kill()
+		nd["topple_tw"] = null
+		(nd["plate"] as Control).modulate = Color(1, 1, 1, 1)
+		var spr = nd.get("sprite")
+		if spr != null:
+			spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+			spr.rotation_degrees.z = 0.0
+			spr.position = Vector3(0, UNIT_HEIGHT * 0.5, 0)
+			spr.modulate = Color(1, 1, 1, 1)
+		nd["_state_sig"] = ""    # force the intent glyph and animator state to re-sync
+	for th in _tethers:
+		var im = (th as Dictionary)["node"]
+		if is_instance_valid(im):
+			im.queue_free()
+	_tethers.clear()
 
 
 func _log_event(e: Dictionary) -> void:
@@ -4254,15 +5419,18 @@ func _log_event(e: Dictionary) -> void:
 			log_view.append_text("[color=#8a8a92]%s's %s missed %s[/color]\n" % [e["attacker"], e["move"], e["target"]])
 		"status_apply":
 			log_view.append_text("[color=#c98a3a]%s is now %s[/color]\n" % [e["unit"], e["status"]])
-			# The two statuses that MOVE the fight get a float — a forced target and a launched
-			# body are spatial events, and text in a side log does not read at fight speed.
+			# A launched body is a spatial event, and text in a side log does not read at fight
+			# speed. ⚠️ THE `"taunt"` ARM OF THIS BRANCH WAS DEAD CODE AND HAS BEEN REMOVED —
+			# taunt is not a `fieldStatus`, so `status_applied` never carries it and this could
+			# not fire. It is handled by the real `taunted` event below. Leaving a plausible-
+			# looking branch in place is exactly how the mechanic stayed invisible through four
+			# rounds of presentation work (`docs/WATCH_AUDIT.md` §4).
 			var stk := str(e.get("status", ""))
-			if stk == "taunt" or stk == "knockback":
+			if stk == "knockback":
 				var stid := _index_of_unit_named(str(e.get("unit", "")))
 				if stid >= 0:
-					_float_text(stid, "TAUNTED" if stk == "taunt" else "LAUNCHED",
-						Color(0.92, 0.55, 0.30) if stk == "taunt" else Color(0.80, 0.60, 0.95))
-					if vfx != null and stk == "knockback":
+					_float_text(stid, "LAUNCHED", Color(0.80, 0.60, 0.95))
+					if vfx != null:
 						vfx.burst((nodes[stid]["holder"] as Node3D).position + Vector3(0, 0.5, 0),
 							"dust", Color(0.75, 0.68, 0.55), 1.5, 14)
 		"status_expire":
@@ -4357,6 +5525,78 @@ func _log_event(e: Dictionary) -> void:
 				if vfx != null:
 					vfx.burst((nodes[cgid]["holder"] as Node3D).position + Vector3(0, UNIT_HEIGHT * 0.5, 0),
 						"smoke", Color(0.56, 0.75, 0.42), 1.2, 12)
+		# ── the four kinds `docs/WATCH_AUDIT.md` §4 found silent, in its priority order ──
+		"taunted":
+			log_view.append_text("[color=#f08c4a]%s's taunt drags %s onto it (%.1fs)[/color]\n" % [
+				e.get("by", "?"), e.get("unit", "?"), float(e.get("seconds", 0.0))])
+			var tvid := _index_of_unit_named(str(e.get("unit", "")))
+			var tbid := _index_of_unit_named(str(e.get("by", "")))
+			if tvid >= 0:
+				_float_text(tvid, "TAUNTED", Color(0.94, 0.55, 0.28))
+				# ⚠️ THE TETHER IS THE POINT, NOT THE FLOAT. What a viewer cannot otherwise explain
+				# is not that a monster is taunted, it is that it TURNED AROUND — so the line has
+				# to say WHO pulled it. A float alone leaves the "why" unanswered, which is the
+				# failure the whole legibility rule exists to prevent.
+				if tbid >= 0:
+					_tether(tvid, tbid, Color(0.96, 0.58, 0.26), 1.4)
+				if vfx != null:
+					vfx.burst((nodes[tvid]["holder"] as Node3D).position + Vector3(0, UNIT_HEIGHT * 0.6, 0),
+						"twirl", Color(0.96, 0.58, 0.26), 1.3, 10)
+		"aoe":
+			var n_t: int = int(e.get("targets", 0))
+			log_view.append_text("[color=#ff9f45]%s's %s bursts over %d %s[/color]\n" % [
+				e.get("caster", "?"), e.get("move", "?"), n_t,
+				"body" if n_t == 1 else "bodies"])
+			_aoe_burst((e.get("centre", Vector2.ZERO) as Vector2), float(e.get("radius", 0.0)), n_t)
+		"fizzle":
+			log_view.append_text("[color=#8a8a92]%s's %s fizzles — nothing in reach[/color]\n" % [
+				e.get("unit", "?"), e.get("move", "?")])
+			var fid := _index_of_unit_named(str(e.get("unit", "")))
+			if fid >= 0:
+				# The same unambiguous "denied" grammar the interrupt already uses — a bar that
+				# vanishes silently is the ambiguity, not the fizzle.
+				var fnd: Dictionary = nodes[fid]
+				fnd["cast_flash_until"] = Time.get_ticks_msec() + 700
+				(fnd["cast_fill"] as ColorRect).color = Color(0.42, 0.42, 0.47)
+				(fnd["cast_fill"] as ColorRect).size = Vector2(174.0, 17)
+				(fnd["cast_lbl"] as Label).text = "No target"
+				_float_text(fid, "FIZZLED", Color(0.72, 0.72, 0.78))
+		"debuff":
+			log_view.append_text("[color=#b98ad8]%s's %s weakens %s (%.1fs)[/color]\n" % [
+				e.get("by", "?"), e.get("move", "?"), e.get("unit", "?"),
+				float(e.get("seconds", 0.0))])
+			var dbid := _index_of_unit_named(str(e.get("unit", "")))
+			if dbid >= 0:
+				_float_text(dbid, "WEAKENED", Color(0.76, 0.58, 0.90))
+				if vfx != null:
+					# Mirrors the buff grammar deliberately — same ring, opposite hue — so the two
+					# read as one vocabulary with a sign, not as two unrelated effects.
+					vfx.aura_pulse((nodes[dbid]["holder"] as Node3D).position, Color(0.66, 0.46, 0.86))
+		"thorns":
+			log_view.append_text("[color=#c9d16a]%s's barbs bite %s back for %d[/color]\n" % [
+				e.get("by", "?"), e.get("unit", "?"), int(e.get("dmg", 0))])
+			var thid := _index_of_unit_named(str(e.get("unit", "")))
+			var thby := _index_of_unit_named(str(e.get("by", "")))
+			if thid >= 0:
+				# ⚠️ THE TETHER RUNS BACKWARDS ON PURPOSE — from the DEFENDER to the ATTACKER,
+				# which is the direction the damage travelled. It is the only arrow on the board
+				# that points the other way, and that is exactly what makes thorns readable: the
+				# viewer just watched a hit go left-to-right and now watches HP leave the striker.
+				# `↩` and a half-size label: the reflect is a CONSEQUENCE of a blow the viewer
+				# already saw, so it must not compete with that blow's own number.
+				_float_text(thid, "↩%d" % int(e.get("dmg", 0)), Color(0.79, 0.82, 0.42), 0.5)
+				if thby >= 0:
+					_tether(thby, thid, Color(0.79, 0.82, 0.42), 0.35)
+		"ward_soak":
+			log_view.append_text("[color=#7fd4e8]%s's ward absorbs %d[/color]\n" % [
+				e.get("unit", "?"), int(e.get("amount", 0))])
+			var wsid := _index_of_unit_named(str(e.get("unit", "")))
+			if wsid >= 0:
+				# Damage that lands and does nothing is indistinguishable from a miss without
+				# this. Glassy blue is the ward's own colour everywhere else on the screen.
+				_float_text(wsid, "◈%d" % int(e.get("amount", 0)), Color(0.50, 0.83, 0.91), 0.55)
+				if vfx != null:
+					vfx.aura_pulse((nodes[wsid]["holder"] as Node3D).position, Color(0.50, 0.83, 0.91))
 		"death":
 			log_view.append_text("[color=#ff5f5f]%s falls![/color]\n" % e["unit"])
 			_punch(0.55, 0.45)
@@ -4370,6 +5610,10 @@ func _snap_log() -> void:
 
 
 func _finish() -> void:
+	# ⚠️ HERE, NOT IN `_adapt_result`. The report screen and the career read the monster objects
+	# and need the fight's final state on them; the REPLAY needs them untouched until it is over.
+	# Both are satisfied by writing back at the end. `docs/WATCH_AUDIT.md` §1.
+	_write_back_final(frames)
 	var w: String = result.get("winner", "draw")
 	banner_title.text = "Your team wins!" if w == "A" else ("The rival wins." if w == "B" else "Draw.")
 	banner_sub.text = "%d vs %d standing — %.1fs" % [
@@ -4409,7 +5653,7 @@ func _skip() -> void:
 		_apply_frame(frame_pos)
 	_drain_log(event_log.size())
 	for k in range(nodes.size()):
-		if not all_units[k].alive:
+		if not _alive_now(k):
 			_topple(k)
 	playing = false
 	_finish()
@@ -4469,7 +5713,7 @@ func _build_overlay() -> void:
 	# speed keys exist because neither camera and no single speed is right for every moment — a
 	# tension that is measured, not a preference — and a control the player cannot discover is the
 	# same as one that does not exist.
-	hint.text = "Tab / click a nameplate for its orders · Esc close · C camera (Team/Action/Arena) · drag to pan, wheel to zoom · Space pause · [ ] speed"
+	hint.text = "Tab / click a nameplate for its orders · Esc close · C camera (Action/Team/Arena) · drag to pan, wheel to zoom · Space pause · [ ] speed · ← → rewind 3s"
 	ui.add_child(hint)
 
 	callout = PanelContainer.new()
@@ -4538,6 +5782,32 @@ func _build_overlay() -> void:
 		b.custom_minimum_size = Vector2(50, 28)
 		b.pressed.connect(func(): speed = s)
 		speeds.add_child(b)
+	# ── THE SCRUB. `docs/WATCH_AUDIT.md`: first blood lands at 46% and the match resolves in the
+	# ten seconds after it, so a viewer who looks away once has missed the fight. The replay is an
+	# array of frames; going back costs almost nothing and is the difference between a fight you
+	# watched and a fight you can STUDY. ──
+	scrub = HSlider.new()
+	scrub.custom_minimum_size = Vector2(0, 20)
+	scrub.min_value = 0.0
+	scrub.step = 0.05
+	scrub.value_changed.connect(func(v):
+		if scrub.has_focus() or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			_seek(float(v)))
+	ctrl.add_child(scrub)
+	var jump := HBoxContainer.new()
+	jump.add_theme_constant_override("separation", 4)
+	ctrl.add_child(jump)
+	var b_back := Button.new()
+	b_back.text = "◀ 3s"
+	b_back.custom_minimum_size = Vector2(56, 26)
+	b_back.pressed.connect(func(): _seek(frame_pos * NewSim.DT - 3.0))
+	jump.add_child(b_back)
+	var b_fwd := Button.new()
+	b_fwd.text = "3s ▶"
+	b_fwd.custom_minimum_size = Vector2(56, 26)
+	b_fwd.pressed.connect(func(): _seek(frame_pos * NewSim.DT + 3.0))
+	jump.add_child(b_fwd)
+
 	var skip := Button.new()
 	skip.text = "Skip to result"
 	skip.pressed.connect(_skip)

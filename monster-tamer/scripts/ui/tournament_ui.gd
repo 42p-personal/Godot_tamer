@@ -127,10 +127,18 @@ func _refresh() -> void:
 		_list.add_child(_cup_card(idx))
 
 
-func _purse_for(idx: int) -> int:
+## ⚠️ `marquee` IS PASSED IN, NOT LOOKED UP, AND THAT IS A REAL BUG AVOIDED. The marquee is a
+## function of `Career.week`, and a cup now COSTS weeks — so by the time the result card is drawn
+## the clock has moved and `CupRun.is_marquee()` may already have rolled past the month the player
+## entered in. The purse must be paid for the cup that was ENTERED, so the flag travels with the
+## run (`CupRun.finish()` puts it in the result dict) rather than being re-derived at payout.
+func _purse_for(idx: int, marquee: bool = false) -> int:
 	var drop: int = clampi(Career.league_index - idx, 0, REWARD_BY_DROP.size() - 1)
 	var base: int = BASE_PURSE + PURSE_PER_LEAGUE * idx
-	return int(round(float(base) * float(REWARD_BY_DROP[drop])))
+	var purse: float = float(base) * float(REWARD_BY_DROP[drop])
+	if marquee:
+		purse *= float(CupRun.MARQUEE_PURSE_MULT)
+	return int(round(purse))
 
 
 ## ⚠️ THE BOTTOM RUNG IS FREE TO A BROKE PLAYER, AND THAT IS A SOFTLOCK FIX, NOT CHARITY.
@@ -138,8 +146,10 @@ func _purse_for(idx: int) -> int:
 ## market sell-back, a cancelled fusion refund). Charge for every entry unconditionally and a
 ## player with one monster and no gold has no legal move left. The Wood ring waives its fee when
 ## you cannot pay it — you can always get back on the ladder, and only at the bottom of it.
-func _fee_for(idx: int) -> int:
+func _fee_for(idx: int, marquee: bool = false) -> int:
 	var fee: int = BASE_FEE + FEE_PER_LEAGUE * idx
+	if marquee:
+		fee = int(round(float(fee) * float(CupRun.MARQUEE_FEE_MULT)))
 	if idx == 0 and Career.gold < fee:
 		return 0
 	return fee
@@ -157,27 +167,82 @@ func _cup_card(idx: int) -> Control:
 
 	var lname: String = Career.league_at(idx).get("name", "?")
 	var team_size: int = Career.team_size_for_league(idx)
-	var rounds: int = Career.rival_count_for_league(idx)
+	var marquee: bool = CupRun.is_marquee(idx)
+	var rounds: int = CupRun.rounds_for(idx)
 	var cap: int = int(Career.stat_cap_for_league(idx))
 	var have: int = Roster.monsters.size()
-	var fee: int = _fee_for(idx)
+	var fee: int = _fee_for(idx, marquee)
+	var weeks: int = CupRun.weeks_for_cup(idx, rounds)
 
 	col.add_child(UiTheme.heading("%s Cup%s" % [lname, "  ·  your league" if is_frontier else ""], 3))
+
+	# ── THE MARQUEE — the one week a year this rung is an EVENT ───────────────
+	# ⚠️ The build had no calendar at all: every cup at every rung was identical and available
+	# forever, so "which cup, and when" was never a question. Once a year, at each senior league,
+	# it is. See `cup_run.gd:MARQUEE_LEAGUES`.
+	if marquee:
+		var m := UiTheme.heading("%s — the marquee, this month only" % CupRun.marquee_name(idx), 3)
+		m.add_theme_color_override("font_color", UiTheme.GOLD)
+		col.add_child(m)
+		col.add_child(UiTheme.body_text(
+			"A deeper draw (%d teams, one more than usual) and a purse worth %d%% of a normal cup. "
+			% [rounds, int(round(CupRun.MARQUEE_PURSE_MULT * 100.0))]
+			+ "Double entry, and one more team to sweep — the placing money is easier, the title is harder.",
+			"secondary"))
+
 	col.add_child(UiTheme.body_text(
 		"%dv%d  ·  %d teams in the draw  ·  stat ceiling %d  ·  entry %dg  ·  winner's purse %dg" % [
-			team_size, team_size, rounds, cap, fee, _purse_for(idx)], "secondary"))
+			team_size, team_size, rounds, cap, fee, _purse_for(idx, marquee)], "secondary"))
 
-	# ── THE SCOUT REPORT ──────────────────────────────────────────────────────
+	# ⚠️ SHORT-HANDED ENTRY MUST BE BILLED, NOT DISCOVERED. Entering a body down is now allowed
+	# (`Career.SHORT_ENTRY_ALLOWANCE`) because being locked out was an invisible economy wall, but
+	# a penalty the player only meets in the arena is not a decision — it is an ambush.
+	if have < team_size:
+		var short_line := UiTheme.body_text(
+			"You will fight %d v %d — a body down, and outnumbered every round. The draw does not shrink to match you."
+			% [mini(have, team_size), team_size], "primary")
+		short_line.add_theme_color_override("font_color", UiTheme.CAUTION)
+		short_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(short_line)
+
+	# ⚠️ THE TRIP IS THE PRICE, AND IT MUST BE ON THE CARD. `docs/META_GAME_REVIEW.md` E2: the cup
+	# path never touched `Career.week`, so gold per week of game time was infinite and the weekly
+	# tick — the entire stable half — could be skipped by the one activity the game is about. A
+	# cup now costs weeks, and a cost the player cannot see before paying is not a decision.
+	var trip := UiTheme.body_text(
+		"The trip costs %d week%s of game time — your stable ages, eats and rests on the road, but nobody trains."
+		% [weeks, "" if weeks == 1 else "s"], "primary")
+	trip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(trip)
+
+	# ── THE SCOUT REPORT — THE BRACKET, ROUND BY ROUND ────────────────────────
 	# ⚠️ THIS IS THE DECISION. `CLAUDE.md`: "Preparation is the skill; observation is the reward"
 	# and "training and breeding are strategy, not maintenance". None of that is true if the
 	# player cannot see what they are training FOR. The field is drawn off `Career.cup_field_seed()`
 	# — stable for the game-month — so the arc shown here is the arc actually fought: scout it, go
 	# and train against it, come back to the same opponents.
-	var opener := Career.field_fill(0, rounds, idx)
-	var champ_fill := Career.field_fill(rounds - 1, rounds, idx)
-	col.add_child(UiTheme.body_text(
-		"The draw climbs: round 1 fields a team at ~%d%% of the %s ceiling, the final at ~%d%%." % [
-			int(round(opener * 100.0)), lname, int(round(champ_fill * 100.0))], "secondary"))
+	#
+	# ⚠️ AND IT IS A BRACKET NOW, NOT A HEADLINE. This used to print the opener and the final and
+	# nothing between, which was an honest summary of a cup whose middle rounds did not matter:
+	# measured at a 65%-filled roster, round one won 100% at all eleven leagues. `CupRun.round_fill`
+	# redistributes the draw so every round is a fight; showing every round is what makes that
+	# redistribution legible instead of merely true.
+	# ⚠️ AND THE BRACKET NOW SAYS WHAT KIND OF TEAM EACH ROUND IS, NOT JUST HOW STRONG. Until this
+	# round every rival came out of one generator and differed only by a fill fraction, so the
+	# eleven authored champion reads were decoration and "knowing WHICH monster to make" had one
+	# answer. A drawn field carries an archetype per round now (`Career.make_cup_field`), and the
+	# strength bar alone would hide the only new information on the card.
+	var drawn: Array = Career.make_cup_field(idx, rounds)
+	for r in range(rounds):
+		var f: float = CupRun.round_fill(r, rounds, idx)
+		var is_last: bool = r == rounds - 1
+		var who: String = "THE TITLE BOUT" if is_last else "Round %d" % (r + 1)
+		var kind: String = String(drawn[r].get("archetype", "")) if r < drawn.size() else ""
+		var line := UiTheme.body_text("   %-14s  %-9s  %3d%% of the %s ceiling   %s" % [
+			who, kind, int(round(f * 100.0)), lname, _strength_bar(f)], "secondary")
+		if is_last:
+			line.add_theme_color_override("font_color", UiTheme.GOLD)
+		col.add_child(line)
 
 	var champ: Dictionary = Career.champion_for(idx)
 	var beaten: bool = Career.has_beaten_champion(idx)
@@ -190,11 +255,33 @@ func _cup_card(idx: int) -> Control:
 		col.add_child(UiTheme.body_text(
 			"You have taken this title off them before — they have trained since.", "muted"))
 
+	# ⚠️ THE STANDINGS ARE THE OTHER HALF OF THE WAGER. Placement pays 100/65/40/0 (`career.gd:
+	# PLACEMENT_REWARD_FRACTION`) and the screen never said so before entry, so a player weighing a
+	# cup could only see the win. Now that entry costs gold AND weeks, "what does second pay" is
+	# part of the decision, not a surprise on the way out.
+	var ladder: Array = []
+	for place in [1, 2, 3]:
+		if place > rounds + 1:
+			break
+		ladder.append("%s %dg" % [Career.placement_label(place),
+			int(round(float(_purse_for(idx, marquee)) * Career.placement_reward_fraction(place)))])
+	col.add_child(UiTheme.body_text(
+		"Standings pay: %s  ·  anything lower pays nothing." % "  ·  ".join(ladder), "secondary"))
+
 	# ⚠️ State the sweep rule BEFORE entry. Promotion on a sweep is a hard gate and the player
 	# must be able to weigh it, not discover it by losing.
 	if is_frontier:
+		## ⚠️ SAY THE NUMBER BEFORE THE FEE, NOT AFTER THE LOSS. This card used to promise "beat
+		## all N", which was the old sweep gate; the rank and the title separated this round and a
+		## sign-up screen that states the wrong gate is worse than one that states none — the
+		## player prices the wager wrong and reads a promotion they DID earn as luck. Read from
+		## `Career.wins_needed_to_advance()`, the same function the outcome uses, so there is one
+		## rule and no copy of it.
+		var need: int = Career.wins_needed_to_advance(idx, rounds)
+		var promo_text: String = "Beat all %d and the title — and the rank — are yours." % rounds if need >= rounds \
+			else "Win %d of the %d rounds and the RANK is yours; take all %d and so is the TITLE." % [need, rounds, rounds]
 		var promo := UiTheme.body_text(
-			"Beat all %d and the title — and the rank — are yours. Fall short and you place, and are paid to place." % rounds, "primary")
+			promo_text + " Fall short and you place, and are paid to place.", "primary")
 		promo.add_theme_color_override("font_color", UiTheme.GOLD)
 		promo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(promo)
@@ -206,20 +293,27 @@ func _cup_card(idx: int) -> Control:
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 38)
 	btn.focus_mode = Control.FOCUS_ALL
-	if have < team_size:
+	if have < Career.min_team_to_enter(idx):
 		btn.disabled = true
-		btn.text = "Need %d monsters — you have %d" % [team_size, have]
+		btn.text = "Need %d monsters — you have %d" % [Career.min_team_to_enter(idx), have]
 	elif Career.gold < fee:
 		btn.disabled = true
 		btn.text = "Entry is %dg — you have %dg" % [fee, Career.gold]
 	elif fee <= 0:
-		btn.text = "Enter the %s Cup  ·  entry waived" % lname
+		btn.text = "Enter the %s Cup  ·  entry waived  ·  %d week%s" % [lname, weeks, "" if weeks == 1 else "s"]
 		btn.pressed.connect(_on_enter.bind(idx))
 	else:
-		btn.text = "Enter the %s Cup  ·  %dg" % [lname, fee]
+		btn.text = "Enter the %s Cup  ·  %dg  ·  %d week%s" % [lname, fee, weeks, "" if weeks == 1 else "s"]
 		btn.pressed.connect(_on_enter.bind(idx))
 	col.add_child(btn)
 	return panel
+
+
+## A five-cell bar so the bracket reads as a shape at a glance, not as seven percentages. Scaled
+## against the ceiling the fills are already expressed in, so it needs no second unit.
+func _strength_bar(fill: float) -> String:
+	var cells: int = clampi(int(round(fill * 5.0)), 1, 5)
+	return "[%s%s]" % ["#".repeat(cells), "·".repeat(5 - cells)]
 
 
 ## Starts a LIVE cup: `CupRun` pre-generates each round's rival team, then this screen hands off
@@ -231,12 +325,19 @@ func _cup_card(idx: int) -> Control:
 ## so the only caller that can reach this without the gold is a direct scripted call (the probes);
 ## `spend_gold()` refuses rather than going negative, and the warning makes that loud instead of
 ## silent. `rival_count` is NOT passed — the league's own field size is the default now.
+## ⚠️ AND THE TRIP IS CHARGED HERE, AFTER THE FIELD IS DRAWN, NEVER BEFORE. `Career.cup_field_seed()`
+## is a function of the game WEEK (stable for four weeks), so advancing the clock first would draw
+## a DIFFERENT field from the one the card just scouted — the exact failure the drawn-field rule
+## exists to prevent. Draw, then travel: you fight the teams that entered, and your stable arrives
+## a fortnight older than it left.
 func _on_enter(idx: int) -> void:
-	var fee: int = _fee_for(idx)
+	var marquee: bool = CupRun.is_marquee(idx)
+	var fee: int = _fee_for(idx, marquee)
 	if not Career.spend_gold(fee):
 		push_warning("tournament: entered the %s Cup without paying the %dg fee (gold %d)" % [
 			Career.league_at(idx).get("name", "?"), fee, Career.gold])
 	CupRun.start(idx)
+	CupRun.travel()
 	get_tree().change_scene_to_file("res://scenes/tactics.tscn")
 
 
@@ -258,7 +359,8 @@ func _show_result(out: Dictionary) -> void:
 	## the champion still pays for the trip, finishing mid-table pays nothing.
 	var placement: int = int(out.get("placement", Career.placement_for(wins, rival_count)))
 	var frac: float = float(out.get("placementFraction", Career.placement_reward_fraction(placement)))
-	var purse: int = int(round(float(_purse_for(idx)) * frac))
+	var was_marquee: bool = bool(out.get("marquee", false))
+	var purse: int = int(round(float(_purse_for(idx, was_marquee)) * frac))
 	Career.add_gold(purse)
 
 	for c in _result_box.get_children():
@@ -270,8 +372,10 @@ func _show_result(out: Dictionary) -> void:
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	panel.add_child(col)
 
-	col.add_child(UiTheme.heading("%s Cup — %s, %d of %d" % [
-		str(out.get("league", "")), Career.placement_label(placement), wins, rival_count], 2))
+	col.add_child(UiTheme.heading("%s%s — %s, %d of %d" % [
+		"%s · " % str(out.get("marqueeName", "")) if was_marquee else "",
+		"%s Cup" % str(out.get("league", "")),
+		Career.placement_label(placement), wins, rival_count], 2))
 
 	var matches: Array = out.get("matches", [])
 	for i in range(matches.size()):
@@ -302,6 +406,15 @@ func _show_result(out: Dictionary) -> void:
 		cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(cl)
 
+	# ⚠️ Say what the trip cost next to what it paid. A cup is now the most expensive single
+	# action in the game in the currency that matters — weeks — and a player who cannot see the
+	# bill cannot learn to weigh it.
+	var weeks: int = int(out.get("weeks", 0))
+	if weeks > 0:
+		col.add_child(UiTheme.body_text(
+			"%d week%s on the road. It is now week %d." % [weeks, "" if weeks == 1 else "s", Career.week],
+			"secondary"))
+
 	var purse_line := UiTheme.body_text("Purse: %d gold  (%s pays %d%%)" % [
 		purse, Career.placement_label(placement), int(round(frac * 100.0))], "primary")
 	purse_line.add_theme_color_override("font_color", UiTheme.GOLD)
@@ -319,8 +432,21 @@ func _show_result(out: Dictionary) -> void:
 			"Your stat ceiling rises to %d. Everything you trained to the old cap can grow again."
 			% int(Career.current_stat_cap()), "secondary"))
 	elif not bool(out.get("swept", false)):
-		col.add_child(UiTheme.body_text(
-			"No promotion — the title, and the rank, need the whole draw. Train, then come back.", "secondary"))
+		## ⚠️ THIS LINE USED TO SAY "the title, and the rank, need the whole draw", WHICH IS NOW
+		## TRUE ONLY AT TAMERS APEX. The rank and the title separated this round: everywhere else
+		## you may drop one round of the draw and still be promoted. Copy that describes a rule the
+		## game no longer has is worse than no copy at all — it teaches the player to read a loss
+		## as a lottery, which is the exact thing splitting the rule was meant to end. It now says
+		## the number out loud, from the outcome dict rather than from a second copy of the rule.
+		var need: int = int(out.get("winsNeeded", Career.wins_needed_to_advance(idx, rival_count)))
+		if need >= rival_count:
+			col.add_child(UiTheme.body_text(
+				"No promotion — nothing but the whole draw takes this title. Train, then come back.",
+				"secondary"))
+		else:
+			col.add_child(UiTheme.body_text(
+				"No promotion — the rank needs %d of %d rounds (you won %d); the title needs all %d. Train, then come back."
+				% [need, rival_count, wins, rival_count], "secondary"))
 
 	_result_box.add_child(panel)
 

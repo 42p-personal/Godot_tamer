@@ -33,7 +33,7 @@ extends Node
 
 const WeekLib = preload("res://scripts/week.gd")
 const BattleSimScript = preload("res://scripts/battle_sim.gd")
-const MonsterInstanceScript = preload("res://scripts/monster_instance.gd")
+const TacticsScript = preload("res://scripts/tactics.gd")
 
 # ⚠️ THE ECONOMY LIVES IN UI SCRIPTS. Read, never copied — see the header note.
 const ShopScript = preload("res://scripts/ui/shop_ui.gd")
@@ -43,7 +43,12 @@ const BreedScript = preload("res://scripts/ui/breeding_ui.gd")
 
 # ── autopilot knobs ──────────────────────────────────────────────────────────
 const SEED := 20260809
-const MAX_WEEKS := 600           # 12.5 in-game years — well past one monster's 8-year span
+## ⚠️ RAISED FROM 600. At 600 the competent autopilot was still climbing when the budget ran out
+## and the run reported "stopped at Masters", which reads like a wall and is not one — it is the
+## instrument's own edge. The question this probe exists to answer is whether the ladder is
+## COMPLETABLE, and a horizon that cannot contain the answer cannot report it. 1000 weeks is 20.8
+## in-game years; if the climb needs that, THAT is the finding.
+const MAX_WEEKS := 1000
 const CUP_INTERVAL := 4          # the autopilot tries the frontier cup monthly
 ## ⚠️ NO LONGER A CONSTANT — kept only as the fallback for a league name this build does not know.
 ## `tournament_ui.gd` USED to hardcode `CupRun.start(idx, 3)`; it now passes no count at all and
@@ -57,8 +62,29 @@ const GOLD_RESERVE := 60         # keep enough to feed the stable for a few week
 ## Mean stamina a rest week returns — `week.gd:apply_activity` rolls 30..100 in steps of 5, flat,
 ## regardless of how much the previous weeks spent. See `_drill_plan`.
 const MEAN_REST_RECOVERY := 65.0
-const BREED_GOLD_FLOOR := 1500   # only breed when gold is genuinely spare
-const BREED_COOLDOWN := 48
+const BREED_GOLD_FLOOR := 700    # only breed when gold is genuinely spare
+const BREED_COOLDOWN := 24
+
+## ⚠️ THE BENCH, THE FREEZER AND THE DYNASTY — the half of the game this autopilot could not play.
+## Until now it recruited exactly enough bodies to field the league's team and never touched
+## `Roster.preserve()`, so `Roster.breeding_stock()` (which is the FREEZER and nothing else) was
+## permanently empty and `breeds` was pinned at 0 by construction, not by measurement. Every
+## "breeding never fires" number this instrument has ever printed was a statement about the
+## autopilot, not about the game.
+##
+## What a competent player does, and what these knobs now encode:
+##   · keep a SPARE body so a retirement is not a forfeit  (BENCH_SIZE)
+##   · put an ageing champion in the freezer while it is still good — that is the decision
+##     `breeding_ui.gd` says the system is FOR: "is this line worth taking out of competition"
+##     (PRESERVE_MARGIN_WEEKS)
+##   · hold a small stock of founders, because the freezer bills 12g/week forever (FREEZER_TARGET)
+##   · raise the potential ceiling with children, because `week.gd:stat_cap_for` is
+##     `league_cap × potential` and above Gold the league cap is NOT reachable in one lifespan
+const BENCH_SIZE := 1               ## spare bodies beyond the league's fielded team
+const BENCH_GOLD_FLOOR := 900       ## …and only bought out of genuine surplus. See the arc loop.
+const FREEZER_TARGET := 2           ## founders kept on ice; each costs RENTAL_PER_FROZEN a week
+const PRESERVE_MARGIN_WEEKS := 32   ## preserve a monster this close to retiring, if cover exists
+
 const RUN_TWICE := true          # determinism check
 const DETERMINISM_WEEKS := 80    # the reproducibility check re-runs a SHORT arc, see _ready()
 
@@ -73,6 +99,7 @@ func _ready() -> void:
 	print("=== CAREER ARC PROBE ===")
 	print("seed %d · max %d weeks · cup attempt every %d weeks\n" % [SEED, MAX_WEEKS, CUP_INTERVAL])
 	_check_mirrors()
+	_check_cup_mirror()
 
 	## ⚠️ `--gate-only` EXISTS SO THE LADDER CAN BE TUNED AT ALL. The full run is ~900 simulated
 	## fights and takes many minutes; the difficulty endpoints in `career.gd` need to be nudged and
@@ -86,6 +113,13 @@ func _ready() -> void:
 
 	var arc_a: Dictionary = _run_arc(MAX_WEEKS)
 	_report_arc(arc_a)
+	## ⚠️ READ OFF THE FULL ARC, BEFORE THE DETERMINISM CHECK OVERWRITES `arc_a` WITH AN 80-WEEK
+	## ONE. The old check below asked the 80-week arc whether it had bred — which it never would
+	## have, dynasty or no dynasty — so the warning it printed was about the wrong run.
+	var full_breeds: int = int(arc_a.get("breeds", 0))
+	var full_preserves: int = int(arc_a.get("preserves", 0))
+	_first_preserve_week = int(arc_a.get("firstPreserveWeek", 0))
+	_first_breed_week = int(arc_a.get("firstBreedWeek", 0))
 
 	if RUN_TWICE:
 		# ⚠️ THE DETERMINISM CHECK RUNS A SHORT ARC, NOT THE FULL ONE. Reproducibility is a
@@ -109,19 +143,19 @@ func _ready() -> void:
 			_instrument_ok = false
 			_notes.append("the arc is NOT reproducible — every number below is suspect")
 
-	## ⚠️ THE AUTOPILOT HAS NO BENCH AND NO BREEDING POLICY, AND THAT IS NOW THE INSTRUMENT'S
-	## BIGGEST BLIND SPOT. It buys a stall only when it cannot field the league's team size, and it
-	## never preserves a monster at the Lab — which is the only way `Roster.breeding_stock()` is
-	## populated, so `breeds` is structurally pinned at 0 no matter what the breeding screen does.
-	## Section 4 (THE GYM) shows a perfectly-drilled monster RETIRES before filling the Platinum
-	## cap, so above Gold the ladder is gated on the potential multiplier that only breeding
-	## provides. An autopilot that cannot breed therefore CANNOT prove the ladder completable at
-	## Platinum and above, and its stall there must not be read as "the game is unwinnable".
-	if int(arc_a.get("breeds", 0)) == 0:
-		_notes.append("⚠️ the autopilot bred 0 times — it has no preserve/breed policy, so any "
-			+ "stall at Platinum or above is UNPROVEN, not measured. Teaching it to keep a bench "
-			+ "and raise a foal is the next thing this instrument needs.")
+	## ⚠️ THE AUTOPILOT NOW KEEPS A BENCH, PRESERVES FOUNDERS AND BREEDS — so a zero here is a
+	## MEASUREMENT, not a blind spot. If it still comes out zero the reason is in the game (gold,
+	## barn slots, the freezer rent, the `MAX_CHILDREN_PER_PARENT` limit), and that is a finding
+	## about the game rather than about this file. Above Gold the league cap is not reachable in
+	## one lifespan (section 4), so `potential` — which only breeding raises — is the only thing
+	## that can lift the ceiling. A run that reaches the top without ever breeding is telling you
+	## the dynasty is optional; a run that stalls without breeding is telling you it is not.
+	if full_breeds == 0:
+		_notes.append("the autopilot bred 0 times DESPITE having a preserve/breed policy "
+			+ "(%d preserves). That is now a statement about the game's own gates, not about "
+			% full_preserves + "the instrument — check gold, barn slots and freezer rent.")
 
+	_run_sensitivity()
 	_run_grind()
 	_run_wall()
 	_run_champion_gate()
@@ -159,9 +193,10 @@ func _drop_frac() -> Array: return _konst(TournamentScript, "REWARD_BY_DROP", [1
 func _offer_count() -> int: return int(_konst(MarketScript, "OFFER_COUNT", 4))
 func _refund_frac() -> float: return float(_konst(MarketScript, "RELEASE_REFUND_FRAC", 0.35))
 func _breed_cost() -> int: return int(_konst(BreedScript, "BREED_COST", 300))
-func _breed_head_start() -> float: return float(_konst(BreedScript, "BREED_HEAD_START", 0.30))
-func _breed_step() -> float: return float(_konst(BreedScript, "POTENTIAL_STEP", 0.06))
-func _breed_max_pot() -> float: return float(_konst(BreedScript, "MAX_POTENTIAL", 2.0))
+## ⚠️ THE HEAD-START / POTENTIAL-STEP / MAX-POTENTIAL MIRRORS ARE GONE ON PURPOSE. `_try_breed`
+## calls `breeding_ui.gd:_make_child` directly now, so there is nothing left to re-derive — and
+## one of the three (`POTENTIAL_STEP`) had already been renamed in that file, meaning this probe
+## was quietly running on a stale fallback that halved a dynasty's climb.
 func _breed_max_children() -> int: return int(_konst(BreedScript, "MAX_CHILDREN_PER_PARENT", 2))
 func _base_fee() -> int: return int(_konst(TournamentScript, "BASE_FEE", 30))
 func _fee_step() -> int: return int(_konst(TournamentScript, "FEE_PER_LEAGUE", 22))
@@ -283,7 +318,12 @@ func _purse_paid(idx: int, wins: int, rounds: int) -> int:
 ## policy beating a smarter one by 27%. The arc must be judged against the best play known, not
 ## against a clever-looking one, so this is what it uses. That the ceiling of training skill is a
 ## one-liner is finding T1 in docs/META_GAME_REVIEW.md.
-func _drill_plan_greedy(mi, cap: float) -> Dictionary:
+func _drill_plan_greedy(mi, league_cap: float) -> Dictionary:
+	## ⚠️ THE CEILING IS PER MONSTER, NOT PER LEAGUE (`week.gd:stat_cap_for` = league cap ×
+	## potential). Passing the raw league cap made the planner call a bred monster "capped" while
+	## the tick was still happily training it — invisible while `potential` was pinned at ×1.00
+	## because the autopilot never bred, and wrong the moment it does.
+	var cap: float = WeekLib.stat_cap_for(mi, league_cap)
 	var any_room := false
 	for s in Classify.STATS:
 		if float(mi.stats.get(s, 0.0)) < cap - 0.5:
@@ -300,7 +340,8 @@ func _drill_plan_greedy(mi, cap: float) -> Dictionary:
 	return {"mode": "rest", "id": ""}
 
 
-func _drill_plan(mi, cap: float) -> Dictionary:
+func _drill_plan(mi, league_cap: float) -> Dictionary:
+	var cap: float = WeekLib.stat_cap_for(mi, league_cap)   # see `_drill_plan_greedy`
 	var best_id := ""
 	var best_per := -INF
 	var any_gain := false
@@ -312,7 +353,14 @@ func _drill_plan(mi, cap: float) -> Dictionary:
 			var cur: float = float(mi.stats.get(stat, 0.0))
 			if base > 0.0:
 				# expected roll is base + range/2 at high happiness; aptitude scales it
-				var expected: float = (base + roundi(base / 3.0) * 0.5) * WeekLib.stat_training_bonus(mi, stat)
+				## ⚠️ FOCUS COST IS IN THE SCORE NOW, AND WITHOUT IT T1 WAS A STRAWMAN. `week.gd`
+				## gained a focus cost this round — a drill pays less into a stat the further that
+				## stat already leads (`apply_activity` multiplies by `focus_cost`). An optimiser
+				## blind to the game's newest mechanic is not "the sophisticated policy", it is a
+				## broken one, and reporting that it loses to a one-liner would have been a
+				## measurement of this file rather than of the game.
+				var expected: float = ((base + roundi(base / 3.0) * 0.5)
+					* WeekLib.stat_training_bonus(mi, stat) * WeekLib.focus_cost(mi, stat))
 				score += minf(expected, maxf(0.0, cap - cur))
 			else:
 				score += base * WeekLib.stat_malus_multiplier(mi, stat)
@@ -342,7 +390,13 @@ func _drill_plan(mi, cap: float) -> Dictionary:
 # 1. THE ARC — an autopilot career, Wood toward Tamers Apex
 # =============================================================================
 
-func _run_arc(max_weeks: int) -> Dictionary:
+## `opts` is how this instrument is PERTURBED, and section 6 exists to prove each knob moves the
+## arc. Defaults reproduce the autopilot's best-known play:
+##   breed      : bool  — run the bench/freezer/dynasty policy at all
+##   policy     : "greedy" | "optimiser" — which training brain plans the week
+##   feeMult    : float — scales the cup entry fee
+##   rivalMult  : float — scales every rival team's fill (see `_fight_cup`)
+func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 	_reset_career()
 
 	var per_league: Array = []
@@ -366,6 +420,15 @@ func _run_arc(max_weeks: int) -> Dictionary:
 	var blocked_recruit := 0
 	var fees_paid := 0               # total entry fees — the ladder's first real gold sink
 	var cups_refused_by_fee := 0     # cups the autopilot could not afford to enter
+	var preserves := 0               # monsters moved into the freezer (the only breeding stock)
+	var releases := 0                # monsters let go for the refund
+	var rent_paid := 0               # freezer rent — the standing cost of running a dynasty
+	var travel_weeks := 0            # weeks of game time spent ON THE ROAD to cups (see below)
+	var greedy: bool = str(opts.get("policy", "greedy")) == "greedy"
+	var bench_weeks := 0             # monster-weeks spent by bodies outside the fielded team
+	var frontier_blocked_weeks := 0  # weeks the frontier cup was unenterable for want of BODIES
+	var first_preserve_week := 0     # when the generational half of the game first does anything
+	var first_breed_week := 0
 
 	while Career.week < max_weeks and not Career.won_game:
 		var idx: int = Career.league_index
@@ -373,11 +436,22 @@ func _run_arc(max_weeks: int) -> Dictionary:
 		var L: Dictionary = per_league[idx]
 
 		# ── recruit / barn, so the frontier cup is enterable at all ──────────
-		var need: int = Career.current_team_size()
-		while Career.barn_capacity < need:
+		# ⚠️ THE LADDER COMES FIRST AND THE BENCH COMES OUT OF SURPLUS — measured, not assumed.
+		# The first version of this bought a bench body as eagerly as a starter, and the arc got
+		# WORSE: gold that should have bought barn slots and cup entries went on a spare mouth,
+		# recruiting was blocked 18 times, and the run stalled a whole league lower than the
+		# benchless autopilot. A bench is correct play; buying one you cannot afford is not.
+		# So: the BARN is only ever bought for the team, and the spare body only when gold is
+		# genuinely spare and there is already a slot standing empty.
+		var team_need: int = Career.current_team_size()
+		var need: int = team_need
+		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR \
+				and Career.barn_capacity > team_need:
+			need = team_need + BENCH_SIZE
+		while Career.barn_capacity < team_need:
 			var nxt: int = Career.barn_capacity + 1
 			if nxt >= _barn_prices().size():
-				stall_reason = "barn cannot hold %d (max %d)" % [need, _barn_prices().size() - 1]
+				stall_reason = "barn cannot hold %d (max %d)" % [team_need, _barn_prices().size() - 1]
 				break
 			var bprice: int = _barn_prices()[nxt]
 			if Career.gold < bprice + GOLD_RESERVE:
@@ -405,16 +479,23 @@ func _run_arc(max_weeks: int) -> Dictionary:
 			L["recruits"] = int(L["recruits"]) + 1
 			decisions += 1
 
-		# ── breed, when gold is genuinely spare and a slot exists ────────────
-		if (Roster.monsters.size() >= 2 and Roster.monsters.size() < Career.barn_capacity
-				and Career.gold >= BREED_GOLD_FLOOR
-				and Career.week - last_breed_week >= BREED_COOLDOWN):
-			var child = _try_breed()
-			if child != null:
-				L["goldOut"] = int(L["goldOut"]) + _breed_cost()
-				L["breeds"] = int(L["breeds"]) + 1
-				last_breed_week = Career.week
-				decisions += 1
+		# ── the bench, the freezer and the dynasty ───────────────────────────
+		var mopts: Dictionary = {
+			"preserve": bool(opts.get("breed", true)),
+			"breed": bool(opts.get("breed", true)) and Career.week - last_breed_week >= BREED_COOLDOWN,
+		}
+		var churn: Dictionary = _manage_roster(mopts)
+		if int(churn["bred"]) > 0:
+			last_breed_week = Career.week
+			if first_breed_week == 0:
+				first_breed_week = Career.week
+		if int(churn["preserved"]) > 0 and first_preserve_week == 0:
+			first_preserve_week = Career.week
+		L["goldOut"] = int(L["goldOut"]) + int(churn["breedGold"])
+		L["breeds"] = int(L["breeds"]) + int(churn["bred"])
+		preserves += int(churn["preserved"])
+		releases += int(churn["released"])
+		decisions += int(churn["preserved"]) + int(churn["released"]) + int(churn["bred"])
 
 		# ── plan the week for every monster ─────────────────────────────────
 		for mi in Roster.monsters:
@@ -428,7 +509,7 @@ func _run_arc(max_weeks: int) -> Dictionary:
 			# 1 happiness and nothing else. Foraging is strictly dominated by doing nothing —
 			# see docs/META_GAME_REVIEW.md finding D3. The autopilot plays correctly, not
 			# charitably.
-			var plan := _drill_plan_greedy(mi, cap)
+			var plan := _drill_plan_greedy(mi, cap) if greedy else _drill_plan(mi, cap)
 			# ⚠️ EXCURSION IS THE ONLY GOLD SOURCE THE WEEKLY CLOCK HAS. A monster with nothing
 			# left to train, or a stable that cannot afford its next recruit, sends it out to
 			# earn. Without this the autopilot deadlocks at Copper with 1 monster and 61 gold —
@@ -451,6 +532,8 @@ func _run_arc(max_weeks: int) -> Dictionary:
 				train_weeks += 1
 
 		var gold_before: int = Career.gold
+		bench_weeks += maxi(0, Roster.monsters.size() - Career.current_team_size())
+		rent_paid += Roster.frozen.size() * int(WeekPlan.RENTAL_PER_FROZEN)
 		WeekPlan.advance(Roster.monsters)
 		var delta: int = Career.gold - gold_before
 		if delta >= 0:
@@ -462,36 +545,66 @@ func _run_arc(max_weeks: int) -> Dictionary:
 			L["brokeWeeks"] = int(L["brokeWeeks"]) + 1
 		gold_peak = maxi(gold_peak, Career.gold)
 
-		# ── retirements: a retired monster is released, and must be replaced ──
-		var still: Array = []
+		# ── retirements: COUNTED here, DISPOSED OF by `_manage_roster` at the top of next week ──
+		# ⚠️ It used to release every retiree on the spot for the refund, which threw away the one
+		# thing a retiree is still good for: it is breeding stock. A champion that raced until it
+		# dropped is exactly the founder a dynasty wants (`roster.gd:breeding_stock`), and the
+		# freezer is the only place `breeding_ui.gd` will look for a parent.
 		for mi in Roster.monsters:
-			if mi.retired:
+			if mi.retired and not bool(mi.get_meta("arc_counted_retirement", false)):
+				mi.set_meta("arc_counted_retirement", true)
 				L["retirements"] = int(L["retirements"]) + 1
-				Career.add_gold(int(round(_offer_price(mi) * _refund_frac())))
-			else:
-				still.append(mi)
-		if still.size() != Roster.monsters.size():
-			Roster.monsters = still
-			Roster.selected_index = 0
 
 		# ── the frontier cup ────────────────────────────────────────────────
 		# ⚠️ IF THE FRONTIER IS NOT FIELDABLE, FARM THE HIGHEST LEAGUE THAT IS. A cleared league
 		# still pays 50%/20% and a cup costs no week, so a player short of a recruit grinds the
 		# rung below rather than sitting still. Modelling that is what stops the autopilot from
 		# reporting a soft-lock that a real player would simply play around.
+		# ⚠️ FIELD YOUR BEST, AND COUNT ONLY WHAT CAN FIGHT. `career.gd:enter_league_tournament`
+		# slices `Roster.monsters` from the FRONT — barn order IS the team sheet. With no bench
+		# that was a distinction without a difference; with a bench and a foal in the barn,
+		# leaving it unsorted fields the newborn and benches the champion. Sorting here is the
+		# autopilot doing what the player does when they pick a squad.
+		_sort_roster_best_first()
+		var fieldable: int = Roster.monsters.filter(func(m): return not m.retired).size()
 		var enter_idx: int = -1
-		if Roster.monsters.size() >= Career.current_team_size():
-			enter_idx = Career.league_index
+		## ⚠️ A FULL SIDE FIRST, ALWAYS — SHORT ENTRY IS AN ESCAPE HATCH, NOT A DEFAULT, AND THE
+		## DIFFERENCE IS TWO WHOLE LEAGUES. `Career.SHORT_ENTRY_ALLOWANCE` lets a stable enter a
+		## body down (it exists to break the poverty trap where the frontier is locked behind a
+		## monster the rung below cannot pay for). Measured with the autopilot taking that option
+		## whenever it was legal, it entered 4v5 every month, won 30 of 354 rounds (8%), spent 41%
+		## of its purse income on entry fees and stalled a rung LOWER than before the option
+		## existed. Taking the highest rung it can field FULLY, and going short only when no rung
+		## can be filled, is what a competent player does — and it is the policy this instrument
+		## is supposed to model. The lesson generalises: a new option measured with a policy that
+		## does not know when to use it measures the policy, not the option.
+		var full_idx: int = -1
+		for j in range(Career.league_index, -1, -1):
+			if Career.team_size_for_league(j) <= fieldable:
+				full_idx = j
+				break
+		if full_idx == Career.league_index:
+			enter_idx = full_idx
 		else:
-			for j in range(Career.league_index, -1, -1):
-				if Career.team_size_for_league(j) <= Roster.monsters.size():
-					enter_idx = j
-					break
+			## ⚠️ COUNTED, BECAUSE THE ARC HAS ALREADY HIT THIS AND IT WAS INVISIBLE. A run spent
+			## 151 weeks at Platinum entering ZERO cups at that rung and farming Gold instead —
+			## the per-league table showed "Platinum 151 wks, 0 cups" and nothing said why. The
+			## frontier is not always gated on strength; it can be gated on not owning five
+			## bodies, which is an ECONOMY problem wearing a difficulty problem's clothes.
+			frontier_blocked_weeks += 1
+			## The escape hatch: if there is no rung at all it can field in full, go short at the
+			## highest rung the allowance permits rather than sitting out the ladder entirely.
+			enter_idx = full_idx
+			if full_idx < 0:
+				for j in range(Career.league_index, -1, -1):
+					if Career.min_team_to_enter(j) <= fieldable:
+						enter_idx = j
+						break
 		# ⚠️ ENTRY COSTS GOLD NOW. A cup the player cannot pay for is a cup they do not enter, so
 		# the autopilot must be refused too — otherwise the instrument reports a bankroll the game
 		# would never have let it build. The Wood waiver is mirrored in `_entry_fee`, so the
 		# frontier can always be re-approached from zero gold at the bottom rung.
-		var cup_fee: int = _entry_fee(enter_idx) if enter_idx >= 0 else 0
+		var cup_fee: int = int(round(_entry_fee(enter_idx) * float(opts.get("feeMult", 1.0)))) if enter_idx >= 0 else 0
 		if enter_idx >= 0 and Career.gold < cup_fee:
 			cups_refused_by_fee += 1
 			enter_idx = -1
@@ -502,7 +615,24 @@ func _run_arc(max_weeks: int) -> Dictionary:
 			var rounds: int = _rounds_for(before_idx)
 			Career.spend_gold(cup_fee)
 			fees_paid += cup_fee
-			var out: Dictionary = Career.enter_league_tournament(before_idx, rounds, Career.week * 31 + before_idx)
+			var out: Dictionary = _fight_cup(before_idx, rounds, Career.week * 31 + before_idx,
+				float(opts.get("rivalMult", 1.0)))
+			## ⚠️ THE TRIP IS PART OF THE CUP, AND THIS PROBE COULD NOT SEE IT. `CupRun.travel()`
+			## charges real weeks on the LIVE path; this autopilot drives
+			## `Career.enter_league_tournament` directly, so for one round the arc reported "the
+			## clock moved 0 weeks" about a game where it no longer does — precisely the class of
+			## artifact §2 of this probe exists to prevent. Charged AFTER the fight because the
+			## field seed is a function of the week: travelling first would fight a different
+			## draw from the one entered. The road is a rest week, so the plan is stashed.
+			var trip: int = int(CupRun.weeks_for_cup(before_idx, rounds))
+			if trip > 0:
+				var stashed: Dictionary = WeekPlan.plans.duplicate(true)
+				WeekPlan.plans = {}
+				for _t in range(trip):
+					rent_paid += Roster.frozen.size() * int(WeekPlan.RENTAL_PER_FROZEN)
+					WeekPlan.advance(Roster.monsters)
+				WeekPlan.plans = stashed
+				travel_weeks += trip
 			var wins: int = int(out.get("wins", 0))
 			var purse: int = _purse_paid(before_idx, wins, rounds)
 			Career.add_gold(purse)
@@ -537,12 +667,18 @@ func _run_arc(max_weeks: int) -> Dictionary:
 		"cappedWeeks": capped_weeks, "excursionWeeks": excursion_weeks,
 		"decisions": decisions, "blockedRecruit": blocked_recruit,
 		"feesPaid": fees_paid, "cupsRefusedByFee": cups_refused_by_fee,
+		"travelWeeks": travel_weeks,
 		"cups": _sum_field(per_league, "cups"), "rounds": _sum_field(per_league, "rounds"),
 		"roundWins": _sum_field(per_league, "roundWins"),
 		"recruits": _sum_field(per_league, "recruits"),
 		"retirements": _sum_field(per_league, "retirements"),
 		"breeds": _sum_field(per_league, "breeds"),
 		"bestPotential": _best_potential(),
+		"preserves": preserves, "releases": releases, "rentPaid": rent_paid,
+		"frozen": Roster.frozen.size(), "bestGeneration": _best_generation(),
+		"benchWeeks": bench_weeks,
+		"firstPreserveWeek": first_preserve_week, "firstBreedWeek": first_breed_week,
+		"frontierBlockedWeeks": frontier_blocked_weeks,
 	}
 
 
@@ -555,52 +691,232 @@ func _sum_field(rows: Array, key: String) -> int:
 
 func _best_potential() -> float:
 	var best := 0.0
-	for mi in Roster.monsters:
+	for mi in _all_monsters():
 		best = maxf(best, float(mi.potential))
 	return best
 
 
-## `breeding_ui.gd:_on_breed`, mirrored — the two most-potential parents with matings left.
+func _best_generation() -> int:
+	var best := 1
+	for mi in _all_monsters():
+		best = maxi(best, int(mi.generation))
+	return best
+
+
+## ⚠️ NOT A MIRROR ANY MORE — THIS DRIVES THE REAL BUILDER, AND THE OLD COPY WAS WRONG ON EVERY
+## AXIS THAT MATTERS. `breeding_ui.gd:_make_child` is the single function the preview card and the
+## commit both call, and it is reachable from a probe because a Control that is never added to the
+## tree never runs `_ready()`. The hand-written copy that used to live here:
+##   · drew its parents from the BARN — the game draws them from `Roster.breeding_stock()`, which
+##     is the FREEZER and nothing else, so the copy simulated a rule the player does not have;
+##   · climbed potential by `POTENTIAL_STEP`, a constant that no longer exists in `breeding_ui.gd`
+##     (it is `BREED_STEP_BY_TIER`, 0.10–0.15 by heritage) — so the mirror had been silently
+##     running on its 0.06 fallback, understating a dynasty's climb by up to 2.5x per generation;
+##   · applied no species-base floor, no emphasis, no heirloom and no generation counter.
+## A mirror of a system that is being reworked by someone else is a liability. Call the real one.
 func _try_breed():
+	if Roster.monsters.size() >= Career.barn_capacity or Career.gold < _breed_cost():
+		return null
 	var a = null
 	var b = null
-	for mi in Roster.monsters:
-		if mi.retired or int(mi.get_meta("children", 0)) >= _breed_max_children():
+	for mi in Roster.breeding_stock():
+		if int(mi.get_meta("children", 0)) >= _breed_max_children():
 			continue
 		if a == null or mi.potential > a.potential:
 			b = a
 			a = mi
 		elif b == null or mi.potential > b.potential:
 			b = mi
-	if a == null or b == null:
+	if a == null or b == null or a == b:
 		return null
+
+	var ui = BreedScript.new()
+	ui._line_from_b = _stat_total(b) > _stat_total(a)
+	ui._emphasis = _breed_emphasis(a, b)
+	# The bequest is free upside, so a competent player always takes the biggest one going.
+	var best_at := -1.0
+	for opt in ui._heirloom_options(a, b):
+		if float(opt["at"]) > best_at:
+			best_at = float(opt["at"])
+			ui._heirloom_id = str(opt["id"])
 	if not Career.spend_gold(_breed_cost()):
+		ui.free()
 		return null
-	var pot: float = minf(_breed_max_pot(),
-		snappedf(maxf(a.potential, b.potential) + _breed_step(), 0.01))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = Career.week * 7919
-	var donor = a if a.potential >= b.potential else b
-	var child = MonsterInstanceScript.new()
-	child.id = Roster.next_slot_id()
-	child.species_id = donor.species_id
-	child.species_name = donor.species_name
-	child.body = donor.body
-	child.potential = pot
-	child.age_weeks = 0
-	child.stats = {}
-	for stat in Classify.STATS:
-		var avg: float = (float(a.stats.get(stat, 0.0)) + float(b.stats.get(stat, 0.0))) * 0.5
-		child.stats[stat] = maxf(1.0, round(avg * _breed_head_start()))
-	child.recompute_class()
-	child.recompute_pools()
-	child.assign_moveset(rng)
-	child.hp = child.max_hp
-	child.mp = child.max_mp
+	var child = ui._make_child(a, b, Roster.next_slot_id())
+	ui.free()
+	if child == null:
+		return null
 	a.set_meta("children", int(a.get_meta("children", 0)) + 1)
 	b.set_meta("children", int(b.get_meta("children", 0)) + 1)
 	Roster.monsters.append(child)
 	return child
+
+
+## Which stat to aim the child at. `EMPHASIS_TAX` is zero-sum, so this chooses the child's SHAPE
+## and therefore its class — the vision's "knowing WHICH monster to make". Doubling down on what
+## the line is already best at is the simplest defensible policy; it is a POLICY, not a law, and
+## a better one is exactly the kind of thing a real player would discover.
+func _breed_emphasis(a, b) -> String:
+	var best: String = Classify.STATS[0]
+	var best_v := -1.0
+	for s in Classify.STATS:
+		var v: float = float(a.stats.get(s, 0.0)) + float(b.stats.get(s, 0.0))
+		if v > best_v:
+			best_v = v
+			best = s
+	return best
+
+
+## Barn order IS the team sheet (`career.gd:enter_league_tournament` slices from the front), so
+## the autopilot sorts it: anything that can still fight, strongest first.
+func _sort_roster_best_first() -> void:
+	Roster.monsters.sort_custom(func(a, b):
+		if a.retired != b.retired:
+			return b.retired
+		return _stat_total(a) > _stat_total(b))
+	Roster.selected_index = 0
+
+
+## A cup, with a knob on how strong the field is. At `mult == 1.0` this IS
+## `Career.enter_league_tournament` — called directly, so the arc is fought against the real
+## thing. Any other multiplier rebuilds the same field at scaled fill and hands the win count to
+## `Career.apply_tournament_outcome`, the documented SHARED TAIL both the headless and the live
+## cup paths use. ⚠️ `_check_cup_mirror()` asserts the two agree at 1.0; a perturbation harness
+## that has quietly stopped matching the thing it perturbs is worse than no harness.
+func _fight_cup(idx: int, rounds: int, seed_: int, mult: float = 1.0) -> Dictionary:
+	if is_equal_approx(mult, 1.0):
+		return Career.enter_league_tournament(idx, rounds, seed_)
+	return _fight_cup_scaled(idx, rounds, seed_, mult)
+
+
+func _fight_cup_scaled(idx: int, rounds: int, seed_: int, mult: float) -> Dictionary:
+	var size: int = Career.team_size_for_league(idx)
+	var player_team: Array = Roster.monsters.slice(0, mini(size, Roster.monsters.size()))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_
+	var base_seed: int = Career.cup_field_seed(idx)
+	var wins := 0
+	## ⚠️ THE MIRROR MUST DRAW THE SAME KIND OF TEAM, NOT JUST THE SAME STRENGTH. A cup round now
+	## carries an ARCHETYPE (`Career.make_cup_field`), the rival is BUILT to it, and it fights with
+	## its own plan and orders. Re-deriving the field here from `field_fill()` alone rebuilt every
+	## round as a generic team fighting no plan — and `_check_cup_mirror()` caught it immediately
+	## (2 wins vs 1), which is exactly the job it was written for. Take the archetype from the real
+	## drawn field rather than recomputing the draw rule, so there is one source of the pairing.
+	var drawn: Array = Career.make_cup_field(idx, rounds)
+	for r in range(rounds):
+		var fill: float = clampf(Career.field_fill(r, rounds, idx) * mult, 0.05, 0.98)
+		var gid: String = String(drawn[r].get("archetype", "")) if r < drawn.size() else ""
+		var rivals: Array = drawn[r]["team"] if (r < drawn.size() and is_equal_approx(mult, 1.0)) \
+			else Career.make_league_rivals(size, idx, fill,
+				abs(base_seed + r * 7919) % 2147483647, gid)
+		for m in player_team:
+			m.reset_for_battle()   # exactly what the real path resets, and nothing more
+		for m in rivals:
+			m.reset_for_battle()
+		var plan_b: Dictionary = TacticsScript.team_plan_for_gameplan(gid, player_team) if gid != "" else {}
+		var orders: Dictionary = TacticsScript.orders_for_gameplan(gid, rivals) if gid != "" else {}
+		var sim = BattleSimScript.new(player_team, rivals, rng.randi(), {}, plan_b, orders)
+		if str(sim.run().get("winner", "")) == "A":
+			wins += 1
+	return Career.apply_tournament_outcome(idx, wins, rounds)
+
+
+## ⚠️ THE PERTURBATION HARNESS MUST AGREE WITH THE THING IT PERTURBS. Same career state, same
+## seed, same league: the real `enter_league_tournament` and `_fight_cup_scaled(..., 1.0)` must
+## return the same win count. If they diverge, every sensitivity reading in section 6 is measuring
+## the mirror's own drift instead of the game's.
+func _check_cup_mirror() -> void:
+	var wins_real := 0
+	var wins_mirror := 0
+	for pass_ in range(2):
+		_reset_career()
+		var team: Array = _team_at_fill(Career.team_size_for_league(0),
+			Career.stat_cap_for_league(0), 0.55, 77)
+		for m in team:
+			m.id = Roster.next_slot_id()
+			Roster.monsters.append(m)
+		Career.week = 12
+		var rounds: int = _rounds_for(0)
+		if pass_ == 0:
+			wins_real = int(Career.enter_league_tournament(0, rounds, 909090).get("wins", -1))
+		else:
+			wins_mirror = int(_fight_cup_scaled(0, rounds, 909090, 1.0).get("wins", -2))
+	if wins_real != wins_mirror:
+		_instrument_ok = false
+		_notes.append("⚠️ the cup mirror DISAGREES with career.gd (%d wins vs %d) — section 6 is void"
+			% [wins_real, wins_mirror])
+	else:
+		print("  cup mirror agrees with career.gd at mult 1.0 (%d/%d wins)" % [wins_real, _rounds_for(0)])
+
+
+## Everything the dynasty owns — the barn AND the freezer. A founder on ice still carries the
+## line's potential, and reporting only the barn hid it.
+func _all_monsters() -> Array:
+	var out: Array = []
+	out.append_array(Roster.monsters)
+	out.append_array(Roster.frozen)
+	return out
+
+
+## Weeks until this monster stops being able to train at all (`week.gd:stage_info`, Retiree).
+func _weeks_left(mi) -> int:
+	return int(round(mi.lifespan_years * WeekLib.WEEKS_PER_YEAR)) - mi.age_weeks
+
+
+## THE ROSTER BRAIN — bench, freezer and dynasty, run once a week before the week is planned.
+## ⚠️ ORDER MATTERS AND IS THE PLAYER'S OWN: cover first (never preserve your only body), then
+## preserve the ageing, then breed off what is on ice. Returns a tally.
+func _manage_roster(opts: Dictionary) -> Dictionary:
+	var out := {"preserved": 0, "released": 0, "bred": 0, "breedGold": 0}
+	var team: int = Career.current_team_size()
+
+	# ── retirees first: a retired body occupies a barn slot and can do nothing with it ──
+	for mi in Roster.monsters.duplicate():
+		if not mi.retired:
+			continue
+		## ⚠️ GATED ON THE DYNASTY POLICY, and it was not at first — which quietly made the
+		## "no bench, no breeding" control preserve its retirees anyway, pay the same freezer rent
+		## as the dynasty run, and come out byte-identical. The harness correctly reported a dead
+		## input; the deadness was in this branch, not in the game. A stable that is not running a
+		## dynasty sells the retiree.
+		if bool(opts.get("preserve", true)) and Roster.frozen.size() < FREEZER_TARGET \
+				and int(mi.get_meta("children", 0)) < _breed_max_children():
+			if Roster.preserve(mi):
+				out["preserved"] += 1
+				continue
+		if Roster.release(mi):
+			Career.add_gold(int(round(_offer_price(mi) * _refund_frac())))
+			out["released"] += 1
+
+	# ── preserve an ageing champion WHILE IT IS STILL GOOD, if there is cover to field ──
+	# This is the decision `breeding_ui.gd` says the whole system exists to ask. It is only
+	# available to a stable that kept a bench, which is why BENCH_SIZE and FREEZER_TARGET are
+	# one policy and not two.
+	## ⚠️ NEVER OUT OF THE FIELDED TEAM. The first cut of this preserved the STRONGEST ageing
+	## monster the moment it entered its last stretch, and that is the one body the cup needs:
+	## the arc stalled a league lower than an autopilot with no dynasty at all. A player retires a
+	## veteran when the replacement is ready, not before. `_sort_roster_best_first` has already
+	## put the team sheet in order, so "not in the top `team`" is exactly "has been replaced".
+	if bool(opts.get("preserve", true)) and Roster.frozen.size() < FREEZER_TARGET:
+		_sort_roster_best_first()
+		var best = null
+		for i in range(Roster.monsters.size()):
+			if i < team:
+				continue   # still on the team sheet — it fights, it does not sit in a freezer
+			var mi = Roster.monsters[i]
+			if mi.retired or _weeks_left(mi) > PRESERVE_MARGIN_WEEKS:
+				continue
+			if best == null or _stat_total(mi) > _stat_total(best):
+				best = mi
+		if best != null and Roster.preserve(best):
+			out["preserved"] += 1
+
+	# ── breed, when the freezer holds a pair and gold is genuinely spare ──
+	if bool(opts.get("breed", true)) and Roster.breeding_stock().size() >= 2 and Career.gold >= BREED_GOLD_FLOOR:
+		if _try_breed() != null:
+			out["bred"] += 1
+			out["breedGold"] += _breed_cost()
+	return out
 
 
 func _report_arc(a: Dictionary) -> void:
@@ -633,9 +949,23 @@ func _report_arc(a: Dictionary) -> void:
 		int(a["trainWeeks"]), int(a["restWeeks"]), int(a["excursionWeeks"]), mweeks])
 	print("  weeks with NOTHING to train (every stat at the league ceiling): %d  (%.0f%% of all monster weeks)" % [
 		int(a["cappedWeeks"]), 100.0 * float(a["cappedWeeks"]) / maxf(1.0, float(mweeks))])
-	print("  roster churn:    %d recruited · %d retired · %d bred (best potential x%.2f)" % [
-		int(a["recruits"]), int(a["retirements"]), int(a["breeds"]), float(a["bestPotential"])])
+	print("  roster churn:    %d recruited · %d retired · %d preserved · %d released · %d bred" % [
+		int(a["recruits"]), int(a["retirements"]), int(a.get("preserves", 0)),
+		int(a.get("releases", 0)), int(a["breeds"])])
+	print("  the dynasty:     best potential x%.2f · best generation %d · %d on ice at the end · %dg of freezer rent" % [
+		float(a["bestPotential"]), int(a.get("bestGeneration", 1)),
+		int(a.get("frozen", 0)), int(a.get("rentPaid", 0))])
+	print("  bench:           %d monster-weeks spent outside the fielded team" % int(a.get("benchWeeks", 0)))
 	print("  recruit blocked by gold: %d times" % int(a["blockedRecruit"]))
+	print("  weeks ON THE ROAD: %d of %d (%.0f%%) — cup travel, ticked in full but never trained" % [
+		int(a.get("travelWeeks", 0)), int(a["weeks"]),
+		100.0 * float(a.get("travelWeeks", 0)) / maxf(1.0, float(a["weeks"]))])
+	print("  frontier cup UNENTERABLE for want of bodies: %d weeks of %d (%.0f%%) — the stable could" % [
+		int(a.get("frontierBlockedWeeks", 0)), int(a["weeks"]),
+		100.0 * float(a.get("frontierBlockedWeeks", 0)) / maxf(1.0, float(a["weeks"]))])
+	print("                   not field the league's team size and farmed the rung below instead.")
+	print("  ⚠️ WEEKS are booked to the FRONTIER league; CUPS are booked to the league ENTERED.")
+	print("     A row reading 'many weeks, no cups' is a stable stuck below its own frontier.")
 	print("  entry fees paid: %dg over %d cups (%.0f%% of all purse income) · %d cups refused for want of the fee" % [
 		int(a["feesPaid"]), int(a["cups"]),
 		100.0 * float(a["feesPaid"]) / maxf(1.0, float(_sum_field(rows, "goldIn"))),
@@ -645,6 +975,100 @@ func _report_arc(a: Dictionary) -> void:
 		int(a["decisions"]) * 4.0 / 60.0))
 	print("                   plus %d fights to watch (at 25s each, %.0f minutes)." % [
 		int(a["rounds"]), int(a["rounds"]) * 25.0 / 60.0])
+
+
+# =============================================================================
+# 6. SENSITIVITY — DOES THIS INSTRUMENT MOVE WHEN ITS INPUTS MOVE?
+# =============================================================================
+## ⚠️ THIS SECTION EXISTS BECAUSE THIS PROBE ONCE REPORTED BYTE-IDENTICAL RESULTS AFTER REAL
+## SYSTEM CHANGES AND THAT WAS READ AS STABILITY. It was not: the instrument had pinned the rival
+## count at 3 when leagues field 3/4/5, paid purses by win-fraction rather than by placement, and
+## charged no entry fee — so it was reporting confidently about a game nobody was playing. The
+## defence against repeating that is not more care, it is a MEASUREMENT: perturb every input that
+## should matter and require the arc to answer differently. An input that changes nothing is
+## either dead in the game or dead in this file, and both are findings.
+##
+## A perturbation that leaves the signature untouched FAILS the probe. That is deliberate — a
+## silent instrument is the expensive failure, a noisy one is a five-minute investigation.
+const SENS_WEEKS := 200
+const SENS_WEEKS_LONG := 400   ## long enough for a first retirement, i.e. for a freezer to exist
+
+## Weeks at which the dynasty first did anything on the FULL arc; 0 = never. Reported by
+## section 6 because "the knob is dead at 200 weeks" is only interpretable next to them.
+var _first_preserve_week := 0
+var _first_breed_week := 0
+
+func _run_sensitivity() -> void:
+	print("\n─── 6. SENSITIVITY (does the instrument move when its input moves?) ───")
+	print("  %d-week arcs. Each row perturbs ONE input; the signature must differ from control." % SENS_WEEKS)
+	var controls := {}
+	controls[SENS_WEEKS] = _run_arc(SENS_WEEKS)
+	print("  %-26s %-40s" % ["perturbation", "league / gold / cups / round wins / bred"])
+	print("  %-26s %-40s  (control, %dw)" % ["—", _sig(controls[SENS_WEEKS]), SENS_WEEKS])
+	## ⚠️ THE DYNASTY CASE NEEDS A LONGER ARC AND THAT IS ITSELF THE FINDING. Measured at 200
+	## weeks, breeding-on and breeding-off are BYTE-IDENTICAL — not because the harness is blind
+	## but because nothing has retired yet, so the freezer is empty and there is no stock to breed
+	## from. The whole generational half of the game is inert for the first four in-game years.
+	## It is tested at `SENS_WEEKS_LONG` so the knob can be shown to work at all; the 200-week
+	## null is reported next to it rather than hidden by the longer run.
+	var cases: Array = [
+		{"name": "rivals x0.85 (weaker)", "opts": {"rivalMult": 0.85}},
+		{"name": "rivals x1.15 (stronger)", "opts": {"rivalMult": 1.15}},
+		{"name": "entry fee waived", "opts": {"feeMult": 0.0}},
+		{"name": "entry fee x6", "opts": {"feeMult": 6.0}},
+		{"name": "optimiser training", "opts": {"policy": "optimiser"}},
+		{"name": "no bench/breed (200w)", "opts": {"breed": false}, "expectNull": true},
+		{"name": "no bench/breed (%dw)" % SENS_WEEKS_LONG, "opts": {"breed": false},
+			"weeks": SENS_WEEKS_LONG, "needsDynasty": true},
+	]
+	var dead: Array[String] = []
+	for c in cases:
+		var w: int = int(c.get("weeks", SENS_WEEKS))
+		if not controls.has(w):
+			controls[w] = _run_arc(w)
+			print("  %-26s %-40s  (control, %dw)" % ["—", _sig(controls[w]), w])
+		var r: Dictionary = _run_arc(w, c["opts"])
+		var sig: String = _sig(r)
+		var moved: bool = sig != _sig(controls[w])
+		## ⚠️ DEAD IS NOT THE SAME AS UNEXERCISED, AND CONFLATING THEM WOULD MAKE THIS HARNESS CRY
+		## WOLF. "Dead" means the input fired and changed nothing — an instrument fault, and the
+		## thing this section exists to catch. "Unexercised" means the control run never reached
+		## the state the input acts on (the dynasty needs a retirement, which needs a career that
+		## survives ~330 weeks); that is a finding about the GAME and must not be reported as a
+		## broken probe. The difference is measured off the control's own counters, not assumed.
+		var ctl: Dictionary = controls[w]
+		var unexercised: bool = bool(c.get("needsDynasty", false)) \
+			and int(ctl.get("preserves", 0)) + int(ctl.get("breeds", 0)) == 0
+		var verdict := "moved"
+		if not moved:
+			if bool(c.get("expectNull", false)):
+				verdict = "no change — EXPECTED, see note"
+			elif unexercised:
+				verdict = "NOT EXERCISED — the control never bred"
+			else:
+				verdict = "*** DEAD INPUT ***"
+		print("  %-26s %-40s  %s" % [str(c["name"]), sig, verdict])
+		if not moved and unexercised:
+			_notes.append("the dynasty knob could not be exercised at %dw — the control arc never "
+				% w + "reached a retirement, so nothing was ever preserved. Not an instrument "
+				+ "fault; it means the ladder now stalls before the generational half exists.")
+		if not moved and not bool(c.get("expectNull", false)) and not unexercised:
+			dead.append(str(c["name"]))
+	print("  ⚠️ the dynasty first acts at week %d (first preserve) / %d (first birth) of the full arc —" % [
+		_first_preserve_week, _first_breed_week])
+	print("     before that, breeding-on and breeding-off are the same game.")
+	if dead.is_empty():
+		print("  -> every input moves the arc. The instrument is live.")
+	else:
+		_instrument_ok = false
+		_notes.append("⚠️ DEAD INPUT(S): %s — the arc does not respond, so any conclusion drawn "
+			% ", ".join(dead) + "about them is unsupported. Fix before trusting section 1.")
+
+
+func _sig(a: Dictionary) -> String:
+	return "L%d / %dg / %d cups / %d wins / %d bred" % [
+		int(a["finalLeague"]), int(a["goldEnd"]), int(a["cups"]), int(a["roundWins"]),
+		int(a["breeds"])]
 
 
 # =============================================================================
@@ -674,6 +1098,12 @@ func _run_grind() -> void:
 		fees += _entry_fee(0)
 		Career.spend_gold(_entry_fee(0))
 		var out: Dictionary = Career.enter_league_tournament(0, rounds0, 4242 + i)
+		## ⚠️ AND THE TRIP. `Career.enter_league_tournament` is the HEADLESS path and does not
+		## charge it; `CupRun.travel()` does, on the live path, off the same public
+		## `weeks_for_cup()`. Mirroring it here is what makes this section measure the game the
+		## player plays — without it the probe would keep reporting "the clock moved 0 weeks"
+		## about a build where a cup costs one to two weeks of everything.
+		Career.advance_week(CupRun.weeks_for_cup(0, rounds0))
 		var got: int = _purse_paid(0, int(out.get("wins", 0)), rounds0)
 		gold_gained += got
 		Career.add_gold(got)
@@ -683,14 +1113,17 @@ func _run_grind() -> void:
 	print("    +%dg purse, -%dg fees = %+dg net; %d sweeps of %d; the clock moved %d weeks (gold %d -> %d)." % [
 		gold_gained, fees, gold_gained - fees, sweeps, attempts,
 		Career.week - week_before, gold_before, Career.gold])
-	## ⚠️ THE FEE IS A PRICE, NOT A CLOCK. Entry now costs gold, so grinding is no longer strictly
-	## free — but `Career.week` is STILL never touched on the cup path, so gold per week of GAME
-	## TIME remains unbounded for any player whose win rate clears the fee. The fee narrows the
-	## faucet; only spending a WEEK would close it. That is the outstanding pacing gap.
-	print("  -> a cup now costs %dg to enter at Wood (%dg at Apex) but STILL costs no week," % [
-		_base_fee(), _base_fee() + _fee_step() * (Career.leagues.size() - 1)])
-	print("     no stamina and no injury — `Career.week` is never touched on the cup path,")
-	print("     so gold per week of GAME TIME is still unbounded above the break-even win rate.")
+	## ⚠️ FINDING E2 IS NOW CLOSED, AND THIS IS THE LINE THAT PROVES IT. A cup costs BOTH a price
+	## and a clock: `CupRun.weeks_for_cup()` charges 1 week (2 for a five-team draw), spent
+	## through the real weekly tick, so gold per week of GAME TIME is finite for the first time
+	## and the weekly tick can no longer be skipped by the one activity the game is about.
+	var wk_moved: int = Career.week - week_before
+	print("  -> a cup costs %dg at Wood (%dg at Apex) AND %d week%s of game time; %d cups moved the" % [
+		_base_fee(), _base_fee() + _fee_step() * (Career.leagues.size() - 1),
+		CupRun.weeks_for_cup(0, rounds0), "" if CupRun.weeks_for_cup(0, rounds0) == 1 else "s",
+		attempts])
+	print("     clock %d weeks, so the faucet is now %.0fg per week of game time, not per click." % [
+		wk_moved, float(gold_gained - fees) / maxf(1.0, float(wk_moved))])
 
 	# what does a week actually cost to run?
 	var food_bill := 0
@@ -1003,7 +1436,9 @@ func _tie_rate(cap: float) -> int:
 			for stat in d["gains"]:
 				var base: float = float(d["gains"][stat])
 				if base > 0.0:
-					score += minf((base + roundi(base / 3.0) * 0.5) * WeekLib.stat_training_bonus(mi, stat),
+					# focus cost included, for the same reason `_drill_plan` includes it
+					score += minf((base + roundi(base / 3.0) * 0.5)
+							* WeekLib.stat_training_bonus(mi, stat) * WeekLib.focus_cost(mi, stat),
 						maxf(0.0, cap - float(mi.stats.get(stat, 0.0))))
 				else:
 					score += base * WeekLib.stat_malus_multiplier(mi, stat)

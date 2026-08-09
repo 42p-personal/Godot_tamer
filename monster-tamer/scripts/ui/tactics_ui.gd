@@ -47,8 +47,16 @@ func _ready() -> void:
 	else:
 		team_a = Roster.monsters.slice(0, mini(TEAM_SIZE, Roster.monsters.size()))
 		team_b = Roster.make_rival_team(team_a.size(), 0.3)
-	gameplan_id = TacticsScript.gameplan_for(team_b.map(func(m): return m.species_name))
-	team_b_plan = TacticsScript.team_plan_for_gameplan(gameplan_id)
+	## ⚠️ THE CUP'S OWN ARCHETYPE WINS OVER THE SPECIES HASH. `gameplan_for()` derives a plan from
+	## the opposing species NAMES — fine for a standalone demo pair, wrong for a drawn cup round,
+	## where the team was BUILT to a class pattern by `Career.make_cup_field()`. Deriving it again
+	## here would field a focus-fire roster fighting a wall's plan, which is precisely the "the
+	## scouting line is a lie" failure the archetypes exist to end.
+	var entry: Dictionary = _cup.current_round_entry() if (_cup != null and _cup.active) else {}
+	gameplan_id = String(entry.get("archetype", ""))
+	if gameplan_id == "":
+		gameplan_id = TacticsScript.gameplan_for(team_b.map(func(m): return m.species_name))
+	team_b_plan = TacticsScript.team_plan_for_gameplan(gameplan_id, team_a)
 	orders_b = TacticsScript.orders_for_gameplan(gameplan_id, team_b)
 
 	_build_ui()

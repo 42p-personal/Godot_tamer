@@ -5,6 +5,8 @@
 ## varied starting stable so the stable screen has something real to look at immediately.
 extends Node
 
+const TacticsScript = preload("res://scripts/tactics.gd")
+
 var monsters: Array = []  # Array[MonsterInstance]
 var selected_index: int = 0
 
@@ -193,7 +195,12 @@ func reset_to_empty() -> void:
 ## 0.6 it always silently applied — see the note there. A caller whose `avg_training_level` is a
 ## literal chosen by feel (0.2/0.3/0.45) wants the default; a caller whose number is a FRACTION OF
 ## THE LEAGUE CEILING (`career.gd:field_fill`) must pass 1.0 or its arc is compressed by 1.66x.
-func make_rival_team(size: int, avg_training_level: float, room_mult: float = 0.6) -> Array:
+## ⚠️ `archetype` IS THE ANSWER TO "THE CHAMPION IS A STRONGER TEAM, NOT A DIFFERENT KIND OF
+## TEAM" (integrator verdict, 2026-08-09). Empty (the default, and every pre-existing call site)
+## is the untouched generator: random painted species at a fill level, which is what every rival
+## in the game was. A non-empty id is a `Tactics.GAMEPLANS` key, and the team is BUILT to that
+## archetype's class pattern instead of rolled — see `_shape_to_class()`.
+func make_rival_team(size: int, avg_training_level: float, room_mult: float = 0.6, archetype: String = "") -> Array:
 	var used_ids := {}
 	for m in monsters:
 		used_ids[m.species_id] = true
@@ -208,8 +215,144 @@ func make_rival_team(size: int, avg_training_level: float, room_mult: float = 0.
 		var tmp = pool[i]
 		pool[i] = pool[j]
 		pool[j] = tmp
+	var classes: Array = TacticsScript.archetype_classes(archetype, size) if archetype != "" else []
+	## ⚠️ THE FILL CORRECTION IS APPLIED HERE, NOT AT THE CALL SITE, AND THAT IS THE POINT.
+	## `career.gd` owns exactly one difficulty dial and its meaning is "this fraction of the
+	## league's ceiling is this hard". An archetype table with a 3.3x strength spread across its
+	## kinds would silently break that promise at every call site that ever asks for one. Corrected
+	## at the generator, `field_fill(r, n, l)` keeps meaning the same thing for every kind of team,
+	## and career.gd needs no knowledge of archetypes at all to stay honest. See `Tactics.FILL_MULT`.
+	var level: float = TacticsScript.archetype_fill(archetype, avg_training_level) if archetype != "" else avg_training_level
 	var team: Array = []
 	for i in range(size):
-		var t: float = clampf(avg_training_level + rng.randf_range(-0.1, 0.1), 0.0, 1.0)
-		team.append(GameData.make_monster(pool[i % pool.size()], t, rng, room_mult))
+		var t: float = clampf(level + rng.randf_range(-0.1, 0.1), 0.0, 1.0)
+		if classes.is_empty():
+			team.append(GameData.make_monster(pool[i % pool.size()], t, rng, room_mult))
+			continue
+		# ARCHETYPE PATH: the SPECIES is chosen to suit the slot's class (so the creature the
+		# player sees still looks like the thing it fights as), then the stats are shaped onto it.
+		var want: String = str(classes[i])
+		var pick_i: int = _best_species_for_class(pool, want)
+		var species_id: String = str(pool[pick_i])
+		if pool.size() > size:
+			pool.remove_at(pick_i)   # no duplicate bodies while there are spares to draw from
+		var mi = GameData.make_monster(species_id, t, rng, room_mult)
+		_shape_to_class(mi, want, rng)
+		team.append(mi)
 	return team
+
+
+# ── ARCHETYPE CONSTRUCTION ───────────────────────────────────────────────────────────────────
+# ⚠️ THIS IS THE ONLY PLACE A RIVAL TEAM ACQUIRES A SHAPE, AND IT HAS TO BE THIS PLACE.
+# Class is EMERGENT from the two highest stats (`classify.gd`) and class picks the ability LINES
+# a kit draws from (`data.json:classLines`) — so the only honest way to build "a control team" is
+# to build monsters whose stats make them controllers, and let the existing draft do the rest.
+# Handing a rival a hand-picked movelist instead would have been a second, parallel kit system
+# that the loadout rules, the learn-level gates and the heirloom slot all know nothing about.
+
+## Weights the six stats are re-spread onto, MEAN 1.0 — so the shape is a redistribution, never a
+## power-up. ⚠️ SUM-PRESERVING IS THE WHOLE DISCIPLINE HERE: `career.gd:field_fill()` is the one
+## and only dial that says how strong a cup's round is, and an archetype that quietly added stat
+## points would have made every measurement taken against that curve wrong. The permutation step
+## in `_shape_to_class()` preserves the total EXACTLY; only the ceiling clamp can move it, and
+## only downward.
+const SHAPE_PRIMARY := 1.35
+const SHAPE_SECONDARY := 1.15
+const SHAPE_REST := 0.875   # 1.35 + 1.15 + 4 x 0.875 == 6.0
+## Strict separation between adjacent ranks, so `Classify._top_two()` can never fall through to
+## its declaration-order tie-break and hand a whole archetype the wrong class. At the top of the
+## ladder every stat crowds the league ceiling and exact ties are a real possibility.
+const SHAPE_EPSILON := 0.5
+
+
+## Index into `pool` of the species whose BASE stats best suit `want`'s stat pair. Deterministic
+## (no rng), ties keep the earlier entry — the cup field must be reproducible from its seed.
+func _best_species_for_class(pool: Array, want: String) -> int:
+	var pair: Array = _class_pair(want)
+	if pair.is_empty():
+		return 0
+	var best_i := 0
+	var best_s := -INF
+	for i in range(pool.size()):
+		var sp: Dictionary = GameData.species_by_id.get(str(pool[i]), {})
+		var base: Dictionary = sp.get("base", {})
+		if base.is_empty():
+			continue
+		var mean := 0.0
+		for st in Classify.STATS:
+			mean += float(base.get(st, 10.0))
+		mean /= float(Classify.STATS.size())
+		# How far ABOVE its own average this species already sits on the two stats the class wants.
+		var s: float = (float(base.get(pair[0], 10.0)) - mean) + 0.6 * (float(base.get(pair[1], 10.0)) - mean)
+		if s > best_s:
+			best_s = s
+			best_i = i
+	return best_i
+
+
+## [primary, secondary] for a class name, straight off `data.json:classes` — never hardcoded here,
+## because `classify.gd` is contracted maths and this must not become a second copy of its table.
+func _class_pair(class_name_: String) -> Array:
+	for c in GameData.classes:
+		if str(c.get("name", "")) == class_name_:
+			return [str(c.get("primary", "STR")), str(c.get("secondary", "CON"))]
+	return []
+
+
+## Re-spread a generated monster's stats so it emerges as `want`, then re-derive everything
+## downstream of stats (class, pools, kit). Sum-preserving; see the constants above.
+func _shape_to_class(mi, want: String, rng: RandomNumberGenerator) -> void:
+	var pair: Array = _class_pair(want)
+	if pair.is_empty() or mi == null:
+		return
+	var cap: float = GameData.stat_cap()
+	var total := 0.0
+	for st in Classify.STATS:
+		total += float(mi.stats.get(st, 0.0))
+	var mean: float = total / float(Classify.STATS.size())
+
+	# 1. WIDEN: pull the spread onto the archetype's axis, at the same mean.
+	var widened: Array = []
+	for st in Classify.STATS:
+		var w: float = SHAPE_REST
+		if st == pair[0]:
+			w = SHAPE_PRIMARY
+		elif st == pair[1]:
+			w = SHAPE_SECONDARY
+		widened.append(clampf(mean * w, 1.0, cap))
+
+	# 2. PERMUTE: rank the achieved values and hand them out primary-first. A permutation of the
+	# same six numbers cannot change the total, cannot break the cap, and GUARANTEES the class —
+	# which the widening on its own does not, because near the league ceiling every stat clamps to
+	# the same number and the shape flattens out. (Measured at fill 0.95: the widened primary
+	# wants ~1.8x the cap, so all six clamp equal and every archetype came out the same class.)
+	widened.sort()
+	widened.reverse()
+	var order: Array = [pair[0], pair[1]]
+	for st in Classify.STATS:
+		if not order.has(st):
+			order.append(st)
+	var out := {}
+	for i in range(order.size()):
+		out[order[i]] = float(widened[i])
+
+	# 3. SEPARATE: strictly decreasing by at least SHAPE_EPSILON, so no tie-break can reorder the
+	# top two. Value is moved DOWN the ranking (or shaved at the ceiling) — never invented.
+	for i in range(order.size() - 1):
+		var hi: float = out[order[i]]
+		var lo: float = out[order[i + 1]]
+		if hi - lo >= SHAPE_EPSILON:
+			continue
+		var need: float = SHAPE_EPSILON - (hi - lo)
+		var room: float = maxf(0.0, cap - hi)
+		var lift: float = minf(need * 0.5, room)
+		out[order[i]] = hi + lift
+		out[order[i + 1]] = maxf(1.0, lo - (need - lift))
+
+	for st in Classify.STATS:
+		mi.stats[st] = out[st]
+	mi.recompute_class()
+	mi.recompute_pools()
+	mi.assign_moveset(rng)   # the kit is drawn from the NEW class's lines — see monster_instance.gd
+	mi.hp = mi.max_hp
+	mi.mp = mi.max_mp

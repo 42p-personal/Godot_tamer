@@ -24,7 +24,14 @@ const FOCUS_COLOR := Color(0.40, 0.85, 1.0)
 ## slice.
 const FALLBACK_BARN_CAPACITY := 2
 const OFFER_COUNT := 4
-const RELEASE_REFUND_FRAC := 0.35
+
+## ⚠️ THE OFFER RULES AND THE PRICE FORMULA MOVED TO `roster.gd` AND MUST NOT COME BACK HERE.
+## Three things buy monsters and only one of them is a screen: this UI, the career autopilot
+## (`_probe_career_arc.gd`) and `_probe_recruit.gd`. While the rules lived in this file the other
+## two carried hand-copied mirrors of them — see the long note above `Roster.market_offers()` for
+## the measurement that came out of that and the graded market that replaced it.
+const RosterLib = preload("res://scripts/roster.gd")
+const RELEASE_REFUND_FRAC := RosterLib.RELEASE_REFUND_FRAC
 
 var accent: Color
 var gold_label: Label
@@ -91,7 +98,7 @@ func _build_ui() -> void:
 	title_col.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "A simplified recruiting desk — the full monthly stock, scouting and coach system is still TypeScript-only."
+	subtitle.text = "Prospects are cheap, raw and keep their full ceiling. Veterans can play today — and never train past it. Choose which season you are buying for."
 	subtitle.add_theme_color_override("font_color", Color(0.65, 0.65, 0.7))
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD
 	title_col.add_child(subtitle)
@@ -171,46 +178,18 @@ func _refresh() -> void:
 	_refresh_gold()
 
 
-## Deterministic per-week stock: same seed until `Career.week` changes, drawn from the species
-## the player doesn't already own so a recruit trip introduces something new to look at (mirrors
-## `roster.gd:make_rival_team`'s own fallback — if owning most of the painted set leaves too few
-## unowned species, top up from the full painted pool rather than running dry).
+## Deterministic per-week stock — one call, because the rules live in `roster.gd` now.
 func _generate_offers() -> void:
 	offers.clear()
-	var owned := {}
-	for m in Roster.monsters:
-		owned[m.species_id] = true
-	var pool: Array = Art.ROSTER.filter(func(id): return not owned.has(id))
-	if pool.size() < OFFER_COUNT:
-		pool = Art.ROSTER.duplicate()
-
-	var rng := RandomNumberGenerator.new()
 	var week := (Career.week if has_node("/root/Career") else 1)
-	rng.seed = week * 104729  # a large prime so consecutive weeks don't alias into similar shuffles
-
-	for i in range(pool.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp
-
-	var n := mini(OFFER_COUNT, pool.size())
-	for i in range(n):
-		var t := rng.randf_range(0.05, 0.5)
-		var mi = GameData.make_monster(pool[i], t, rng)
-		if mi == null:
-			continue
-		offers.append({"id": pool[i], "mi": mi, "price": _estimate_value(mi)})
+	for o in Roster.market_offers(week, OFFER_COUNT):
+		o["id"] = o["mi"].species_id
+		offers.append(o)
 
 
-## Price/refund basis shared by both sides of this screen — reads directly off the monster's own
-## generated stats relative to the current league cap, so the number on the button is explained by
-## something the player can see (the portrait, class, stats), not an opaque roll.
+## Price/refund basis shared by both sides of this screen. Delegates — see the ⚠️ at the top.
 func _estimate_value(mi) -> int:
-	var cap: float = GameData.stat_cap()
-	var total := 0.0
-	for stat in Classify.STATS:
-		total += float(mi.stats.get(stat, 0.0))
-	var frac: float = clampf(total / maxf(1.0, cap * Classify.STATS.size()), 0.0, 1.0)
-	return int(round(120.0 + frac * 520.0))
+	return Roster.market_price(mi)
 
 
 func _render_offers() -> void:
@@ -243,8 +222,18 @@ func _offer_row(o: Dictionary, stable_full: bool) -> PanelContainer:
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hbox.add_child(col)
-	_row(col, mi.species_name, 15, Color(0.9, 0.9, 0.93))
+	_row(col, "%s — %s" % [mi.species_name, str(o.get("label", ""))], 15, _grade_colour(str(o.get("grade", ""))))
 	_row(col, "%s · %s" % [mi.body, mi.class_name_], 12, Color(0.65, 0.65, 0.7))
+	# ⚠️ THE TRADE-OFF HAS TO BE ON THE CARD OR IT IS NOT A DECISION, IT IS A SURPRISE.
+	# A Veteran is the FAST, EXPENSIVE, CEILING-LIMITED answer and a Prospect is the SLOW, CHEAP,
+	# HIGH-CEILING one — but `potential` silently multiplies the league cap in `week.gd`, and an
+	# invisible ceiling is exactly the kind of authored-but-unreadable rule this project keeps
+	# finding. So the card states, in the player's own units: what it is worth NOW (mean stat),
+	# what it can ever become (ceiling = league cap x potential), and how much of its career is
+	# already spent.
+	_row(col, "now %d/stat · ceiling %d (×%.2f) · %s" % [
+		int(round(_mean_stat(mi))), int(round(GameData.stat_cap() * mi.potential)),
+		mi.potential, _age_phrase(mi)], 12, _grade_colour(str(o.get("grade", ""))))
 	# The one-line flavour is the recruit pitch; the full bestiary story lives on the stable
 	# detail once the monster is yours.
 	var pitch := Label.new()
@@ -294,6 +283,31 @@ func _on_buy(o: Dictionary) -> void:
 	_render_offers()
 	_render_release()
 	_refresh_gold()
+
+
+## Grade colour, so the three kinds are separable at a glance and not only by reading.
+## ⚠️ Hue is a SECOND channel here, never the only one — the grade is spelled out in the title
+## row as well (docs/ACCESSIBILITY.md: never encode meaning in colour alone).
+func _grade_colour(grade: String) -> Color:
+	match grade:
+		"veteran": return Color(0.92, 0.66, 0.40)
+		"journeyman": return Color(0.72, 0.82, 0.95)
+		_: return Color(0.62, 0.86, 0.66)
+
+
+func _mean_stat(mi) -> float:
+	var t := 0.0
+	for s in Classify.STATS:
+		t += float(mi.stats.get(s, 0.0))
+	return t / float(Classify.STATS.size())
+
+
+## How much of this body's career is already behind it, said in years rather than in weeks —
+## a number the stable screen also speaks.
+func _age_phrase(mi) -> String:
+	var span: float = maxf(1.0, mi.lifespan_years * 48.0)
+	var left: int = int(round((span - float(mi.age_weeks)) / 48.0))
+	return "%dy left of %dy" % [maxi(0, left), int(round(mi.lifespan_years))]
 
 
 func _render_release() -> void:

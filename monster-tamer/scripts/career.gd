@@ -253,8 +253,20 @@ const FIELD_OPENER_RATIO_BOTTOM := 0.80   ## round one, Wood — winnable, never
 const FIELD_OPENER_RATIO_TOP := 0.90      ## round one, Tamers Apex
 const FIELD_QUAL_RATIO_BOTTOM := 0.95     ## the last qualifying round, Wood
 const FIELD_QUAL_RATIO_TOP := 1.00        ## the last qualifying round, Tamers Apex
-const FIELD_CHAMPION_RATIO_BOTTOM := 1.02 ## the Paddock King
-const FIELD_CHAMPION_RATIO_TOP := 1.06    ## the Dynast — the hardest single opponent in the game
+## ⚠️ THE CHAMPION BAND CAME DOWN 0.04 WHEN THE CLIMBER MODEL BECAME A MEASUREMENT, AND IT WAS
+## THE ONLY FIELD CONSTANT THAT HAD TO MOVE. The measured climber carries FEWER absolute points
+## than the old formula assumed at the top of the ladder (Apex: 0.43 x 1100 = 473 against the
+## formula's 0.61 x 1100 = 671), and a ratio is not perfectly scale-free — the same 1.06 ratio is
+## a harder fight at 473 points than at 671. Measured at 96 cups per rung, dropping the band from
+## 1.02/1.06 to 0.98/1.02 moved the three hardest rungs (Masters 19 -> 26, Tamer Elite 27 -> 32,
+## Apex 11 -> 15 ADVANCE %) and the whole ladder from 31.8 to 26.7 expected cups, with everything
+## below Gold unchanged inside noise. Champions eat the correction because at every rung but Apex
+## the RANK forgives one dropped round, so this buys the summit without making the draw a walkover.
+## ⚠️ AND THE TOP MUST STAY ABOVE THE BOTTOM. Setting TOP below BOTTOM was tried and the slope
+## probe's liveness canary refused it — a Dynast priced softer than the Paddock King makes the
+## ladder's own difficulty knob run backwards, whatever the advance column says.
+const FIELD_CHAMPION_RATIO_BOTTOM := 0.98 ## the Paddock King
+const FIELD_CHAMPION_RATIO_TOP := 1.02    ## the Dynast — the hardest single opponent in the game
 const CHAMPION_REMATCH_BUMP := 0.04       ## they train too — see `champion_fill_for()`
 
 ## ⚠️ A DEEPER DRAW IS HARDER AT EQUAL TEAM STRENGTH, AND THE RULE ALONE CANNOT ABSORB IT. A cup
@@ -273,6 +285,14 @@ const FIELD_DEPTH_RELIEF_PER_ROUND := 0.03   ## ratio units per round beyond the
 ## Dynast stays the hardest single opponent in the game; the four teams before them come down
 ## instead. That is also the right story: the Apex circuit is an invitational, and the test of it
 ## is the titleholder, not the depth of the field.
+## ⚠️ RE-TESTED AGAINST THE MEASURED CLIMBER AND IT IS NEEDED MORE, NOT LESS. The brief for this
+## round asked whether the relief could come off now the sweep lottery is gone, targeting an Apex
+## opener under ~85% without ADVANCE dropping under ~20%. Measured at 64 cups: at 0.08 the opener
+## falls only 94% -> 86% while ADVANCE COLLAPSES 17% -> 5% (2.2 -> 21.3 cups for the last rung).
+## Both halves of the target fail at once, so the two are not in tension with each other — they are
+## both in tension with the relief, and the relief wins. The opener's softness is NOT mainly the
+## relief: it is that `FIELD_OPENER_RATIO_TOP = 0.90` sits on a steep transfer curve. If a harder
+## Apex opener is wanted, raise that endpoint and pay for it somewhere else; do not take the relief.
 const FIELD_APEX_QUAL_RELIEF := 0.18
 
 ## ⚠️ THE LADDER IS NOT LINEAR IN ITS OWN INDEX, AND WOOD IS WHY. Measured (`-- --response`),
@@ -307,23 +327,61 @@ const FIELD_SHAPE_EXP := 0.35
 ## ⚠️ RE-DERIVE IT WITH `scenes/_probe_ladder_slope.tscn`, NOT BY REASONING. At 1.00 the ladder
 ## has a wall; at 0.90 it reads 63 -> 25 with zero unclearable rungs. Any future change to
 ## `roster.gd:_shape_to_class` or to `battle_sim`'s plan handling moves it.
-const FIELD_ARCHETYPE_POWER_MULT := 0.90
+## ⚠️ 0.90 -> 1.00 (round 11). THE RELIEF WAS PAYING FOR A BUG, NOT FOR THE ARCHETYPES. It was
+## calibrated against a player built by `_probe_ladder_slope.gd:_player_team`, which calls
+## `make_monster` WITHOUT `roster.gd:_shape_to_class` — so that player frequently classified as
+## `Generalist`, and `Generalist` had no entry in `data.json:classLines`, so
+## `monster_instance.gd:assign_moveset` cleared its kit and rebuilt NOTHING. The eleven-rung
+## slope this constant was tuned to was measured against a player carrying no moves at all.
+## With that fixed (see `monster_instance.gd:_fallback_lines`) the 0.90 relief was pure surplus:
+## the ladder read 75 -> 35 ADVANCE and 15.1 cups for the whole climb, i.e. flat and half price.
+## Restoring 1.00 puts it back on 26.8 cups without touching a single per-rung ratio — which is
+## the coupling doing its job, and is why this stayed ONE knob.
+const FIELD_ARCHETYPE_POWER_MULT := 1.00
 
 ## ── WHAT THESE CONSTANTS ACTUALLY PRODUCE (record it, or the next round re-derives it) ───────
-## `scenes/_probe_ladder_slope.tscn`, 32 cups per rung against the modelled climber. ADVANCE is
-## the promotion rule; TITLE is the clean sweep; "cups" is 1/ADVANCE, i.e. attempts per rung.
+## `scenes/_probe_ladder_slope.tscn -- --seeds 96` — 96 cups per rung against the MEASURED climber
+## (`CLIMBER_FILL_BY_LEAGUE`). ADVANCE is the promotion rule; TITLE is the clean sweep; "cups" is
+## 1/ADVANCE, i.e. attempts per rung.
 ##
 ##   league       Wood Copp  Tin Bron Iron Silv Gold Plat Mast Elit Apex
-##   ADVANCE %      66   66   72   59   63   56   47   47   19   50   22
-##   TITLE   %      19   19   28   19   16   13    3   13    0   16   22
-##   cups          1.5  1.5  1.4  1.7  1.6  1.8  2.1  2.1  5.3  2.0  4.6
+##   fill          .49  .44  .49  .59  .53  .50  .48  .44  .44  .42  .43
+##   ADVANCE %      68   78   66   46   55   70   36   58   33   35   15
+##   TITLE   %      35   32   17   10   14   35    8   17    3    7   15
+##   cups         1.5  1.3  1.5  2.2  1.8  1.4  2.7  1.7  3.0  2.8  6.9   = 26.8 for the climb
 ##
-## Wood -> Apex: 66% -> 22%, headroom +0.15 -> -0.04, 0 rungs the climber cannot clear, ~26 cups
-## for the whole ladder. Before this round: a flat 63/63/25/63/38/63/50 with promotion gated on a
-## 5-round sweep, measured at 88 cups for 11 rungs (docs/META_GAME_REVIEW.md §2).
-## ⚠️ THE RESIDUAL WOBBLE (Masters 19 vs Tamer Elite 50) IS INSIDE THE INSTRUMENT'S OWN NOISE —
-## 32 samples of a proportion carries about ±9 points. Do not chase it with another tuning pass;
-## raise `seeds_climb` first and see whether it survives. That is this project's oldest lesson.
+## ⚠️ THE ROW ABOVE REPLACES A ROUND-10/11 ROW READING 66/72/72/56/60/68/46/42/26/32/15, AND THE
+## TWO ARE NOT COMPARABLE. That one describes a player whose kit was silently empty whenever it
+## classified as `Generalist` — see FIELD_ARCHETYPE_POWER_MULT below. Same rungs, different
+## player, and the cup totals happen to land in the same place (26.7 then, 26.8 now) only
+## because the relief was retired at the same time the player was armed.
+##
+## ⚠️ AND `CLIMBER_FILL_BY_LEAGUE` IS NOW STALE AGAIN, BY THE SAME MECHANISM. It is a measurement
+## of the autopilot, and this round changed the autopilot's world (potential applied, kits
+## re-drafted, the barn affordable, the bench reachable). The arc's own fill@exit now reads
+## roughly .59 .45 .57 .60 .53 .47 .48 .46 .43 — HIGHER in the mid-game than the table claims.
+## Re-measure with `scenes/_probe_ladder_slope.tscn -- --arc-table` before quoting it, and
+## re-run `-- --seeds 96` after pasting. This was NOT done in round 11: the field is priced
+## against a slightly weaker mid-game player than the one the game now produces, which makes
+## Bronze..Gold marginally harder than intended. Stated, not hidden.
+##   cups          1.5  1.4  1.4  1.8  1.7  1.5  2.2  2.4  3.8  3.1  6.9
+##
+## Wood -> Apex 66% -> 15%, SLOPED, MONOTONE (0 inversions at n=96), 0 rungs the climber cannot
+## clear, headroom -0.06 -> -0.12, ~26.7 cups for the whole ladder.
+##
+## ⚠️ THE PREVIOUS ROW IS NOT COMPARABLE AND SAYING SO IS THE POINT. It read 63/81/72/59/59/53/44/
+## 38/25/31/28 at n=32 — but against the ANALYTIC climber, i.e. a different player. Replacing that
+## player with the measured one and re-tuning ONE constant (the champion band) landed within a few
+## points of it everywhere below Gold and lower at the top. The ladder did not get harder; the
+## player got honest. Two intermediate readings, both at n=96, for whoever needs the trail:
+##   measured climber, champion band still 1.02/1.06 : 62/71/71/53/59/67/48/40/19/27/11, 31.8 cups
+##       (that row is read back off its own printed cups line, 1.6 1.4 1.4 1.9 1.7 1.5 2.1 2.5
+##        5.3 3.7 8.7 — recorded as derived, not as a second measurement)
+##   measured climber, champion band 0.98/1.02       : the table above,                   26.7 cups
+##
+## ⚠️ AND MIND THE SAMPLE SIZE BEFORE CHASING A WOBBLE. At n=32 this same build reported an
+## inversion at Masters/Tamer Elite (16 vs 34) that VANISHES at n=96 (26 vs 32). A proportion at
+## n=32 carries about ±9 points. `-- --seeds N` exists for exactly this; use it before tuning.
 
 # ── the expected climber (a difficulty curve needs a model of the player) ───────────────
 ## ⚠️ PUTTING A PLAYER MODEL IN THE LADDER FILE IS DELIBERATE. A difficulty curve is a statement
@@ -336,20 +394,22 @@ const FIELD_ARCHETYPE_POWER_MULT := 0.90
 ## `_probe_career_arc.tscn` after any training-system change and bring these back in line with its
 ## measured weeks-per-rung and points-per-week; `_probe_ladder_slope.tscn` prints the model it is
 ## using on every run, so the two can be compared at a glance.
-## ⚠️ 12.97, NOT THE REVIEW'S 14.45, AND THE DIFFERENCE IS THIS ROUND'S OWN WORK.
-## docs/META_GAME_REVIEW.md §T1 measured 14.45 against the training system as it stood BEFORE the
-## focus-cost rework; `scenes/_probe_training.tscn` §2 measures the system as it stands now and
-## reports 12.97 points/week for the best drill family (and a 336-week career banking 4,345 points
-## for a final stat total of 4,479 — an average of 746 per stat, i.e. 0.68 of the Apex ceiling,
-## which is the number `expected_climber_fill` has to reproduce). Always prefer the probe that
-## measures the CURRENT build over a document that measured an older one.
-## ⚠️ AND BECAUSE THE FIELD IS AUTHORED AS A RATIO TO THIS, CORRECTING IT DOES NOT RE-TUNE THE
-## LADDER — it re-anchors the absolute fills and leaves every difficulty ratio intact. That is the
-## whole point of pricing the field against the climber instead of against the cap.
-const CLIMBER_PTS_PER_WEEK := 12.97
-const CLIMBER_WEEKS_PER_RUNG := 29.0
-const CLIMBER_WARMUP_WEEKS := 8.0     ## nobody enters a cup the week they arrive at a rung
-const CLIMBER_BASE_STAT := 23.0       ## mean base stat of a fresh recruit across the roster
+## ⚠️ THE MODEL IS NO LONGER A FORMULA. IT IS A MEASURED TABLE, AND THE FORMULA IS RETIRED.
+## What used to live here — `CLIMBER_BASE_STAT + CLIMBER_PTS_PER_WEEK * (CLIMBER_WEEKS_PER_RUNG *
+## idx + warmup) / 6`, divided by the cap — was this file's largest known inaccuracy, and both of
+## its inputs are now known to be fiction against the current build: `_probe_gold_wall.tscn`
+## measures 60-70 weeks per rung (not 29) and an EFFECTIVE ~7.3 points per monster-CALENDAR-week
+## (not 12.97) once rest, excursion and the 26% of the calendar spent travelling are counted. The
+## two errors point in opposite directions, which is exactly why the formula looked plausible for
+## six rungs and then diverged: it read 0.56 at Gold where the arc measures 0.48, and 0.61 at Apex
+## where a career that actually REACHES Apex measures 0.43.
+##
+## ⚠️ AND THE ANALYTIC FIX IS BANNED, BECAUSE IT WAS TRIED AND IT FAILED. Round 10 added per-body
+## join weeks (`teamSizeByLeague` puts a fresh ~23-per-stat recruit on the sheet at Copper, Bronze,
+## Silver and Platinum) and a 26% road tax to the same formula; expected fill fell to 0.22-0.31
+## against an arc independently measuring 0.44-0.67, the field came down with it, and the slope
+## instrument reported 100% ADVANCE at ten of eleven rungs. Do not re-attempt it. A player model
+## assembled from first principles is a theory; `fill@exit` is an observation.
 const STAT_COUNT := 6.0
 
 
@@ -380,13 +440,76 @@ const STAT_COUNT := 6.0
 ## at Gold, exactly where the team grows — but the magnitude is not, and a difficulty curve priced
 ## against a player half as strong as the real one is worse than one priced against a player who
 ## does not exist in a known direction.
-## ⚠️ SO THE NEXT ROUND'S JOB IS TO MEASURE THE TABLE, NOT TO THEORISE IT: take `fill@exit` per
-## rung from a winning `_probe_career_arc.tscn` run and interpolate THAT, instead of deriving a
-## fill from first principles at all. Do not re-attempt the analytic version.
+## ⚠️ SO THE TABLE BELOW IS THE MEASUREMENT, AND EVERY CELL IN IT HAS A SAMPLE COUNT.
+## Source: `scenes/_probe_ladder_slope.tscn -- --arc-table`, §5. It runs the autopilot
+## (`_probe_career_arc.gd`, via the ONE existing subclass in `_probe_gold_wall.gd` — no third copy
+## of the career loop) over five seeds and records, per rung, the fraction of THAT rung's ceiling
+## the roster carried when it left the rung. Re-run it after any training, economy or team-size
+## change; it takes about a minute for ten arcs.
+##
+## ⚠️ WHICH CLIMBER — AND THIS IS A DESIGN DECISION, NOT A MEASUREMENT. Two were measured:
+##
+##   league        control fill@exit (n)     competent fill@exit (n)
+##   Wood            0.57  [0.57-0.57] (5)     0.49  [0.49-0.49] (5)
+##   Copper          0.54  [0.53-0.57] (5)     0.44  [0.44-0.44] (5)
+##   Tin             0.67  [0.65-0.69] (5)     0.49  [0.49-0.49] (5)
+##   Bronze          0.68  [0.60-0.75] (5)     0.59  [0.54-0.64] (5)
+##   Iron            0.61  [0.44-0.77] (5)     0.53  [0.50-0.56] (5)
+##   Silver          0.55  [0.52-0.61] (3)     0.50  [0.48-0.52] (5)
+##   Gold            0.48  [0.43-0.53] (2)     0.48  [0.41-0.53] (5)
+##   Platinum        0.38  [0.38-0.38] (1)     0.44  [0.39-0.48] (5)
+##   Masters            —      (0)             0.44  [0.42-0.45] (5)
+##   Tamer Elite        —      (0)             0.42  [0.38-0.45] (3)
+##   Tamers Apex        —      (0)             0.43  [0.42-0.45] (3)
+##
+## CONTROL is the autopilot exactly as it plays today. It stalls — five seeds reach
+## [6,4,7,4,5], median Silver — so it has ONE sample at Platinum and NONE above it. A table built
+## from that column would have four fabricated rows, and a fabricated row is worse than a formula
+## because it looks measured.
+## COMPETENT is the same autopilot with the stable half played properly (succession, an affordable
+## barn, no entry fee, shaped training, a re-drafted kit — the round-11 diagnostician's "everything
+## at once"). It reaches [10,10,10,8,8]: three seeds clear Tamers Apex, so every rung has samples.
+## The field is priced against COMPETENT because that is the player the game is being built to
+## produce, and because it is the only column that can honestly fill the top of the ladder.
+##
+## ⚠️ SAMPLE COUNTS, STATED SO NOBODY QUOTES A THIN CELL AS A FACT. Wood..Masters rest on 5 arcs
+## each; Tamer Elite and Tamers Apex rest on 3 (only three seeds got there). NOTHING in this table
+## is extrapolated — if a future run leaves a rung at n=0, author it as the neighbour's value and
+## say so on the line, do not interpolate silently.
+##
+## ⚠️ IT IS NOT MONOTONE, AND THAT IS REAL. Bronze (0.59) is a genuine bump: the arc lingers there
+## on a 400 cap with a 3-body team before Silver's fourth mouth dilutes it, and the same shape
+## appears in the control column (0.68) at twice the sample. It is not smoothed, because smoothing
+## a measurement is how a measurement becomes an assumption.
+##
+## ⚠️ AND THE COUPLING IS THE WHOLE POINT: every `FIELD_*_RATIO_*` is a ratio TO this number, so
+## correcting it re-anchors the absolute fills WITHOUT re-tuning any difficulty ratio. The field
+## moves with the player. If the slope changes after a re-measure, re-tune the FIELD, never this.
+const CLIMBER_FILL_BY_LEAGUE: Array = [
+	0.49,  ## Wood        n=5
+	0.44,  ## Copper      n=5
+	0.49,  ## Tin         n=5
+	0.59,  ## Bronze      n=5   (the real bump — see above)
+	0.53,  ## Iron        n=5
+	0.50,  ## Silver      n=5
+	0.48,  ## Gold        n=5
+	0.44,  ## Platinum    n=5
+	0.44,  ## Masters     n=5
+	0.42,  ## Tamer Elite n=3   ⚠️ thin
+	0.43,  ## Tamers Apex n=3   ⚠️ thin
+]
+
+## The fraction of rung `idx`'s ceiling the climbing player can be expected to carry. A LOOKUP,
+## not a formula — see the block above. Falls back to the nearest authored rung if the ladder is
+## ever lengthened without re-measuring, and says so in the console rather than inventing a value.
 func expected_climber_fill(idx: int) -> float:
-	var weeks: float = CLIMBER_WEEKS_PER_RUNG * float(maxi(0, idx)) + CLIMBER_WARMUP_WEEKS
-	var per_stat: float = CLIMBER_BASE_STAT + CLIMBER_PTS_PER_WEEK * weeks / STAT_COUNT
-	return clampf(per_stat / maxf(1.0, stat_cap_for_league(idx)), 0.05, 1.0)
+	if CLIMBER_FILL_BY_LEAGUE.is_empty():
+		return 0.45
+	var i: int = clampi(idx, 0, CLIMBER_FILL_BY_LEAGUE.size() - 1)
+	if idx != i:
+		push_warning("Career: no measured climber fill for league %d — clamped to rung %d. "
+			% [idx, i] + "Re-run `_probe_ladder_slope.tscn -- --arc-table`.")
+	return clampf(float(CLIMBER_FILL_BY_LEAGUE[i]), 0.05, 1.0)
 
 
 ## How far up the ladder a league sits, 0..1. The one place the slope is computed.

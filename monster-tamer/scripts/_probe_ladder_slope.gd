@@ -22,19 +22,15 @@
 ## the same cap — the two cancel and every rung reads identical by construction. So the player
 ## model must be ABSOLUTE (points), not relative (fill), and the fill must fall out of it.
 ##
-## It does, from two measured numbers:
-##   * the best drill family yields **12.97 stat points per monster-week** (`_probe_training` §2,
-##     measured on THIS build — not META_GAME_REVIEW §T1's 14.45, which predates the focus rework)
-##   * the winning career took **319 weeks for 11 rungs ≈ 29 weeks per rung** (META_GAME_REVIEW §2)
-## A monster's stats are therefore roughly `base + 12.97 * (29 * L + warmup) / 6` per stat on
-## arriving at rung L — an ABSOLUTE budget growing LINEARLY — while the cap grows 100 → 1100.
-## Dividing gives the fill the player can actually have; the probe prints the whole row every run.
-##
-## ⚠️ AND THAT IS THE MODEL'S OWN VALIDATION, TWICE OVER: the arc probe's independently measured
-## `fill@exit` column reads 44/39/43/67/56/67/66/52/63/61/62, and `_probe_training` §1 measures a
-## full career banking 4,479 stat points — 746 per stat, 0.68 of the Apex ceiling. The model lands
-## on both without being fitted to either. It is printed on every run, because a difficulty number
-## quoted without its player model is meaningless.
+## ⚠️ AND IT IS NO LONGER DERIVED AT ALL — IT IS MEASURED. The model used to be an arithmetic
+## sketch (`base + 12.97 * (29 * L + warmup) / 6` per stat, divided by the cap). Both of its
+## inputs are now known to be fiction on this build: the arc spends 60-70 weeks per rung, not 29,
+## and banks ~7.3 effective points per monster-CALENDAR-week, not 12.97, once rest, excursion and
+## the 26% of the calendar spent travelling are counted. `career.gd:expected_climber_fill()` is
+## therefore a lookup into `CLIMBER_FILL_BY_LEAGUE`, a table of the autopilot's own `fill@exit` per
+## rung — and SECTION 5 OF THIS FILE (`-- --arc-table`) is what produces it. Measure it, paste it,
+## never reason it. The row is printed on every run, because a difficulty number quoted without its
+## player model is meaningless.
 ##
 ## ── THE TWO NUMBERS THIS PRINTS ──────────────────────────────────────────────────────────────
 ##   1. THE CLIMB     — at the modelled fill for THAT rung: opener/champion/round win rates, the
@@ -48,6 +44,12 @@
 ##                      constants are authored against, per rung. Never guess those constants.
 ##   4. WHICH PLAYER  — the same fill built two ways. The disagreement between this probe and the
 ##                      arc probe is ENTIRELY the player model, and it must stay visible.
+##   5. THE ARC TABLE — (`-- --arc-table`) runs the AUTOPILOT and measures the climber itself,
+##                      per rung, with sample counts. This is what authors `career.gd`'s
+##                      `CLIMBER_FILL_BY_LEAGUE`. Takes about a minute for ten careers.
+##
+## `-- --seeds N` raises the CLIMB sample from its default 32. A proportion at n=32 carries ±9
+## points and this file's verdict counts INVERSIONS, so it can manufacture one; raise N first.
 ##
 ## ── ⚠️ BEWARE THE INSTRUMENT (rule 9) ────────────────────────────────────────────────────────
 ## Last round an arc probe reported byte-identical numbers after real changes, and that was an
@@ -61,22 +63,22 @@ extends Node
 
 const BattleSimScript = preload("res://scripts/battle_sim.gd")
 const TacticsScript = preload("res://scripts/tactics.gd")
+## ⚠️ PRELOADED ONLY FOR ITS `ArcVariant` SUBCLASS — see `_run_arc_table()`. This probe does not
+## own `_probe_gold_wall.gd` and does not modify it; it reuses the ONE autopilot subclass that
+## already exists rather than growing a third copy of the career loop, which is this project's
+## most expensive recurring failure.
+const GoldWallScript = preload("res://scripts/_probe_gold_wall.gd")
 
-# ── the climbing-player model (see header) ───────────────────────────────────────────────────
-## ⚠️ MEASURED BY `scenes/_probe_training.tscn` §2 ON THIS BUILD (12.97 pts/week, best drill
-## family), NOT the 14.45 in META_GAME_REVIEW §T1 — that figure predates the focus-cost training
-## rework. `career.gd:CLIMBER_PTS_PER_WEEK` carries the same number; if the two ever disagree the
-## ladder is being tuned against a player the game does not produce.
-const PTS_PER_WEEK := 12.97
-const WEEKS_PER_RUNG := 29.0     ## measured: 319 weeks / 11 rungs (§2)
+# ── the climbing-player model ────────────────────────────────────────────────────────────────
+## ⚠️ THE `PTS_PER_WEEK` / `WEEKS_PER_RUNG` / `WARMUP_WEEKS` CONSTANTS THAT LIVED HERE ARE DELETED,
+## NOT UPDATED, AND THAT IS DELIBERATE. They described an ANALYTIC climber that `career.gd` no
+## longer computes: `expected_climber_fill()` is now a lookup into a measured table
+## (`CLIMBER_FILL_BY_LEAGUE`), produced by section 5 of this file. Leaving the old constants here
+## would have re-created the exact failure the header warns about — two models of the player,
+## agreeing only by hand, drifting apart the moment one of them changed. Both numbers were also
+## wrong: `_probe_gold_wall.tscn` measures 60-70 weeks per rung, not 29, and ~7.3 effective points
+## per monster-calendar-week once rest, excursion and the 26% road tax are counted, not 12.97.
 const STATS_PER_MONSTER := 6.0
-## ⚠️ NOBODY ENTERS A CUP THE WEEK THEY ARRIVE. Without this the model says a Wood player is at
-## 23% of the Wood ceiling — literally a monster straight off the market with no training at all —
-## and Wood then measures as the HARDEST rung on the ladder, which is a modelling artefact, not a
-## finding. Eight weeks is the arc probe's own cadence (a cup attempt every 4 weeks, and the arc
-## needed two attempts at the quick rungs). It also brings the model onto the arc's independently
-## measured Wood fill@exit of 0.44 (model: 0.42), which is the check that it is not made up.
-const WARMUP_WEEKS := 8.0
 
 # ── sampling ─────────────────────────────────────────────────────────────────────────────────
 var seeds_climb := 32            ## cup draws per league for the CLIMB table
@@ -94,6 +96,13 @@ func _ready() -> void:
 	if "--quick" in args:
 		seeds_climb = 8
 		seeds_thresh = 4
+	## ⚠️ `-- --seeds N` EXISTS BECAUSE THIS FILE'S OWN VERDICT LINE COUNTS INVERSIONS, AND AT
+	## n=32 a proportion carries about ±9 points — so the instrument can manufacture an inversion
+	## out of nothing and then report it as a finding. Raise the sample before believing one; that
+	## is the note already written against the Masters/Tamer Elite wobble, made runnable.
+	for i in range(args.size()):
+		if str(args[i]) == "--seeds" and i + 1 < args.size():
+			seeds_climb = maxi(4, int(str(args[i + 1])))
 	print("=== LADDER SLOPE PROBE ===")
 	_print_model()
 
@@ -103,6 +112,16 @@ func _ready() -> void:
 		return
 	if "--liveness" in args:
 		print("\n=== ladder slope probe (liveness only): OK ===")
+		_tree.quit(0)
+		return
+
+	## ⚠️ THE MODE THAT AUTHORS `career.gd:CLIMBER_FILL_*`. Everything else in this file MEASURES
+	## the ladder against the climber model; this one MEASURES THE CLIMBER. Run it, read the two
+	## tables it prints, paste them into `career.gd`. Never author that table by reasoning.
+	if "--arc-table" in args:
+		var seeds: int = 2 if "--quick" in args else 5
+		_run_arc_table(seeds)
+		print("=== ladder slope probe (arc table only): OK ===")
 		_tree.quit(0)
 		return
 
@@ -162,15 +181,15 @@ func climbing_fill(idx: int) -> float:
 
 func _print_model() -> void:
 	print("\n─── THE CLIMBING PLAYER (the assumption every number below rests on) ───")
-	print("  a monster gains %.2f stat points/week (measured, META_GAME_REVIEW T1) and the measured" % PTS_PER_WEEK)
-	print("  winning career spent %.0f weeks per rung, so its stat budget grows LINEARLY while the" % WEEKS_PER_RUNG)
-	print("  league cap grows 100 -> 1100. Fill is the QUOTIENT, not an input:")
+	print("  ⚠️ NO LONGER A FORMULA. `career.gd:CLIMBER_FILL_BY_LEAGUE` is a MEASURED table — the")
+	print("  autopilot's own fill@exit per rung, five arcs per cell (three at the top two rungs),")
+	print("  produced by this probe's `-- --arc-table` mode. Re-measure it, never re-reason it.")
 	print("  base stat of a fresh recruit: %.0f" % _base_avg())
 	var line := "  "
 	for idx in range(Career.leagues.size()):
 		line += "%s %.2f  " % [str(Career.league_at(idx).get("name", "?")).substr(0, 3), climbing_fill(idx)]
 	print(line)
-	print("  (arc probe's independently measured fill@exit: .44 .39 .43 .67 .56 .67 .66 .52 .63 .61 .62)")
+	print("  (this row IS the measurement — `Career.expected_climber_fill`, straight from the table)")
 
 
 ## A player team at `fill` of rung `idx`'s ceiling, built through the SAME generator the rivals
@@ -229,6 +248,103 @@ func _measured_fill(team: Array, cap: float) -> float:
 			s += float(m.stats[stat])
 		total += s / STATS_PER_MONSTER
 	return total / float(team.size()) / maxf(1.0, cap)
+
+
+# =============================================================================
+# 5. THE ARC TABLE — MEASURE the climber instead of modelling it
+# =============================================================================
+## ⚠️ THIS SECTION EXISTS BECAUSE THE ANALYTIC CLIMBER MODEL WAS THE LADDER FILE'S LARGEST KNOWN
+## INACCURACY, AND BECAUSE THE ATTEMPT TO FIX IT ANALYTICALLY FAILED. `career.gd` used to compute
+## `CLIMBER_PTS_PER_WEEK * CLIMBER_WEEKS_PER_RUNG / cap`; adding per-body join weeks and a road tax
+## to that formula drove the expected fill to 0.22-0.31 against an arc that independently measures
+## 0.44-0.67, and the ladder read 100% ADVANCE at ten of eleven rungs. So the table is now MEASURED:
+## run the autopilot, record what fraction of each rung's ceiling its roster actually carries when
+## it leaves that rung, and interpolate THAT.
+##
+## ⚠️ TWO CLIMBERS ARE MEASURED, NOT ONE, AND THE DIFFERENCE IS THE POINT.
+##   * CONTROL   — the autopilot exactly as it plays today. It stalls (median Silver over 5 seeds),
+##                 so its top four rungs have FEW OR NO SAMPLES. A table with fabricated rows is
+##                 worse than a formula, because it looks measured.
+##   * COMPETENT — the same autopilot with the stable half played properly (succession, an
+##                 affordable barn, no entry fee, shaped training, a re-drafted kit). This is the
+##                 round-11 diagnostician's "everything at once" row, which clears Tamers Apex on
+##                 3 of 5 seeds — i.e. the ONLY configuration that produces samples at the top of
+##                 the ladder at all.
+## The field must be priced against the player the game intends to produce, which is the competent
+## one; the control column is printed beside it so the gap is visible rather than assumed.
+const ARC_SEEDS := [20260809, 771013, 313373, 4242424, 99180]
+const ARC_WEEKS := 900
+
+func _run_arc_table(n_seeds: int) -> void:
+	print("\n─── 5. THE ARC TABLE (measure the climber; author career.gd's fill table off this) ───")
+	var control: Array = _arc_fills("control", n_seeds)
+	var competent: Array = _arc_fills("policy_all", n_seeds)
+	print("\n  league        control fill@exit (n)      competent fill@exit (n)")
+	for idx in range(Career.leagues.size()):
+		var c: Dictionary = control[idx]
+		var k: Dictionary = competent[idx]
+		print("  %-12s  %s   %s" % [
+			Career.league_at(idx).get("name", "?"), _fmt_cell(c), _fmt_cell(k)])
+	var row := "  competent, as a career.gd table: ["
+	for idx in range(Career.leagues.size()):
+		row += "%.2f, " % float(competent[idx]["mean"])
+	print(row + "]")
+	print("  ⚠️ A CELL WITH n=0 IS NOT A MEASUREMENT. Mark it EXTRAPOLATED in career.gd.")
+
+
+func _fmt_cell(c: Dictionary) -> String:
+	if int(c["n"]) == 0:
+		return "     —      (0)   "
+	return "  %.2f  [%.2f-%.2f] (%d)" % [float(c["mean"]), float(c["lo"]), float(c["hi"]), int(c["n"])]
+
+
+## Run `n_seeds` autopilot careers of `kind` and return, per league index, the mean/min/max
+## `fillAtExit` over the seeds that actually VISITED that rung, plus the sample count.
+func _arc_fills(kind: String, n_seeds: int) -> Array:
+	var acc: Array = []
+	for i in range(Career.leagues.size()):
+		acc.append([])
+	var reached: Array = []
+	for s in range(mini(n_seeds, ARC_SEEDS.size())):
+		var v = GoldWallScript.ArcVariant.new()
+		v.v_seed = int(ARC_SEEDS[s])
+		if kind == "policy_all":
+			v.v_redraft_kits = true
+			v.v_free_bodies = true
+			v.v_succession = true
+			v.v_shaped_training = true
+		var opts: Dictionary = {"feeMult": 0.0} if kind == "policy_all" else {}
+		var a: Dictionary = v._run_arc(ARC_WEEKS, opts)
+		var buys: int = v.succession_buys
+		v.free()
+		reached.append(int(a["finalLeague"]))
+		if kind == "policy_all" and buys == 0:
+			print("  ⚠️ succession canary: seed %d bought no successor — that arc is not the "
+				% int(ARC_SEEDS[s]) + "competent player it claims to be.")
+			_fail = true
+		var rows: Array = a["perLeague"]
+		for i in range(rows.size()):
+			var r: Dictionary = rows[i]
+			## Only rungs the arc actually STOOD ON contribute. `fillAtExit` is left at 0.0 for a
+			## rung never reached, and averaging a zero in is how a fabricated row gets born.
+			if int(r["weeks"]) > 0 and float(r["fillAtExit"]) > 0.0:
+				(acc[i] as Array).append(float(r["fillAtExit"]))
+	print("  %-12s reached %s" % [kind, str(reached)])
+	var out: Array = []
+	for i in range(acc.size()):
+		var xs: Array = acc[i]
+		if xs.is_empty():
+			out.append({"mean": 0.0, "lo": 0.0, "hi": 0.0, "n": 0})
+			continue
+		var sum := 0.0
+		var lo := 9.0
+		var hi := 0.0
+		for x in xs:
+			sum += float(x)
+			lo = minf(lo, float(x))
+			hi = maxf(hi, float(x))
+		out.append({"mean": sum / float(xs.size()), "lo": lo, "hi": hi, "n": xs.size()})
+	return out
 
 
 # =============================================================================
@@ -338,10 +454,26 @@ func _liveness() -> bool:
 	ok = ok and sf > wf + 0.2
 
 	# 2. champion fill differs across rungs — without this no slope is even expressible
-	var lo := Career.champion_fill_for(0)
-	var hi := Career.champion_fill_for(Career.leagues.size() - 1)
-	print("  champion fill Wood->Apex:  %.2f -> %.2f   %s" % [lo, hi, "OK" if hi > lo + 0.05 else "DEAD"])
-	ok = ok and hi > lo + 0.05
+	## ⚠️ THIS CHECK USED TO READ `champion_fill_for(Apex) > champion_fill_for(Wood) + 0.05`, AND
+	## IT FIRED THE MOMENT THE CLIMBER MODEL BECAME A MEASUREMENT. That is the canary doing its job
+	## and then the check being wrong: `champion_fill_for` is a QUOTIENT of the league's own
+	## ceiling, and the MEASURED climber's fill FALLS up the ladder (0.49 at Wood, 0.43 at Apex —
+	## the cap outruns what a career can train). A field priced as a RATIO to that climber falls as
+	## a fraction too, while getting enormously stronger in absolute points. So the two things that
+	## must actually be true are checked instead: the champion's RATIO to the climber rises (the
+	## difficulty knob this file authors) and the champion's ABSOLUTE budget rises (the fight the
+	## player really has). A flat fill is evidence of nothing either way.
+	var top: int = Career.leagues.size() - 1
+	var lo_ratio := Career.champion_fill_for(0) / maxf(0.01, Career.expected_climber_fill(0))
+	var hi_ratio := Career.champion_fill_for(top) / maxf(0.01, Career.expected_climber_fill(top))
+	print("  champion RATIO Wood->Apex: %.2f -> %.2f   %s" % [
+		lo_ratio, hi_ratio, "OK" if hi_ratio > lo_ratio + 0.02 else "DEAD"])
+	ok = ok and hi_ratio > lo_ratio + 0.02
+	var lo_abs := Career.champion_fill_for(0) * Career.stat_cap_for_league(0)
+	var hi_abs := Career.champion_fill_for(top) * Career.stat_cap_for_league(top)
+	print("  champion PTS  Wood->Apex:  %.0f -> %.0f   %s" % [
+		lo_abs, hi_abs, "OK" if hi_abs > lo_abs * 2.0 else "DEAD"])
+	ok = ok and hi_abs > lo_abs * 2.0
 
 	# 3. THE ONE THAT MATTERS: sweep rate must respond to player strength
 	var low_rate := _sweep_rate(mid, 0.30, 6)

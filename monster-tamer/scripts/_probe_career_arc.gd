@@ -448,19 +448,43 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR \
 				and Career.barn_capacity > team_need:
 			need = team_need + BENCH_SIZE
-		while Career.barn_capacity < team_need:
+		## ⚠️ THE BENCH WAS UNREACHABLE BY CONSTRUCTION AND EVERY "the autopilot never bred /
+		## never benched" NUMBER IN META_GAME_REVIEW RESTS ON THIS LOOP. The guard above asks for
+		## `barn_capacity > team_need`, and this loop grew the barn only UP TO `team_need` — so the
+		## condition was false at every rung above Wood, forever. Measured: benchWeeks = 0 over a
+		## 483-week career, and `_try_breed`'s own `monsters.size() >= barn_capacity` refusal meant
+		## breeds = 0 and best potential x1.00 in every arc ever run. BENCH_SIZE, FREEZER_TARGET and
+		## PRESERVE_MARGIN_WEEKS were all dead knobs downstream of it.
+		##
+		## The fix is the smallest one that opens the loop: the barn is still bought for the team
+		## first and unconditionally, and the extra stall only out of genuine surplus. The finding in
+		## the comment above — that buying a bench BODY eagerly made the arc worse — is untouched:
+		## this buys the ROOM, and the body is still gated on a slot already standing empty.
+		var barn_goal: int = team_need
+		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR:
+			barn_goal = team_need + BENCH_SIZE
+		while Career.barn_capacity < barn_goal:
 			var nxt: int = Career.barn_capacity + 1
 			if nxt >= _barn_prices().size():
-				stall_reason = "barn cannot hold %d (max %d)" % [team_need, _barn_prices().size() - 1]
+				if Career.barn_capacity < team_need:
+					stall_reason = "barn cannot hold %d (max %d)" % [team_need, _barn_prices().size() - 1]
 				break
 			var bprice: int = _barn_prices()[nxt]
-			if Career.gold < bprice + GOLD_RESERVE:
+			## The team's own stalls are bought down to GOLD_RESERVE; the bench stall only out of
+			## surplus, so a stable never starves its cup entries to buy a spare room.
+			var bfloor: int = GOLD_RESERVE if nxt <= team_need else BENCH_GOLD_FLOOR
+			if Career.gold < bprice + bfloor:
 				break
 			Career.spend_gold(bprice)
 			L["goldOut"] = int(L["goldOut"]) + bprice
 			Career.barn_capacity = nxt
 			L["barnBuys"] = int(L["barnBuys"]) + 1
 			decisions += 1
+		## Re-asked AFTER the barn has grown: the pre-loop test could only ever see LAST week's
+		## capacity, which is the other half of why the bench never filled.
+		if bool(opts.get("breed", true)) and Career.gold >= BENCH_GOLD_FLOOR \
+				and Career.barn_capacity > team_need:
+			need = team_need + BENCH_SIZE
 		while Roster.monsters.size() < need and Roster.monsters.size() < Career.barn_capacity:
 			var offers: Array = _offers_this_week()
 			var pick: Dictionary = {}
@@ -533,7 +557,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 
 		var gold_before: int = Career.gold
 		bench_weeks += maxi(0, Roster.monsters.size() - Career.current_team_size())
-		rent_paid += Roster.frozen.size() * int(WeekPlan.RENTAL_PER_FROZEN)
+		rent_paid += int(WeekPlan.rent_for(Roster.frozen))
 		WeekPlan.advance(Roster.monsters)
 		var delta: int = Career.gold - gold_before
 		if delta >= 0:
@@ -629,7 +653,7 @@ func _run_arc(max_weeks: int, opts: Dictionary = {}) -> Dictionary:
 				var stashed: Dictionary = WeekPlan.plans.duplicate(true)
 				WeekPlan.plans = {}
 				for _t in range(trip):
-					rent_paid += Roster.frozen.size() * int(WeekPlan.RENTAL_PER_FROZEN)
+					rent_paid += int(WeekPlan.rent_for(Roster.frozen))
 					WeekPlan.advance(Roster.monsters)
 				WeekPlan.plans = stashed
 				travel_weeks += trip

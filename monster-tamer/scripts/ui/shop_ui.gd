@@ -27,7 +27,24 @@ const UiTheme = preload("res://scripts/ui/theme.gd")
 ## around the battles — it is how you build the answer you will need."
 ##
 ## Two more stalls, priced steeply so a deep bench is a real investment rather than a default.
-const BARN_PRICES := [0, 0, 320, 700, 1400, 2600, 4200, 6500]
+##
+## ⚠️ THE CAP WAS RAISED TO 7 FOR THE REASON ABOVE AND THE PRICE WAS LEFT ALONE, WHICH MEANT THE
+## ROOM EXISTED AND NOBODY COULD EVER BUY IT. Measured on the old table: housing a Platinum team
+## (capacity 5) cost 320+700+1400+2600 = 5,020g cumulative and a bench on top 9,220g, against a
+## career GROSS income of ~20,875g at 43g/week and a measured PEAK liquidity of 1,465g — a 3.4x
+## shortfall. Two independent instruments caught it from opposite ends: `_probe_gold_wall.gd`'s
+## succession row fired ZERO times on 5/5 seeds and its canary voided the row, and
+## `_probe_breed.gd` §4's nursery hook ran 350-441 weeks per seed and bought nothing on 337-428
+## of them for want of gold. That single price simultaneously disabled the bench, succession AND
+## breeding — `_try_breed` refuses when `monsters.size() >= barn_capacity`, and the barn was only
+## ever grown TO the fielded team size. 0 breeds in every arc ever run was the correct play.
+##
+## THE RULE THE NEW TABLE IS BUILT TO: slot N costs no more than ~1.5x the full purse of the
+## league that first REQUIRES N bodies. Platinum first requires 5 and pays 220 + 140x7 = 1,200g,
+## so slot 5 is 700g and slot 6 — the bench that makes succession and breeding possible at all —
+## is 1,300g. Cumulative to 6 is 2,500g against the old 9,220g. The SHAPE is unchanged: still
+## steeply climbing, still a campaign goal, now inside one career's means.
+const BARN_PRICES := [0, 0, 150, 350, 700, 1300, 2200, 3200]
 const MAX_BARN := 7
 
 var _box: VBoxContainer

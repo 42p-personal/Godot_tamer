@@ -95,6 +95,39 @@ const MAX_POTENTIAL := 2.0
 ## breeding the same optimal pair forever is strictly correct and the system stops being a choice.
 const MAX_CHILDREN_PER_PARENT := 2
 
+## ── THE LINE'S GIFT IS TIME (2026-08-09) ─────────────────────────────────────────────────────
+## ⚠️ THE DYNASTY HAD NOTHING TO SELL, AND THE NUMBERS SAY SO. Measured on this build
+## (`_probe_breed.gd` §3, Gold, parents at the arc's own 0.62 fill@exit): a foal hatches with
+## **858 stat points against 1,151 for the best body on the market that week — at 253g**. It
+## loses the head-to-head 0 wins to 1 at hatch and 8 to 28 after 120 weeks of the real weekly
+## tick. **Breeding was strictly dominated by shopping**, which is the complete answer to "why
+## did 0 breeds fire in a 483-week career": no policy that wanted to breed would have been right
+## to. A market recruit is scaled to the CURRENT LEAGUE CAP (`game_data.gd:stat_cap`), so the
+## shelf climbs with the ladder while a foal is a fixed fraction of its parents.
+##
+## ⚠️ AND `potential` COULD NOT PAY THE DIFFERENCE, BECAUSE NOBODY REACHES A CEILING. The gym
+## section of `_probe_career_arc.gd` measures 305 weeks of PERFECT training to fill the Gold cap
+## against 336 trainable weeks in a lifespan, and reads RETIRED FIRST at Platinum and above. A
+## multiplier on a ceiling nobody touches is worth nothing. That is why raising the head start
+## would have been the wrong fix: it would have made a foal a better PURCHASE without making a
+## dynasty a better STRATEGY.
+##
+## **So the trade this system now makes is: a bought monster is instant and capped; a bred one is
+## SLOWER TO THE RING and lives LONGER.** The head start stays at 30% — a foal is behind on the
+## day it hatches and has to be brought up — and what the line accumulates is the one resource
+## the ladder is actually short of. `_probe_gold_wall.gd` measured lifespan as the single
+## largest lever in the game: with retirement neutralised the career arc improved on 5 of 5
+## seeds (median league reached 5 -> 7, sign test p=0.031). Breeding is now the in-game,
+## incremental, PAID version of that lever, and it is the only route to it.
+##
+## ⚠️ IT MUST STAY INCREMENTAL OR IT BECOMES THE OBVIOUS CLICK. +0.5 years a generation off the
+## BETTER parent, hard-capped at MAX_LIFESPAN_YEARS: Gen 1 is 8.5y, Gen 8 is the 12y ceiling.
+## Nothing here shortcuts the climb — every step still costs a champion out of competition, a
+## barn slot, 300g and a freezer bill, and `MAX_CHILDREN_PER_PARENT` still stops one perfect pair
+## from founding the whole stable.
+const LIFESPAN_STEP_YEARS := 0.5
+const MAX_LIFESPAN_YEARS := 12.0
+
 var _box: VBoxContainer
 var _header: Label
 var _pick_a = null   # MonsterInstance, or null
@@ -235,6 +268,11 @@ func _make_child(a, b, slot_id: String):
 	child.generation = maxi(a.generation, b.generation) + 1
 	child.emphasis = _emphasis
 	child.age_weeks = 0  # ⚠️ born, not bought — it has a full career ahead of it
+	# ⚠️ THE LINE'S GIFT — see the note on LIFESPAN_STEP_YEARS. Off the BETTER parent, for the same
+	# reason `_child_potential` climbs off the better parent: averaging punishes a dynasty for the
+	# partner it needed to make the pairing legal.
+	child.lifespan_years = minf(MAX_LIFESPAN_YEARS,
+		snappedf(maxf(a.lifespan_years, b.lifespan_years) + LIFESPAN_STEP_YEARS, 0.01))
 
 	# ⚠️ HEAD START ON TOP OF THE SPECIES' OWN BASE, NEVER INSTEAD OF IT (`town.ts:796`). The
 	# `maxf` is the whole fix for the measured 77-vs-134 hole: a child of two champions must never
@@ -524,6 +562,19 @@ func _child_preview(a, b) -> Control:
 			int(league_cap * child.potential), int(league_cap)], "primary")
 	why.add_theme_color_override("font_color", UiTheme.GOLD)
 	col.add_child(why)
+
+	# ⚠️ SAY THE GIFT OUT LOUD OR IT DOES NOT EXIST. A longer career is invisible on a stat card —
+	# it shows up 300 weeks later as "this one is still training" — and an unstated mechanic is
+	# this project's named signature failure. The comparison to a bought body is on the card for
+	# the same reason the market's stat total is.
+	var wpy: float = float(WeekLib.WEEKS_PER_YEAR)
+	var span := UiTheme.body_text(
+		"Lives %.1f years to its parent's %.1f (+%.1f a generation, ceiling %.0f). That is %d more trainable weeks than a monster bought off the market, which arrives already %d weeks old. Training is bounded by the CLOCK, not the ceiling — the line's real gift is time." % [
+			child.lifespan_years, maxf(a.lifespan_years, b.lifespan_years), LIFESPAN_STEP_YEARS,
+			MAX_LIFESPAN_YEARS,
+			int(round((child.lifespan_years - 8.0) * wpy)) + 48, 48], "primary")
+	span.add_theme_color_override("font_color", UiTheme.GOLD)
+	col.add_child(span)
 
 	col.add_child(UiTheme.body_text(_kit_line(child), "secondary"))
 	if child.heirloom_move_id != "":

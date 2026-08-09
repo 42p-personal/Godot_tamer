@@ -6,6 +6,7 @@
 extends Node
 
 const TacticsScript = preload("res://scripts/tactics.gd")
+const WeekLib = preload("res://scripts/week.gd")
 
 var monsters: Array = []  # Array[MonsterInstance]
 var selected_index: int = 0
@@ -356,3 +357,170 @@ func _shape_to_class(mi, want: String, rng: RandomNumberGenerator) -> void:
 	mi.assign_moveset(rng)   # the kit is drawn from the NEW class's lines — see monster_instance.gd
 	mi.hp = mi.max_hp
 	mi.mp = mi.max_mp
+
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+# THE MARKET — the one place a body is bought, and the one place its price is decided
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ THIS LIVES HERE, NOT IN `ui/market_ui.gd`, BECAUSE THREE THINGS BUY MONSTERS AND ONLY ONE OF
+# THEM IS A SCREEN. The Market screen buys them, the career autopilot
+# (`_probe_career_arc.gd:_offers_this_week`) buys them, and `_probe_recruit.gd` measures them.
+# When the rules lived inside the UI, the other two carried hand-copied MIRRORS of the price
+# formula and the offer band — the exact "a second copy that drifts" failure this project has now
+# paid for ten times. One implementation; the UI and both probes call it.
+#
+# ── WHAT THE MEASUREMENT SAID (scripts/_probe_recruit.gd §1/§2, 2026-08-09) ───────────────────
+# The team grows at Copper (1->2), Bronze (2->3), Silver (3->4) and Platinum (4->5), and at every
+# one of those steps the player must put another body on the sheet. Measured, before this change:
+#
+#   league     cap   best offer   price   incumbents   offer/incumbent
+#   Bronze     400      118       274g       268           0.44
+#   Silver     600      168       266g       402           0.42
+#   Gold       750      206       263g       495           0.42
+#   Apex      1100      285       255g       682           0.42
+#
+# TWO FINDINGS, AND THEY POINT OPPOSITE WAYS.
+#
+# 1. **The recruit was never the thing that was unaffordable.** Its price was FLAT — 255g to 341g
+#    from Wood to Apex, and gently FALLING — because `120 + 520 * (total / (cap * 6))` prices a
+#    body that is always the same FRACTION of a growing cap, so the fraction cancels the growth.
+#    Against the net purse of the rung below a team-size step (205 / 463 / 721 / 979g) the body
+#    cost 0.26-0.37 of ONE cup win. The gold that blocks a recruit is spent on the BARN SLOT
+#    beside it (320 / 700 / 1400 / 2600g in `ui/shop_ui.gd`), which is 2-3 cup wins on its own.
+#    ⚠️ SO DO NOT "FIX" THIS BY MAKING RECRUITS CHEAPER. That would buy nothing and would push
+#    the whole market toward the obvious click CLAUDE.md forbids.
+#
+# 2. **The recruit was always a rookie, at every rung.** From Bronze upward the best body on the
+#    stall arrives at 0.42x the monsters already on the sheet, forever, because the old band
+#    (`training_level` 0.05..0.5 x the silent `room_mult` 0.6) tops out at 0.30 of the cap while
+#    the incumbents run 0.44-0.75. A body at 42% of its team-mates is dead weight for years, and
+#    it lands at exactly the rung the team grows — which is what drags `fill@exit` down 17-25
+#    points at Bronze and Silver in the seeds that reach them.
+#
+# ── THE DESIGN: A GRADED MARKET, NOT A CHEAPER ONE ───────────────────────────────────────────
+# CLAUDE.md's constraint is non-negotiable: "if a training week is an obvious click, it has
+# failed", and a cheap ready-made body that beats a home-raised one deletes the breeding half of
+# the game. So the market does not get better — it gets a SPREAD, along an axis the player can
+# read, with the cost of readiness paid in CEILING and in YEARS:
+#
+#   grade        arrives at    potential   age        price at Silver   what it is
+#   PROSPECT     0.06-0.20     x1.00       teen       ~135g             a blank slate you raise
+#   JOURNEYMAN   0.36-0.50     x0.92       ~30% spent ~340g             a body that can play now
+#   VETERAN      0.56-0.68     x0.82       ~52% spent ~560g             a finished monster
+#
+# `potential` MULTIPLIES THE LEAGUE CAP (`week.gd:stat_cap_for`), so a Veteran bought at Silver
+# can never train past 0.82 x the ceiling of whatever league it stands in — it is a body for THIS
+# season and the next, and above Gold it is already at its ceiling on the day you buy it. It is
+# also poor breeding stock, because `breeding_ui.gd:_child_potential` climbs off the BETTER
+# parent: a x0.82 founder starts a dynasty 18% below a wild-caught one.
+#
+# That is the trade the player perceives, stated plainly on the card: **the market body is the
+# FAST, EXPENSIVE, CEILING-LIMITED answer; the monster you raise (or breed) is the SLOW, CHEAP,
+# HIGH-CEILING one.** Filling a team-size step from the market is a correct, costly move that
+# mortgages the rung after next — never a free one, and never the best one.
+#
+# ⚠️ WOOD SELLS PROSPECTS ONLY. The first monster a player ever buys cannot be a trap they have
+# no vocabulary to read yet, and Wood is 1v1 — there is no team-size step to answer there.
+
+## Grades in stock, by offer slot. Fixed rather than rolled, so EVERY week's stall shows the whole
+## axis — a market where the choice depends on the shuffle is a market the player cannot plan
+## against, and planning is the half of the game this is supposed to serve.
+const MARKET_SLOTS := ["prospect", "journeyman", "veteran", "journeyman"]
+
+## fill = the fraction of the CURRENT league cap the body arrives at (passed to
+## `GameData.make_monster` with `room_mult = 1.0` — see the ⚠️ on `make_rival_team`: a caller whose
+## number is a fraction of the league ceiling MUST pass 1.0 or the arc is compressed by 1.66x).
+## age = fraction of its own lifespan already spent on the day it is bought.
+const MARKET_GRADES := {
+	"prospect":   {"fill_lo": 0.06, "fill_hi": 0.20, "potential": 1.00, "age": 0.05, "shaped": false},
+	"journeyman": {"fill_lo": 0.36, "fill_hi": 0.50, "potential": 0.92, "age": 0.30, "shaped": true},
+	"veteran":    {"fill_lo": 0.56, "fill_hi": 0.68, "potential": 0.82, "age": 0.52, "shaped": true},
+}
+
+## Human-readable, for the card. The market must SAY what it is selling.
+const MARKET_GRADE_LABEL := {
+	"prospect": "Prospect", "journeyman": "Journeyman", "veteran": "Veteran",
+}
+
+## ⚠️ PRICE NOW SCALES WITH THE LADDER, WHICH IS THE HALF OF THE OLD FORMULA THAT WAS BROKEN.
+## `PRICE_FLOOR + PRICE_PER_CAP * cap * fill^PRICE_EXP`: the floor keeps a Prospect buyable at
+## every rung (135g at Silver, 209g at Apex — CHEAPER than the flat 255-341g it replaces, which is
+## what should pull "recruit blocked by gold" down), while the exponent makes readiness expensive
+## superlinearly (a Silver Veteran is ~4x a Silver Prospect, not 1.1x as before).
+const PRICE_FLOOR := 90.0
+const PRICE_PER_CAP := 2.2
+const PRICE_EXP := 1.6
+const RELEASE_REFUND_FRAC := 0.35
+
+
+## What a body is worth, for BOTH sides of the Market screen (asking price and release refund).
+## Reads off the monster's own stats against the league cap, so the number on the button is
+## explained by something the player can see.
+func market_price(mi) -> int:
+	if mi == null:
+		return 0
+	var cap: float = GameData.stat_cap()
+	var total := 0.0
+	for stat in Classify.STATS:
+		total += float(mi.stats.get(stat, 0.0))
+	var fill: float = clampf(total / maxf(1.0, cap * float(Classify.STATS.size())), 0.0, 1.0)
+	return int(round(PRICE_FLOOR + PRICE_PER_CAP * cap * pow(fill, PRICE_EXP)))
+
+
+## Grade of the body in offer slot `i`. Wood (league 0) sells prospects only — see the ⚠️ above.
+func market_grade_for_slot(i: int, league_idx: int) -> String:
+	if league_idx <= 0:
+		return "prospect"
+	return str(MARKET_SLOTS[i % MARKET_SLOTS.size()])
+
+
+## This week's stock. Deterministic in `week` alone (the seed is the week, exactly as before), so
+## the stall does not reshuffle when the player buys from it — it restocks when the clock moves.
+## Returns Array[Dictionary] {mi, price, grade, label}.
+## ⚠️ `age_mult` IS A MEASUREMENT SEAM, NOT A GAMEPLAY KNOB — leave it at 1.0 everywhere in the
+## game. `_probe_recruit.gd` runs a third paired arm at 0.0 to separate "the market body arrives
+## READY" from "the market body arrives OLD", because the first paired run showed the graded
+## market losing on 4 of 5 seeds and those two effects are confounded inside one grade table.
+func market_offers(week: int, count: int = 4, league_idx: int = -1, age_mult: float = 1.0) -> Array:
+	var idx: int = league_idx if league_idx >= 0 else Career.league_index
+	var owned := {}
+	for m in monsters:
+		owned[m.species_id] = true
+	# Prefer species the player does not field — a recruiting trip should introduce something new
+	# to look at — but top up from the full painted set rather than running dry.
+	var pool: Array = Art.ROSTER.filter(func(id): return not owned.has(id))
+	if pool.size() < count:
+		pool = Art.ROSTER.duplicate()
+
+	var mrng := RandomNumberGenerator.new()
+	mrng.seed = week * 104729  # a large prime so consecutive weeks don't alias into similar shuffles
+	for i in range(pool.size() - 1, 0, -1):
+		var j := mrng.randi_range(0, i)
+		var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp
+
+	var out: Array = []
+	for i in range(mini(count, pool.size())):
+		var grade: String = market_grade_for_slot(i, idx)
+		var g: Dictionary = MARKET_GRADES[grade]
+		var fill: float = mrng.randf_range(float(g["fill_lo"]), float(g["fill_hi"]))
+		# ⚠️ room_mult 1.0 — `fill` IS a fraction of the league ceiling here, not a feel literal.
+		var mi = GameData.make_monster(str(pool[i]), fill, mrng, 1.0)
+		if mi == null:
+			continue
+		mi.potential = float(g["potential"])
+		var span_weeks: float = mi.lifespan_years * float(WeekLib.WEEKS_PER_YEAR)
+		mi.age_weeks = maxi(mi.age_weeks, int(round(span_weeks * float(g["age"]) * age_mult)))
+		# ⚠️ A FINISHED BODY HAS A TRADE. `_shape_to_class` is the SUM-PRESERVING shaper every
+		# rival team is already built with, so a Journeyman/Veteran arrives spent along a real
+		# archetype axis instead of as the flat generalist the old market sold. It adds NO points
+		# — the total is preserved exactly — it only decides how they were spent, which is the
+		# variable the fight actually turns on. A Prospect is deliberately left unshaped: it has
+		# not chosen yet, and that is what the player is buying.
+		if bool(g["shaped"]):
+			_shape_to_class(mi, mi.class_name_, mrng)
+		out.append({
+			"mi": mi, "price": market_price(mi), "grade": grade,
+			"label": str(MARKET_GRADE_LABEL[grade]),
+		})
+	return out

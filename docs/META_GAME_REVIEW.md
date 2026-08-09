@@ -1,3 +1,40 @@
+# ⚠️ ROUND 12 ADDENDUM — RETRACTIONS (2026-08-09, integrator)
+
+Three claims in this document are withdrawn by name. All three were measured against a build
+that carried four dead wires; the wires are now connected and every number below them moved.
+
+**1. RETRACTED: "the arc collapses at Gold, exactly where `teamSizeByLeague` grows and a fresh
+~23-per-stat recruit joins."** Wrong twice. `teamSizeByLeague` does not grow at Gold (Silver
+3->4, Gold 4->4) — Silver is the step. And neutralising the team-size step entirely leaves the
+arc's distribution unchanged ([6,4,6,4,6] against a control of [6,4,7,4,5]). Flattening the cap
+schedule to eleven equal +100 steps returns a BYTE-IDENTICAL arc on all five seeds. H1 and H2
+are both dead. Measured in `scripts/_probe_gold_wall.gd` §3.
+
+**2. RETRACTED: "it stalls at Gold."** Gold was ONE seed. Over five seeds the pre-round control
+stalled at Iron, Iron, Silver, Gold and Platinum — median SILVER. A single arc's stall league is
+inside this instrument's own spread and must not be quoted as "the Gold wall".
+
+**3. RETRACTED: the fill@exit row `.44 .39 .43 .67 .56 .67 .66 .52 .63 .61 .62`.** It does not
+reproduce on any build since, and its top four rungs cannot have come from a stalling arc — an
+arc that never reaches Platinum has no Platinum-and-above samples to report. Re-source it from
+`scenes/_probe_ladder_slope.tscn -- --arc-table`, which prints n per cell.
+
+**And the finding that replaces all three.** The career never stalled on the ladder. It stalled
+on four things that were authored and connected to nothing:
+
+| dead wire | what it did | fixed in |
+|---|---|---|
+| `Generalist` has no `classLines` entry | `assign_moveset` cleared the kit and rebuilt NOTHING, so a flat-statted monster fielded ZERO moves. Also hit `save_game.gd` on load. | `monster_instance.gd:_fallback_lines` |
+| `week.gd:stat_cap_for` had no shipped caller | bloodline `potential` was priced, previewed and displayed on three screens and applied by nothing; x1.00 and x2.00 trained to the same 750 | `week.gd:apply_activity` |
+| `BARN_PRICES` never repriced after `MAX_BARN` rose to 7 | 5,020g cumulative for a Platinum barn against 1,465g peak liquidity — the bench, succession AND breeding were all priced out at once | `ui/shop_ui.gd` |
+| the arc's bench guard `barn_capacity > team_need` | the loop below it only ever grew the barn TO `team_need`, so the guard was false at every rung above Wood | `_probe_career_arc.gd` |
+
+With those four connected and `FIELD_ARCHETYPE_POWER_MULT` restored to 1.00 (its 0.90 relief was
+paying for the Generalist bug, not for the archetypes), the ladder reads 26.8 cups for the whole
+climb and a competent stable policy CLEARS TAMERS APEX on 5 of 5 seeds. The ladder was never the
+problem and its slope was never re-tuned.
+
+---
 # The Meta-Game Review — the stable half, measured
 
 ## ROUND 11 INTEGRATION ADDENDUM (2026-08-09, after the four workstreams landed)

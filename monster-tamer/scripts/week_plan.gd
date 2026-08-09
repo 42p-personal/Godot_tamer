@@ -21,8 +21,33 @@ var plans: Dictionary = {}
 ## food id -> this week's price. Rerolled every week, like `town.ts`'s `foodMarket`.
 var food_market: Dictionary = {}
 
-## Weekly rent per frozen monster — mirrors scripts/ui/lab_ui.gd. Placeholder value.
+## Weekly rent per frozen monster. ⚠️ THE SINGLE SOURCE — `scripts/ui/lab_ui.gd` reads this
+## constant rather than mirroring it, because a screen that draws a different number from the one
+## the tick bills is a screen that lies.
 const RENTAL_PER_FROZEN := 12
+
+## ⚠️ WHO PAYS THE RENT, AND IT IS NOT EVERYONE ON ICE (2026-08-09). Rent exists to stop the
+## freezer being an infinite barn — the abuse it guards against is PARKING a monster that could
+## still be racing, because frozen bodies do not age. A RETIRED monster cannot be parked: it can
+## never train, feed or compete again no matter how long it sits there, so there is nothing left
+## for the bill to prevent and it is charged nothing.
+##
+## That turns a flat tax into the decision the Lab is supposed to ask. Preserve a champion WHILE
+## IT CAN STILL FIGHT and you pay for the option, every week, forever; wait until it retires and
+## the line is free — but you gave up the years in which you could have bred from a monster still
+## climbing, and its stats stopped where they stopped.
+##
+## ⚠️ IT WAS 100% OF THE PROBLEM BEFORE, MEASURED. Breeding needs TWO preserved parents, so the
+## standing charge is 2x — 16,800g over the back 700 weeks of a career (`_probe_breed.gd` §2)
+## against a measured career GROSS of ~20,875g (`_probe_career_arc.gd`, 483 weeks). The
+## generational half of the game cost 80% of everything the stable ever earned, which is why the
+## career autopilot preserved its first monster at week 336 and bred zero times.
+static func rent_for(frozen: Array) -> int:
+	var billed := 0
+	for mi in frozen:
+		if not mi.retired:
+			billed += 1
+	return billed * RENTAL_PER_FROZEN
 
 var _rng := RandomNumberGenerator.new()
 
@@ -125,13 +150,19 @@ func drill_note(mi, drill_id: String, cap: float) -> Dictionary:
 	# as a NEGATIVE inside `gains` ({"STR": +12, "DEX": -4}); counting that stat here would refuse
 	# a perfectly good drill because the stat it DAMAGES happens to be maxed.
 	var gains: Dictionary = d.get("gains", {})
+	# ⚠️ THE MONSTER'S OWN CEILING, NOT THE LEAGUE'S. `week.gd:apply_activity` now clamps to
+	# `stat_cap_for(mi, cap)` = league cap x bloodline potential, so a bred x1.10 body at the raw
+	# league cap still has 10% of headroom to train into. Reading the raw cap here would grey the
+	# button out on exactly the monster breeding exists to produce — the screen lying about the
+	# tick, which is the failure this file's mirror discipline is written to prevent.
+	var own_cap: float = WeekLib.stat_cap_for(mi, cap)
 	var at_cap := true
 	var any_raised := false
 	for stat in gains.keys():
 		if float(gains[stat]) <= 0.0:
 			continue
 		any_raised = true
-		if float(mi.stats.get(stat, 0.0)) < cap - 0.001:
+		if float(mi.stats.get(stat, 0.0)) < own_cap - 0.001:
 			at_cap = false
 			break
 	if not any_raised:
@@ -229,7 +260,7 @@ func advance(monsters: Array) -> Dictionary:
 	# ⚠️ The freezer bills EVERY week, and that rent is the only thing stopping the Lab from being
 	# an infinite barn. week.gd charges `rental` ONCE per week (not per monster), which is exactly
 	# the shape this needs.
-	var rental: int = (Roster.frozen.size() if has_node("/root/Roster") else 0) * RENTAL_PER_FROZEN
+	var rental: int = rent_for(Roster.frozen) if has_node("/root/Roster") else 0
 	var result: Dictionary = WeekLib.advance_week(monsters, plans, gold_before, rental, food_market, cap, league)
 	var gold_after: int = int(result.get("gold", gold_before))
 	if has_node("/root/Career"):

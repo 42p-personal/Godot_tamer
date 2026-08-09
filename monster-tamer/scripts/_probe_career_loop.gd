@@ -55,6 +55,7 @@ func _ready() -> void:
 	print("=== CAREER LOOP PROBE ===")
 	await _detach_from_current_scene()
 	_phase_compile()
+	_phase_every_class_can_arm()
 	await _phase_title()
 	await _phase_town()
 	await _phase_market()
@@ -72,6 +73,61 @@ func _ready() -> void:
 		print("   failed: %s" % f)
 	_ok(is_inside_tree(), "probe: still attached at the end — the tally above is real")
 	_tree.quit(0 if _fail == 0 else 1)
+
+
+## ⚠️ EVERY CLASS A MONSTER CAN BE MUST BE ABLE TO ARM ITSELF. This is a static tripwire on the
+## round-11 bug, and it is here rather than in a system probe because the failure was invisible
+## to every system probe in the repo for the life of the project.
+##
+## `data.json:classBasic` had 19 entries and `classLines` had 18. The odd one out was
+## `Generalist` — a real, reachable class with an authored free attack and NO lines — so
+## `assign_moveset()` cleared the kit, found no buckets to refill it from, and left the monster
+## carrying its basic attack and nothing else. FOREVER, and on the save/load path too, since
+## `save_game.gd:_deserialize_roster` re-arms on load.
+##
+## It cost a career. The arc autopilot trains the LOWEST stat, which walks every monster toward a
+## perfectly flat spread, which is the literal definition of Generalist — so the autopilot was
+## systematically disarming its own stable and the ladder was measured against a player that
+## frequently fought weaponless. The round-10/11 difficulty relief (FIELD_ARCHETYPE_POWER_MULT
+## 0.90) turned out to be paying for this bug rather than for the archetypes.
+##
+## The lesson is the project's oldest one: A TABLE WITH A HOLE IN IT IS NOT A MISSING FEATURE,
+## IT IS A SILENT ONE. Two generated tables keyed by the same thing must agree, and nothing was
+## asserting that they did. This does.
+func _phase_every_class_can_arm() -> void:
+	_section("every class can arm itself")
+	var lines: Dictionary = GameData.class_lines
+	# ⚠️ THE ROLL-CALL COMES FROM `classBasic`, NOT FROM `GameData.classes`, AND THAT IS THE WHOLE
+	# POINT. `GameData.classes` holds 18 and does NOT list `Generalist` — because Generalist is
+	# not a class you build toward, it is the one you FALL INTO when no stat pair dominates, and
+	# it is `MonsterInstance.class_name_`'s own default. So the REACHABLE set is strictly larger
+	# than the authored set, and the first version of this very probe looped `GameData.classes`
+	# and passed 19/19 while missing the only class that had ever shipped broken.
+	# `classBasic` is the honest roll-call: one entry per class a monster can END UP as.
+	var raw := FileAccess.get_file_as_string("res://data/data.json")
+	var parsed = JSON.parse_string(raw)
+	var basics: Dictionary = {} if parsed == null else (parsed as Dictionary).get("classBasic", {})
+	_ok(not basics.is_empty(), "classBasic table is present (%d entries)" % basics.size())
+	_ok(not lines.is_empty(), "classLines table is present (%d entries)" % lines.size())
+	_ok(basics.has("Generalist"),
+		"classBasic lists Generalist — the fall-into class, and the one that shipped kitless")
+	# Sorted, because a probe that iterates a Dictionary in insertion order reports a different
+	# failure on a different day and that is how a real one gets dismissed as flaky.
+	var names: Array = basics.keys()
+	names.sort()
+	# ⚠️ ARM A REAL MONSTER, DO NOT COMPARE THE TWO KEY SETS. A key-set check would have caught
+	# the Generalist hole, but it would pass the moment someone adds an EMPTY `classLines` entry
+	# to silence it — and it cannot see a fallback that exists but returns nothing. The invariant
+	# that matters is behavioural: a monster of this class, asked to arm itself, carries moves.
+	var rng := RandomNumberGenerator.new()
+	for c in names:
+		rng.seed = hash(str(c))
+		var mi = GameData.make_monster(Art.ROSTER[0], 0.5, rng, 1.0)
+		mi.class_name_ = str(c)
+		mi.assign_moveset(rng)
+		var authored: bool = lines.has(c) and not (lines[c] as Array).is_empty()
+		_ok(mi.moveset.size() > 0, "class arms itself: %s (%d moves%s)"
+			% [c, mi.moveset.size(), "" if authored else ", via fallback"])
 
 
 ## Hand the engine a decoy to free. `change_scene_to_file()` frees `current_scene`; this probe

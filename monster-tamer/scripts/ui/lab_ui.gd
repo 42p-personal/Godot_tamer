@@ -2,11 +2,21 @@
 ##
 ## ⚠️ THE LAB'S JOB IS TO DECOUPLE THE BARN FROM THE BLOODLINE. A monster you want to breed from
 ## later does not need to occupy a barn slot in the meantime — but it does not become free either,
-## because the freezer charges rent EVERY WEEK (`week_plan.gd:RENTAL_PER_FROZEN`, billed on
-## `Roster.frozen.size()`).
+## because the freezer charges rent EVERY WEEK (`week_plan.gd:rent_for`).
 ##
 ## ⚠️ WITHOUT THE RENT THIS IS AN INFINITE BARN AND THE 2-SLOT LIMIT STOPS MEANING ANYTHING. The
 ## upkeep is not flavour; it is the entire reason freezing is a trade rather than a free win.
+##
+## ⚠️ BUT IT IS CHARGED ON THE OPTION, NOT ON THE STORAGE (2026-08-09), and the flat version was
+## strangling the half of the game it was supposed to price. Rent guards against PARKING a
+## monster that could still be racing — frozen bodies do not age, so the freezer would otherwise
+## be a fountain of youth. A RETIRED monster cannot be parked; it can never race again however
+## long it sits there, so it is enshrined free. Measured before the change (`_probe_breed.gd`
+## §2): breeding needs TWO parents, so the standing charge was 24g/week — 16,800g over the back
+## 700 weeks of a career against a measured career GROSS of ~20,875g. **The generational half of
+## the game cost 80% of everything the stable ever earned**, and the career autopilot's answer
+## was to preserve its first monster at week 336 and breed zero times in ten in-game years.
+## `week_plan.gd:rent_for` is the one place that decides; this screen only draws it.
 ##
 ## ⚠️ AND THE FREEZER IS NOW THE ONLY BREEDING STOCK (`Roster.breeding_stock()`), which is what
 ## `src/town.ts:787` always did and the port had dropped. That single line is what turns the Lab
@@ -59,10 +69,13 @@ const WeekLib = preload("res://scripts/week.gd")
 
 const STATS := ["STR", "DEX", "CON", "WIS", "INT", "CHA"]
 
-## Weekly rent per frozen monster. ⚠️ MUST MATCH `week_plan.gd:RENTAL_PER_FROZEN`, which is what
-## actually bills — this constant only draws the number. They are two files because the tick and
-## the screen are two workstreams; if they ever disagree the screen is the one lying.
-const RENTAL_PER_FROZEN := 12
+## ⚠️ NO LONGER A MIRROR. This used to be a hand-copied `const RENTAL_PER_FROZEN := 12` with a
+## comment admitting that if the two files ever disagreed the screen would be the one lying —
+## which is `technical-preferences.md`'s named forbidden pattern (never hand-transcribe a table
+## the tick owns). The screen now reads the tick's own constant and the tick's own billing rule,
+## so the number on the button IS the number charged, by construction.
+static func _rent() -> int:
+	return int(WeekPlan.RENTAL_PER_FROZEN)
 
 ## `town.ts:FUSION_COST`. Steep on purpose: both parents are CONSUMED.
 const FUSION_COST := 1000
@@ -284,22 +297,26 @@ func _refresh() -> void:
 		c.queue_free()
 
 	var frozen: Array = Roster.frozen
-	var rent: int = frozen.size() * RENTAL_PER_FROZEN
-	_header.text = "%d gold · %d in the barn (holds %d) · %d preserved · freezer bill %dg/week" % [
-		Career.gold, Roster.monsters.size(), Career.barn_capacity, frozen.size(), rent]
+	# ⚠️ THE TICK'S OWN RULE, NOT A SECOND COPY OF IT — `week_plan.gd:rent_for` is what bills.
+	var rent: int = WeekPlan.rent_for(frozen)
+	var free_count: int = frozen.filter(func(m): return m.retired).size()
+	_header.text = "%d gold · %d in the barn (holds %d) · %d preserved (%d enshrined free) · freezer bill %dg/week" % [
+		Career.gold, Roster.monsters.size(), Career.barn_capacity, frozen.size(), free_count, rent]
 
 	if _fuse_a != null and not frozen.has(_fuse_a): _fuse_a = null
 	if _fuse_b != null and not frozen.has(_fuse_b): _fuse_b = null
 
 	_box.add_child(UiTheme.body_text(
-		"Preserving takes a monster out of the barn without losing it. It stops ageing and cannot train, compete or be fed — but it becomes BREEDING STOCK, and it is the only thing that is. The freezer charges %dg every week it stays in, for as long as you keep the line." % RENTAL_PER_FROZEN,
+		"Preserving takes a monster out of the barn without losing it. It stops ageing and cannot train, compete or be fed — but it becomes BREEDING STOCK, and it is the only thing that is.
+
+THE BILL IS FOR THE OPTION, NOT THE STORAGE. Preserve a monster that could still be racing and the freezer charges %dg every week, forever — you are paying to keep it young and thawable. Preserve one that has RETIRED and it is enshrined free: it can never race again, so there is nothing left to pay for. Waiting costs you the years you could have bred from a monster still climbing." % _rent(),
 		"secondary"))
 
 	var retirees: Array = Roster.retirees_in_barn()
 	if not retirees.is_empty():
 		_box.add_child(UiTheme.heading("Retired — occupying a barn slot", 2))
 		_box.add_child(UiTheme.body_text(
-			"A retiree cannot train, feed or compete. Preserve it and its stats, its potential and its heirloom stay available to every foal you ever breed — for %dg a week, forever. Release it and the line ends here." % RENTAL_PER_FROZEN,
+			"A retiree cannot train, feed or compete. Preserve it and its stats, its potential and its heirloom stay available to every foal you ever breed — enshrined FREE, because a monster that can never race again cannot be parked. Release it and the line ends here.",
 			"muted"))
 		for mi in retirees:
 			_box.add_child(_barn_row(mi))
@@ -353,7 +370,8 @@ func _barn_row(mi) -> Control:
 		btn.disabled = true
 		btn.text = "Your only monster — the barn cannot be left empty"
 	else:
-		btn.text = "Preserve — %dg/week thereafter, breedable forever" % RENTAL_PER_FROZEN
+		btn.text = ("Enshrine — free forever, breedable forever" if mi.retired
+			else "Preserve — %dg/week thereafter, breedable forever" % _rent())
 		btn.pressed.connect(func():
 			if Roster.preserve(mi):
 				_log_label.text = "%s preserved. The bill starts next week." % mi.species_name
@@ -387,7 +405,8 @@ func _frozen_row(mi) -> Control:
 		mi.lineage_label(), int(mi.get_meta("children", 0))], "secondary"))
 	col.add_child(UiTheme.body_text(_kit_line(mi), "muted"))
 	col.add_child(UiTheme.body_text(
-		"Not ageing, not training, costing %dg a week." % RENTAL_PER_FROZEN, "muted"))
+		("Enshrined — not ageing, not training, costing nothing." if mi.retired
+			else "Not ageing, not training, costing %dg a week." % _rent()), "muted"))
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
@@ -438,7 +457,7 @@ func _frozen_row(mi) -> Control:
 	rel.pressed.connect(func():
 		if Roster.release(mi):
 			_log_label.text = "%s released. %dg/week saved, the line ended." % [
-				mi.species_name, RENTAL_PER_FROZEN]
+				mi.species_name, _rent()]
 		_refresh())
 	row.add_child(rel)
 	return panel

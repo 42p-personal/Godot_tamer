@@ -280,6 +280,58 @@ static func stat_cap_for(mi, league_cap: float) -> float:
 	return roundi(league_cap * mi.potential)
 
 
+## How far a monster's TOP stat may outrun its TOP carried move's `learnLevel` before the kit is
+## judged stale. The pool spans learnLevel 40..920 with a median near 340, so 120 is roughly one
+## step up a line: big enough that a kit is not re-examined for every drill, small enough that a
+## body cannot carry a rookie's loadout into Gold.
+const KIT_STALE_MARGIN := 120.0
+
+
+## ⚠️ `apply_activity` CALLED `recompute_class()` AND `recompute_pools()` EVERY WEEK AND NEVER
+## `assign_moveset()`. `monster_instance.gd:assign_moveset` gates every move on `learnLevel`
+## against the CURRENT value of the stat it is authored on — so a body recruited at ~23-80 per
+## stat drafted the floor of every line and KEPT IT for its whole career. Measured on the arc's
+## stalled Gold roster: mean carried learnLevel 118, top 200, on a body at 424 mean stat, against
+## rivals who are GENERATED at their fill and therefore always draft to their stats.
+##
+## The retired `game_data.gd:train()` already does this, under a ⚠️ comment saying it must; the
+## live path was written without it. This is that comment's rule, moved onto the path the game
+## actually runs.
+##
+## ⚠️ THE RNG IS SEEDED ON THE MONSTER'S IDENTITY ALONE, NEVER ON THE WEEK. That makes the kit a
+## pure function of (id, class, stats): re-drafting twice at the same stats yields the same six
+## moves, so the gate can fire as often as it likes and the loadout still cannot churn. A
+## week-salted seed would reshuffle a settled kit every time the trigger held, which is a worse
+## bug than the one being fixed.
+static func _redraft_if_stale(mi, class_before: String) -> void:
+	var stale: bool = str(mi.class_name_) != class_before or mi.moveset.is_empty()
+	if not stale:
+		var top_carried := 0.0
+		for mv in mi.moveset:
+			if mv is Dictionary:
+				top_carried = maxf(top_carried, float(mv.get("learnLevel", 0.0)))
+		var top_stat := 0.0
+		for s in mi.stats:
+			top_stat = maxf(top_stat, float(mi.stats[s]))
+		stale = top_stat > top_carried + KIT_STALE_MARGIN
+	if not stale:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(str(mi.id))
+	## ⚠️ A RE-DRAFT MUST NEVER DISARM A MONSTER, AND THIS TRIPWIRE IS NOT THEORETICAL —
+	## `assign_moveset` clears the kit before it rebuilds, so any class whose lines resolve to
+	## nothing leaves the body carrying only its basic attack for the rest of its life. That is
+	## exactly what `Generalist` did (no `classLines` entry; fixed in `monster_instance.gd`), and
+	## it took the career arc from clearing Gold to stalling at Wood. Keeping the old kit is
+	## always better than fielding none, and the warning names the class so the next one is found
+	## in a log rather than in a 500-week arc.
+	var keep: Array = mi.moveset.duplicate(true)
+	mi.assign_moveset(rng)
+	if mi.moveset.is_empty() and not keep.is_empty():
+		push_warning("week.gd: re-draft produced an EMPTY moveset for class '%s' — kit kept" % str(mi.class_name_))
+		mi.moveset = keep
+
+
 static func excursion_gold(rng: RandomNumberGenerator, league_name: String) -> int:
 	var top: int = LEAGUE_TOP_GOLD.get(league_name, LEAGUE_TOP_GOLD["Wood"])
 	var cap := maxi(10, roundi(top * EXCURSION_CAP_FRACTION))
@@ -400,7 +452,15 @@ static func apply_activity(mi, action: Dictionary, gold: int, cap: float, league
 				# on a tier that costs the same 35 stamina. Scaling both halves by the same multiplier
 				# restores the intended mirror and turns "which tier" back into a question about SHAPE.
 				applied = roundi(delta * stat_malus_multiplier(mi, stat) * eff)
-			var nv: float = clampf(mi.stats[stat] + applied, 1.0, cap)
+			# ⚠️ THE CEILING IS `league cap x bloodline potential`, NOT THE RAW LEAGUE CAP. This line
+			# clamped to `cap` from the day it was written, so `stat_cap_for` — defined 124 lines
+			# above, matching CLAUDE.md's "the ceiling is league cap × potential" verbatim, printed
+			# on three screens — had NO shipped caller anywhere in the game. Measured before the fix
+			# (`_probe_breed.gd` §3b, paired, clock removed, 500 weeks of the real tick): potential
+			# x1.00, x1.50 and x2.00 all finished on exactly 750/stat. Bloodline potential is the
+			# ONLY thing breeding sells that the market shelf cannot, so breeding was strictly
+			# dominated by shopping for as long as this said `cap`.
+			var nv: float = clampf(mi.stats[stat] + applied, 1.0, stat_cap_for(mi, cap))
 			var real: float = nv - float(mi.stats[stat])
 			mi.stats[stat] = nv
 			if real != 0.0:
@@ -439,7 +499,9 @@ static func apply_activity(mi, action: Dictionary, gold: int, cap: float, league
 	mi.career_week += 1
 	mi.fed_this_week = false
 
+	var class_before: String = str(mi.class_name_)
 	mi.recompute_class()
+	_redraft_if_stale(mi, class_before)
 	var prev_max_hp: float = float(mi.max_hp)
 	var prev_max_mp: float = float(mi.max_mp)
 	mi.recompute_pools()

@@ -299,6 +299,29 @@ func assign_moveset(rng: RandomNumberGenerator) -> void:
 		return
 	var lines: Array = game_data.class_lines.get(class_name_, [])
 
+	# ⚠️ `Generalist` IS A REAL CLASS WITH NO ENTRY IN `classLines`, AND WITHOUT THIS IT DRAFTS AN
+	# EMPTY KIT. `classify.gd:class_for_stats` returns "Generalist" whenever no authored stat pair
+	# matches, `classify.gd` gives it a CLASS_BASIC so it has a free attack, and `data.json`'s
+	# classLines table has 18 keys and Generalist is not one of them — so `lines` came back [],
+	# every bucket below stayed empty, and `moveset.clear()` at the top of this function left the
+	# monster with NOTHING but its basic attack, permanently.
+	#
+	# ⚠️ THIS WAS A LIVE, SHIPPED BUG, NOT ONLY A PROBE ONE. `save_game.gd:_deserialize_roster`
+	# calls `assign_moveset()` on load, so any saved Generalist reloaded weaponless. It stayed
+	# invisible only because nothing else re-drafted a kit after creation; the moment `week.gd`
+	# started re-drafting on a class change it became catastrophic, because the autopilot's
+	# "train the lowest stat" policy walks every monster toward a perfectly FLAT spread — which
+	# is precisely the definition of Generalist. Measured: the career arc collapsed from clearing
+	# Gold at week 442 to stalling at WOOD with 1 round won in 114, every fielded body carrying
+	# zero moves.
+	#
+	# The fallback is the honest reading of what a Generalist IS: a monster with no committed
+	# pair, so it draws from the lines of whatever two stats it happens to lead on. That keeps
+	# CLAUDE.md's rule that no build is locked out of a role, and it is derived rather than
+	# authored — `data/*.json` is generated and must never be hand-edited.
+	if lines.is_empty():
+		lines = _fallback_lines(game_data)
+
 	# ⚠️ THE OLD RULE WAS "top 2 by learnLevel per line", AND IT MADE WHOLE CATEGORIES OF AUTHORED
 	# CONTENT UNDRAFTABLE. `learnLevel` is a power proxy, so sorting by it and taking the top two
 	# ranks every line by power — and CONTROL MOVES ARE DELIBERATELY LOW-POWER. Measured: only
@@ -467,3 +490,29 @@ func is_incapacitated() -> bool:
 		if StatusMath._rule(s["kind"]).get("incapacitates", false):
 			return true
 	return false
+
+
+## The lines a class-less monster may draw from: every line whose moves are authored on one of
+## this monster's two highest stats. Deterministic (stat order is `Classify.STATS`), derived from
+## the generated move table rather than a hand-written map, and never empty — if even that finds
+## nothing it falls back to every line in the game, because a monster with no moves is not a
+## design outcome anyone chose.
+func _fallback_lines(game_data) -> Array:
+	var order: Array = []
+	for s in Classify.STATS:
+		order.append({"stat": s, "v": float(stats.get(s, 0.0))})
+	order.sort_custom(func(a, b): return float(a["v"]) > float(b["v"]))
+	var top: Array = []
+	for i in range(mini(2, order.size())):
+		top.append(str(order[i]["stat"]))
+	var out: Array = []
+	for line in game_data.moves_by_line.keys():
+		var pool: Array = game_data.moves_by_line[line]
+		if pool.is_empty():
+			continue
+		if str(pool[0].get("stat", "")) in top:
+			out.append(line)
+	if out.is_empty():
+		out = game_data.moves_by_line.keys()
+	out.sort()
+	return out

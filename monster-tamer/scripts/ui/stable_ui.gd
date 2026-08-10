@@ -100,8 +100,15 @@ func _build_ui() -> void:
 
 	title_col.add_child(UiTheme.heading("The Stable", 1))
 
+	# ⚠️ THIS LINE HAS TO TRACK WHICH GAME IS ACTUALLY RUNNING. "Class is emergent" is true today and
+	# becomes a lie the moment `assigned_class` lands — and a header that misdescribes the single
+	# largest decision in the game is worse than no header. It reads the same feature detect
+	# `week.gd` does, so it can never be left behind by the build.
+	var assignable: bool = not Roster.monsters.is_empty() and WeekLib.assignment_active(Roster.monsters[0])
 	var subtitle := UiTheme.body_text(
-		"Your monsters, mid-career. Class is emergent — the two stats it's strongest in decide what it fights as, right now.",
+		("Your monsters, mid-career. A class is a COMMITMENT — it lifts the ceiling on its own two stats and lowers it on the other four."
+			if assignable else
+			"Your monsters, mid-career. Class is emergent — the two stats it's strongest in decide what it fights as, right now."),
 		"secondary")
 	title_col.add_child(subtitle)
 
@@ -406,6 +413,10 @@ func _refresh_detail() -> void:
 
 	detail_box.add_child(HSeparator.new())
 
+	detail_box.add_child(_class_commitment_section(m))
+
+	detail_box.add_child(HSeparator.new())
+
 	detail_box.add_child(UiTheme.heading("Stats", 2))
 	for stat in Classify.STATS:
 		detail_box.add_child(_stat_row(m, stat))
@@ -441,9 +452,18 @@ func _stat_row(m, stat: String) -> Control:
 	# The bar is drawn against this monster's OWN ceiling, so a stat trained into its headroom is
 	# not silently painted as overflowing a bar it has legitimately passed.
 	col.add_child(UiTheme.stat_bar(stat, value, maxf(ceiling, value), accent, 40))
+	# ⚠️ THE TIER IS THE STAT'S MOST IMPORTANT PROPERTY ONCE CLASSES ARE ASSIGNED, so it is on the
+	# bar itself, not buried in the commitment panel. An off-class stat stopping 30% short of the
+	# number the league calls "the cap" is the single most likely thing to read as a bug.
+	var tier: String = WeekPlan.stat_ceiling_tier(m, stat)
+	if tier == "primary" or tier == "secondary" or tier == "off-class":
+		col.add_child(UiTheme.body_text("%s for a %s · ceiling %d" % [
+			tier, WeekLib.assigned_class_of(m), int(round(ceiling))],
+			"secondary" if tier != "off-class" else "muted"))
 	if value >= ceiling - 0.001:
 		col.add_child(UiTheme.body_text(
-			"at the %s ceiling — win promotion to train further" % _league_name(), "muted"))
+			WeekPlan.drill_note(m, "x" + stat.to_lower(), cap).get("note",
+				"at the %s ceiling — win promotion to train further" % _league_name()), "muted"))
 	elif value > cap + 0.001:
 		# ⚠️ SAY IT, DO NOT LET THEM FIND IT. A stat above the league number is the headroom trade
 		# paying out, and a player who sees a stat pass a cap the rest of the UI calls a cap will
@@ -452,6 +472,188 @@ func _stat_row(m, stat: String) -> Control:
 			"%d above the %s cap — headroom traded from this monster's other stats" % [
 				int(round(value - cap)), _league_name()], "muted"))
 	return col
+
+
+# =============================================================================
+# CLASS — THE COMMITMENT. The largest decision in the game and, until this section existed, the
+# only one the player made without being shown its consequences.
+#
+# ⚠️ `docs/SHAPE_DIAGNOSIS.md` §2 measured kit alignment at 5.50x on a byte-identical stat vector,
+# and a kit drawn for the WRONG class at 0.07x. Class is not a label on a stat pair — it is the
+# whole moveset, and now the ceiling on all six stats too. A decision that large has to state what
+# it buys, what it forecloses, and whether it can be taken back, BEFORE it is taken.
+#
+# ⚠️ THIS SECTION SHOWS THE TRADE; IT DOES NOT OWN THE RULE. The eligible set comes from the
+# SHIPPED gate, `Classify.classes_available_for()` — never from a screen-local re-derivation. A
+# hand-copied rule on this exact file has already gone wrong once (see the `INTENSIVE_PAIR` note at
+# the top: a six-entry table "kept in sync" that had silently drifted in three ways), and a gate
+# that disagrees with the one the assign button enforces is the same bug with higher stakes.
+# =============================================================================
+
+## The classes this monster could commit to right now, straight from the shipped gate. ⚠️ The gate
+## is keyed on the monster's NOMINAL cap (league cap x bloodline potential), not the raw league
+## number — `Classify.GATE_FLOOR` is a fraction of it — so a bred body's floor is genuinely higher
+## and this must pass the same value `week.gd` does or the screen offers classes the button refuses.
+func _candidate_classes(m) -> Array:
+	var nominal: float = float(WeekLib.stat_cap_for(m, GameData.stat_cap()))
+	var names: Array = Classify.classes_available_for(m.stats, nominal)
+	var out: Array = []
+	for c in GameData.classes:
+		if names.has(str(c.get("name", ""))):
+			out.append(c)
+	return out
+
+
+## What committing to `cls` would do to this body, in the units the player already reads.
+##
+## ⚠️ IT NO LONGER PROMISES STAT ROOM, BECAUSE THE PER-CLASS CAPS ARE RETIRED (see the block above
+## `week.gd:class_headroom`). This line used to read "STR to 1485, CON to 1265, the other four stop
+## at 962" — every one of those numbers is now false; `class_headroom` hands 1.35x to every stat on
+## every body. Class is a KIT AND IDENTITY commitment, not a stat-ceiling one, so the line has to
+## sell what it actually does: it decides which three ability LINES the monster draws from, which
+## is the largest measured lever in the game (14x between a matched and a mismatched kit).
+##
+## ⚠️ AND IT MUST STILL WARN ABOUT THE ONE REAL COST, which the caps' retirement did not remove:
+## reassigning re-draws the kit, and a body whose stats do not yet suit the new class fights with a
+## kit it cannot use until it trains in. Round 15 measured that transit state at 2% — the sharpest
+## cliff in the game — so the screen naming it is not decoration.
+func _commitment_line(m, cls: Dictionary, cap: float) -> String:
+	var _unused_cap := cap
+	var pri := str(cls.get("primary", ""))
+	var sec := str(cls.get("secondary", ""))
+	var suited: bool = false
+	var top := ""
+	var best := -1.0
+	for stat in Classify.STATS:
+		var v := float(m.stats.get(stat, 0.0))
+		if v > best:
+			best = v
+			top = str(stat)
+	suited = (top == pri or top == sec)
+	var txt := "%s — draws its moveset from %s/%s lines" % [str(cls.get("name", "")), pri, sec]
+	if not suited:
+		txt += "   ·   ⚠ this body leads on %s — it will carry a kit it cannot use until it trains in" % top
+	return txt
+
+
+func _class_commitment_section(m) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	box.add_child(UiTheme.heading("Class — the commitment", 2))
+
+	var cap := GameData.stat_cap()
+	var active: bool = WeekLib.assignment_active(m)
+	var assigned: String = WeekLib.assigned_class_of(m)
+
+	if active and assigned != "":
+		box.add_child(UiTheme.body_text("Committed: %s." % assigned, "primary"))
+	elif active:
+		box.add_child(UiTheme.body_text(
+			"Uncommitted — the moveset is redrawn from whichever two stats happen to lead. Commit, and it draws from the class you chose instead. Every stat stops at %d either way." % int(round(WeekLib.stat_cap_for(m, cap))),
+			"primary"))
+	else:
+		# ⚠️ SAY WHICH GAME IS RUNNING. Assignment is not built on this build; the numbers below are
+		# a forecast of what committing WOULD buy, not a description of a control that exists. A
+		# panel that reads as live when it is not is how a system gets documented as shipped.
+		box.add_child(UiTheme.body_text(
+			"Class is still emergent on this build — it follows the two highest stats and the moveset follows it. What committing would buy:",
+			"muted"))
+
+	# what it BUYS, what it FORECLOSES — per candidate class
+	var candidates: Array = _candidate_classes(m)
+	if candidates.is_empty():
+		# ⚠️ AN EMPTY GATE MUST STILL GIVE TRAINING A GOAL. A fresh monster qualifies for nothing —
+		# `Classify.GATE_FLOOR` is 0.20 of its nominal cap and its stats start near 10 — and a panel
+		# that just goes blank there teaches the player that the system is broken rather than that
+		# it is not yet earned. `gate_reason` exists precisely for this and was going unused.
+		var nearest := Classify.class_for_stats(m.stats)
+		var why: String = Classify.gate_reason(m.stats, WeekLib.stat_cap_for(m, cap), nearest)
+		box.add_child(UiTheme.body_text(
+			"  Nothing yet — train it further first. %s: %s" % [nearest, why if why != "" else "not yet eligible"],
+			"muted"))
+	for c in candidates:
+		var cname := str(c.get("name", ""))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+		var lbl := UiTheme.body_text("  " + _commitment_line(m, c, cap),
+			"primary" if cname == assigned else "secondary")
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(lbl)
+		if active and cname != assigned:
+			var btn := Button.new()
+			btn.text = "Reassign" if assigned != "" else "Assign"
+			_style_button(btn, "primary" if assigned == "" else "secondary")
+			btn.pressed.connect(_on_assign_class.bind(m, cname))
+			row.add_child(btn)
+		box.add_child(row)
+
+	# ⚠️ THE UNCOMMITTED STATE MUST BE REACHABLE FROM THE COMMITTED ONE, OR "reversible" IS A LIE.
+	# `Classify.classes_available_for` never lists Generalist (it is the ungated fallback, not a
+	# gated option), so without this row a committed player can swap trades but can never step back
+	# out of the system — and the panel two lines below promises they can.
+	if active and assigned != "":
+		var back := HBoxContainer.new()
+		back.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+		var bl := UiTheme.body_text(
+			"  Uncommitted — all six stats back to the flat cap of %d, kit redrawn from the two highest." %
+				int(round(WeekLib.stat_cap_for(m, cap))), "secondary")
+		bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		bl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		back.add_child(bl)
+		var bbtn := Button.new()
+		bbtn.text = "Release"
+		_style_button(bbtn, "secondary")
+		bbtn.pressed.connect(_on_release_class.bind(m))
+		back.add_child(bbtn)
+		box.add_child(back)
+
+	# the part everyone forgets to say
+	box.add_child(UiTheme.body_text(
+		"Reversible: yes — a class can be reassigned, and no stat is ever REDUCED by it. What you cannot take back is the time; a stat parked above a new class's ceiling stops growing until you change class again.",
+		"muted"))
+	# ⚠️ THE MOVESET IS THE REAL PRICE AND IT IS NOT DENOMINATED IN GOLD. `week.gd:_redraft_if_stale`
+	# redraws the kit the week the class changes, and SHAPE_DIAGNOSIS §2 measured a kit drawn for a
+	# class the body is not at 0.07x. Charging gold on top of that would be double-pricing a
+	# decision that already costs a season — so this WARNS rather than bills.
+	box.add_child(UiTheme.body_text(
+		"⚠  Reassigning redraws the whole moveset the same week. A kit drawn for a class this body is not yet trained for is the single worst state in the game — reassign toward where the stats are going, not away from where they are.",
+		"muted"))
+	return box
+
+
+## Commit this monster to a trade, and REDRAW ITS KIT.
+##
+## ⚠️ THE `rng` IS NOT OPTIONAL AND IT IS NOT A DETAIL — IT IS THE WHOLE FEATURE.
+## Kit alignment is the largest measured lever in the game (round 15: 5.50x on a byte-identical
+## stat vector; a kit drawn for a class the body is not measures 0.07x). `assign_class` only
+## redraws when handed a generator, and `week.gd:_redraft_if_stale` CANNOT be relied on to rescue
+## a forgotten one: it fires on `class_before != class_name_`, which after a reassignment are
+## already equal. `_probe_integrate.gd` §2 proves both branches — a body that has outgrown its kit
+## does self-heal on the next tick, and a body level with its kit carries the WRONG kit for the
+## rest of its life. So passing it here is a contract, not a nicety.
+##
+## ⚠️ AND THE SEED IS DERIVED, NOT ENTROPY. `RandomNumberGenerator.new()` unseeded would draft a
+## different kit every process for the same decision — a straight violation of the determinism
+## contract, and the exact bug `game_data.gd:make_monster` already shipped once.
+func _on_assign_class(m, cls: String) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("%s|%s|%d" % [str(m.id), cls, int(Career.week)])
+	m.assign_class(cls, rng)
+	_refresh_list()
+	_refresh_detail()
+
+
+## Step back out of the system entirely. The class derives from stats again and the kit follows it,
+## which is precisely the pre-round-15 behaviour — so this is the migration in reverse and it must
+## redraw for the same reason assignment does.
+func _on_release_class(m) -> void:
+	m.clear_class_assignment()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("%s|release|%d" % [str(m.id), int(Career.week)])
+	m.assign_moveset(rng)
+	_refresh_list()
+	_refresh_detail()
 
 
 ## ⚠️ MOCKUP APPROXIMATION, NOT THE PORTED SYSTEM — see docs/PERSONALITY_STATS.md §8.3:
@@ -686,11 +888,34 @@ func _training_preview_row(m, stat: String) -> Control:
 ## measured that the kit is redrawn from the CLASS (`week.gd:_redraft_if_stale`) and that a kit
 ## drawn for the wrong class collapses a roster's win rate from 56% to 4%. A class change is not
 ## cosmetic; it is the whole moveset.
+## ⚠️ AND FOR A COMMITTED MONSTER THE QUESTION IS NO LONGER "would this tip me into a different
+## class" — IT CANNOT. `recompute_class()` returns the stored choice, so a preview that answered
+## with `class_for_stats` would print a class the tick will never produce: a lie on the line the
+## comment above calls the most decision-relevant on the card. `docs/CLASS_REWORK.md` §10.2 row 9
+## is right that this must be REPLACED rather than deleted — the useful question under assignment
+## is which classes this week's training would OPEN at the gate, so that is what it now answers.
+## The caller prints nothing when this returns the current class, so an uninformative week stays
+## quiet exactly as before.
 func _class_after(m, deltas: Dictionary) -> String:
 	var stats_copy: Dictionary = m.stats.duplicate()
 	for s in deltas:
 		stats_copy[s] = float(stats_copy.get(s, 0.0)) + float(deltas[s])
-	return Classify.class_for_stats(stats_copy)
+	if not WeekLib.assignment_active(m):
+		return Classify.class_for_stats(stats_copy)
+	var nominal: float = float(WeekLib.stat_cap_for(m, GameData.stat_cap()))
+	var before: Array = Classify.classes_available_for(m.stats, nominal)
+	var after: Array = Classify.classes_available_for(stats_copy, nominal)
+	var opened: Array = []
+	for c in after:
+		if not before.has(c):
+			opened.append(str(c))
+	if not opened.is_empty():
+		return "opens %s" % ", ".join(PackedStringArray(opened))
+	# nothing new opens: for an UNCOMMITTED body the derived class still moves and still redraws
+	# the kit, so that answer is still live and still worth printing.
+	if not m.is_class_assigned():
+		return Classify.class_for_stats(stats_copy)
+	return str(m.class_name_)
 
 
 ## Real portrait if Art has one, otherwise a deliberate accent-tinted placeholder (the species'

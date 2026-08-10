@@ -5,10 +5,15 @@
 ## class name. Get this wrong and every downstream system is subtly wrong for reasons that never
 ## point back here.
 ##
-## ⚠️ CLASS IS EMERGENT AND RECOMPUTED, NEVER STORED. It comes from a monster's two CURRENT
-## highest stats, so training genuinely changes what a monster IS. Any species can in principle
-## train into any class; aptitude only weights how fast each stat grows. **Never write flavour
-## text or UI as if a species is destined for its class.**
+## ⚠️ CLASS IS NO LONGER PURELY EMERGENT — IT CAN BE A STORED PLAYER COMMITMENT (round 15).
+## `class_for_stats()` below is UNCHANGED and still under contract (46 pinned cases), but its JOB
+## changed: it no longer DECIDES a monster's class, it SUGGESTS one (for a monster that has not
+## committed) and it GATES which classes a monster may commit TO (`classes_available_for`).
+## `MonsterInstance.assigned_class` is the authority when it is set; when it is "" the old
+## emergent behaviour holds byte-for-byte, which is what makes every existing save load unchanged.
+##
+## Any species can in principle train into any class; aptitude only weights how fast each stat
+## grows. **Never write flavour text or UI as if a species is destined for its class.**
 ##
 ## Verified against `data/classify.json` — 46 cases, 4 axes.
 class_name Classify
@@ -128,7 +133,17 @@ static func mana_role_of(stats: Dictionary, class_name_: String) -> String:
 ## them. The cooldown buys PRESENCE between casts, not throughput — which is why the damage was
 ## not raised when the cooldown came down.
 static func basic_attack_for(stats: Dictionary) -> Dictionary:
-	var cls := class_for_stats(stats)
+	return basic_attack_for_class(class_for_stats(stats), stats)
+
+
+## The free attack of a NAMED class, scaled by this monster's stats.
+##
+## ⚠️ THIS SPLIT EXISTS BECAUSE `basic_attack_for` IS CONTRACTED AND MUST NOT CHANGE. It took a
+## `stats` dictionary and derived the class inside itself — which is exactly the hidden
+## re-derivation that would have silently un-done a stored class every time a monster's pools were
+## refreshed. `basic_attack_for(stats)` is now a thin wrapper over this and returns the identical
+## answer for every input, so `data/classify.json`'s 7 `basicAttackFor` cases still pass exactly.
+static func basic_attack_for_class(cls: String, stats: Dictionary) -> Dictionary:
 	var table: Dictionary = _load().get("classBasic", {})
 	var spec = table.get(cls, table.get("Generalist"))
 	if spec == null:
@@ -145,3 +160,102 @@ static func basic_attack_for(stats: Dictionary) -> Dictionary:
 		"accuracy": BASIC_ACCURACY,
 		"castTime": BASIC_CAST_TIME,
 	}
+
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+# THE ASSIGNMENT GATE — which classes a monster may COMMIT to (docs/CLASS_REWORK.md §2.2, §10.3)
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ THIS SITS BESIDE `class_for_stats`, IT DOES NOT REPLACE IT. `class_for_stats` is contracted
+# maths (46 pinned cases, exact equality against the TypeScript) and returns the same answer for
+# every input it ever has. What changed is what the answer is USED for: for an uncommitted monster
+# it is still the class, and for a committed one it is only the suggestion the gate is built from.
+#
+# ⚠️ AND THE GATE IS THE THING THAT COULD BREAK THE ONE NON-NEGOTIABLE — "a species must never be
+# locked out of a role" (CLAUDE.md). It cannot, and the reason is structural rather than lucky:
+# every condition below reads only `stats`, never `species_id`, `body` or `trainingProfile`. Two
+# of the three are RANK tests, and rank is relative, so any body that trains a stat to the top of
+# its own spread satisfies them regardless of how slowly it got there. Species aptitude is a RATE,
+# never a ceiling. `_probe_archetypes.gd:128` is the assertion of record.
+
+## Rank thresholds, 0-indexed. Primary must be top-2, secondary top-3 — deliberately LOOSER than
+## `class_for_stats`'s exact ordered-pair match, because an exact match would make the "choice"
+## a single forced answer, i.e. `class_for_stats` wearing a UI.
+const GATE_PRIMARY_RANK := 1
+const GATE_SECONDARY_RANK := 2
+
+## The absolute floor: the primary stat must represent real investment, not merely be relatively
+## tallest on a flat body (some stat is always top-2 of six, however untrained).
+##
+## ⚠️ UNMEASURED, AND ROUND 15 SAYS IT IS TOO LOW — read `docs/CLASS_REWORK.md` §10.3 before
+## touching it. Expressed as a fraction of the LEAGUE cap it inherits §2's inversion exactly: at
+## Iron (cap 500) a naive body reaches the cap, so 0.20 is satisfied from very early, while at
+## Apex the same fraction is a number a career can miss. The honest version is a fraction of what
+## a career can BANK, which is the same quantity §10.1 fixes in `week.gd:stat_ceiling()`. Left at
+## the authored 0.20 here so the gate ships with ONE unmeasured constant rather than two, and so
+## the number that moves it is the number §10.1 measures. `scripts/_probe_assign.gd` §2 reports
+## what the current value costs, per rung.
+const GATE_FLOOR := 0.20
+
+
+## Stat names in descending order of this monster's current values. Ties resolve by `STATS`
+## order — the same total order `_top_two()` relies on, so the gate needs no new convention.
+static func _ranked_stats(stats: Dictionary) -> Array:
+	var ordered := STATS.duplicate()
+	ordered.sort_custom(func(a, b):
+		var va := float(stats.get(a, 0))
+		var vb := float(stats.get(b, 0))
+		if va == vb:
+			return STATS.find(a) < STATS.find(b)
+		return va > vb)
+	return ordered
+
+
+## PURE. The classes this stat vector currently qualifies to be ASSIGNED, sorted by name.
+##
+## `nominal_cap` is the monster's own training ceiling (league cap x bloodline potential — what
+## `week.gd:stat_ceiling` calls nominal), NOT the raw league cap, so a high-potential bloodline
+## is held to a proportionally higher bar rather than a cheaper one.
+##
+## ⚠️ `Generalist` IS NEVER IN THIS LIST AND THAT IS DELIBERATE. It is the UNCOMMITTED state, it
+## carries no `classes` entry to gate against, and it is always available — see
+## `MonsterInstance.clear_class_assignment()`. A UI offers it separately, as the honest
+## always-open fallback, never as a gated option.
+static func classes_available_for(stats: Dictionary, nominal_cap: float) -> Array:
+	var ranked := _ranked_stats(stats)
+	var floor_value: float = GATE_FLOOR * maxf(0.0, nominal_cap)
+	var out: Array = []
+	for c in _load().get("classes", []):
+		var p: String = str(c.get("primary", ""))
+		var s: String = str(c.get("secondary", ""))
+		if ranked.find(p) > GATE_PRIMARY_RANK:
+			continue
+		if ranked.find(s) > GATE_SECONDARY_RANK:
+			continue
+		if float(stats.get(p, 0.0)) < floor_value:
+			continue
+		out.append(str(c.get("name", "")))
+	out.sort()
+	return out
+
+
+## Why a class is NOT available, as one short player-facing line, or "" if it IS available.
+## The gate's third requirement is "give training a goal" (§2.1) — a gate that only says no does
+## not meet it, so the reason is part of the mechanism rather than a UI afterthought.
+static func gate_reason(stats: Dictionary, nominal_cap: float, cls: String) -> String:
+	for c in _load().get("classes", []):
+		if str(c.get("name", "")) != cls:
+			continue
+		var p: String = str(c.get("primary", ""))
+		var s: String = str(c.get("secondary", ""))
+		var ranked := _ranked_stats(stats)
+		if ranked.find(p) > GATE_PRIMARY_RANK:
+			return "%s must be one of the two highest stats (it is #%d)" % [p, ranked.find(p) + 1]
+		if ranked.find(s) > GATE_SECONDARY_RANK:
+			return "%s must be one of the three highest stats (it is #%d)" % [s, ranked.find(s) + 1]
+		var floor_value: float = GATE_FLOOR * maxf(0.0, nominal_cap)
+		if float(stats.get(p, 0.0)) < floor_value:
+			return "%s must reach %d (it is %d)" % [p, int(round(floor_value)),
+				int(round(float(stats.get(p, 0.0))))]
+		return ""
+	return "unknown class"

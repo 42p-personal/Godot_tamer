@@ -362,7 +362,26 @@ func _shape_to_class(mi, want: String, rng: RandomNumberGenerator, cap_override:
 
 	for st in Classify.STATS:
 		mi.stats[st] = out[st]
-	mi.recompute_class()
+	# ⚠️ SHAPING DOES NOT COMMIT, AND docs/CLASS_REWORK.md §10.2 ROW 4 IS WRONG ABOUT THIS.
+	# It asks for `recompute_class()` to be replaced by a stamp of `want`, which would make every
+	# body this function touches a COMMITTED one. Two things break if it does.
+	#
+	# 1. `week.gd:class_headroom` caps an assigned monster's four off-class stats at
+	#    `CLASS_OFF_HEADROOM` (0.70) of nominal, permanently. Route the market through here and a
+	#    Journeyman the player just paid for arrives with a 30% ceiling cut on four stats, bought
+	#    by a decision the player never made. Assignment is supposed to CREATE the decision, not
+	#    take it silently at the till. The shaped body still ADVERTISES a trade (`class_name_`
+	#    derives to `want`); the player ratifies it at the stable, or trains somewhere else.
+	# 2. `_probe_archetypes.gd:128` is the assertion of record for CLAUDE.md's one non-negotiable
+	#    ("no species is locked out of a role") and it tests it by asserting `class_name_ == want`
+	#    after this call. A stamp makes that assertion true BY CONSTRUCTION — green forever,
+	#    proving nothing. Deriving keeps the shaper's arithmetic genuinely under test.
+	#
+	# ⚠️ `clear_class_assignment()` rather than a bare `recompute_class()`: this function is called
+	# on already-owned monsters too (`roster.gd:531`), and re-spreading a committed body's stats
+	# onto a different axis while leaving the old commitment in place would produce exactly the
+	# 0.07x mismatched build round 15 measured as a trap.
+	mi.clear_class_assignment()
 	mi.recompute_pools()
 	mi.assign_moveset(rng)   # the kit is drawn from the NEW class's lines — see monster_instance.gd
 	mi.hp = mi.max_hp

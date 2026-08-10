@@ -1,5 +1,205 @@
 # Class Rework — Assignable Classes with Per-Class Stat Caps
 
+---
+
+# ⚠️ ROUND 15 — THE FEATURE WAS MEASURED BEFORE IT WAS BUILT. READ THIS FIRST.
+
+**2026-08-10 · instrument `monster-tamer/scripts/_probe_class.gd` + `scenes/_probe_class.tscn`**
+
+```
+cd monster-tamer
+"P:/Godot_v4.7.1-stable_win64.exe" --headless --path . res://scenes/_probe_class.tscn -- --gym    # ~10s, exact
+"P:/Godot_v4.7.1-stable_win64.exe" --headless --path . res://scenes/_probe_class.tscn -- --fight --salts 32   # ~60s
+```
+
+The probe **subclasses `_probe_shape.gd`** (which subclasses `_probe_career_arc.gd`) and overrides
+exactly one method, the training brain. Everything else — the shipped weekly tick
+(`week.gd:apply_activity`), the shipped kit draft (`monster_instance.gd:assign_moveset`), the
+shipped rivals (`Career.make_league_rivals`) and the shipped fight (`battle_sim.gd`) — is
+untouched, so an arm-to-arm difference can only be the arm.
+
+## THE ANSWER IN ONE PARAGRAPH
+
+**Assignable class, exactly as §1–§9 below specify it, is a DOWNSIDE-ONLY mechanic.** Measured
+over 544 paired fights at four rungs, at an identical training-week budget calibrated so today's
+naive player lands on `Career.expected_climber_fill`: committing to the best class and training
+into it wins **73%** of rounds — against **75%** for the competent player who exists *today* and
+picks nothing at all. **The feature is worth 0.97x.** Choosing between the *adjacent* classes the
+gate would actually put on a player's menu is worth **0.99x**. Meanwhile committing to a bad class
+costs **0.33x** and reassigning costs **0.03x**. So the mechanism as specified hands the player a
+lever with no upside, a flat menu, and two ways to destroy a career — and the thing that
+*genuinely* separates a good player from a bad one, the training brain, is **2.94x** and is
+already available with no new mechanism whatsoever. ⚠️ **`docs/SHAPE_DIAGNOSIS.md`'s conclusion —
+"assignable class is the mechanism by which the 14x becomes a decision the player makes" — does
+not survive measurement, and this document is the retraction.**
+
+## 1. THE DECISION TABLE — 544 paired fights, 32 salts, 4 rungs
+
+Identical rivals and identical battle seeds in every arm. Every arm trains for the **same number
+of weeks** — weeks are what a player actually spends, and `SHAPE_DIAGNOSIS.md` §3 is emphatic that
+comparing at a constant stat *total* flatters the specialist by giving away the points its shape
+costs. The week budget is calibrated per rung so **AUTO** (today's naive player) lands on
+`Career.expected_climber_fill`, the ladder's own reference player.
+
+| league | cap | wks | AUTO | AUTO-APT | RIGHT | NEIGHBOUR | WRONG | TRANSIT |
+|---|---|---|---|---|---|---|---|---|
+| Iron | 500 | 76 | 10% | 74% | 58% | 98% | 56% | 4% |
+| Gold | 750 | 119 | 30% | 56% | 61% | 61% | 2% | 2% |
+| Masters | 1000 | 157 | 18% | 89% | 79% | 50% | 23% | 1% |
+| Tamers Apex | 1100 | 169 | 39% | 77% | 86% | 88% | 23% | 3% |
+| **ALL** | | | **139/544 26%** | **408/544 75%** | **397/544 73%** | **392/544 72%** | **131/544 24%** | **12/544 2%** |
+
+- **AUTO** — today's game, naive brain (biggest drill on the lowest stat), class DERIVED at exit,
+  kit drawn from it. No caps.
+- **AUTO-APT** — today's game, aptitude brain. Class still derived, kit still automatic.
+  **⚠️ This arm requires no new mechanism at all. It is available to a player right now.**
+- **RIGHT** — class ASSIGNED to the aptitude-best trade, per-class caps on, trained into it, kit
+  drawn from the assigned class. The feature, used perfectly.
+- **NEIGHBOUR** — assigned to a class sharing the primary stat but not the secondary: the adjacent
+  entry on §2.2's own gate menu (its worked example opens Warrior/Skirmisher/Rogue at once).
+- **WRONG** — assigned to a class sharing neither stat with the aptitude-best trade, then trained
+  into it *honestly*. Stats and kit AGREE; the only cost is a body fighting its own aptitudes.
+- **TRANSIT** — trained into the RIGHT class exactly as arm RIGHT, then reassigned. Kit redrawn
+  from a class the body has none of the stats for. **This is `SHAPE_DIAGNOSIS.md` arm D reached by
+  a route a player can actually take**, and the only place the 14x lives.
+
+```
+AUTO     -> AUTO-APT  = 2.94x    TODAY's competent player. No new mechanism.
+AUTO     -> RIGHT     = 2.86x    the assigned build vs today's naive one
+AUTO-APT -> RIGHT     = 0.97x    <- ⚠️ THE ONLY NUMBER THAT PRICES THE FEATURE
+RIGHT    -> NEIGHBOUR = 0.99x    the spread ACROSS the menu the gate offers
+RIGHT    -> WRONG     = 0.33x    committing to a class the body fights
+RIGHT    -> TRANSIT   = 0.03x    reassignment, on the day it is made
+```
+
+⚠️ **`AUTO -> RIGHT = 2.86x` IS THE NUMBER THAT WOULD HAVE SOLD THIS FEATURE, AND IT IS A
+CONFOUND.** It is not the class assignment: it is the training brain, and `AUTO -> AUTO-APT` is
+2.94x for the same reason with nothing built. Every point of RIGHT's advantage over AUTO is
+purchasable today by training the stat the monster is good at. **Do not quote 2.86x.**
+
+⚠️ **NEIGHBOUR is flat in aggregate (0.99x) but swings 0.63x–1.7x per rung with no consistent
+direction** (98% at Iron, 50% at Masters). That is worse than a flat menu, not better: it means
+the choice between two adjacent classes *does* change the outcome, but not in a direction the
+player can learn. A coin flip wearing a decision's clothes is the exact failure `CLAUDE.md` names
+— *"an unreadable fight is not a hard fight, it is a slot machine."*
+
+## 2. THE CAP TABLE — per-class caps are INERT where the game is won
+
+`--gym`, exact, no fights: 10 bodies, 336 weeks (a full trainable career), swept across the
+ladder's own caps. `spread` is `(max−min)/mean`; a `_shape_to_class` rival — the body every rival
+on the ladder is built as — sits at **0.475**.
+
+| rung (cap) | arm | total | vs naive | spread |
+|---|---|---|---|---|
+| **Iron (500)** | naive, no caps | 2994 | — | 0.01 |
+| | naive + TIGHT `{1.00/0.90/0.70}` | 2426 | **−19.0%** | **0.40** |
+| | naive + ARCHETYPE `{1.35/1.15/0.70}` | 2716 | −9.3% | **0.70** |
+| **Gold (750)** | naive, no caps | 4480 | — | 0.02 |
+| | naive + TIGHT | 3613 | **−19.4%** | **0.39** |
+| | naive + ARCHETYPE | 4038 | −9.9% | **0.72** |
+| **Masters (1000)** | naive, no caps | 4567 | — | 0.03 |
+| | naive + TIGHT | 4575 | **+0.2%** | 0.23 |
+| | naive + ARCHETYPE | 4579 | +0.2% | 0.22 |
+| **Tamers Apex (1100)** | naive, no caps | 4567 | — | 0.03 |
+| | naive + TIGHT | 4568 | **+0.0%** | **0.04** |
+| | naive + ARCHETYPE | 4568 | +0.0% | **0.04** |
+
+⚠️ **THE CONSTRAINT INVERTS ALONG THE LADDER, AND THIS IS THE SINGLE MOST IMPORTANT STRUCTURAL
+FINDING IN THE ROUND.** Per-class caps expressed as a *fraction of the league cap* bite hard at
+Iron and Gold — where they cost the naive player a fifth of its points and force a spread of 0.40
+— and **do literally nothing at Masters and Tamers Apex**, the rungs where careers are actually
+decided (`SHAPE_DIAGNOSIS.md` §4: every losing career stalls at Platinum or above).
+
+The mechanism is arithmetic, not tuning. A full career banks ~4,450 points
+(`_probe_training.gd` §1); six stats at the Apex cap of 1100 is 6,600. **A naive body at Apex
+reaches 761/stat against an off-class ceiling of 770 — the cap misses by nine points.** It is not
+a ceiling; it is a ceiling painted on the sky. `week.gd`'s own round-14 comment already said so —
+*"the total budget does not bind today, deliberately… If a future career ever reaches it, that is
+the moment `docs/CLASS_REWORK.md`'s per-class caps become load-bearing rather than optional"* —
+and this is the measurement of that sentence. **The moment has not arrived.**
+
+⚠️ **This is CLAUDE.md's named genre failure — inverted progression, where the capstone asks less
+than the starter.** Shipping §4.1 as written would put the game's only anti-generalisation
+constraint on Wood-through-Gold, the rungs that exist *to teach and to pace*, and remove it from
+Masters-through-Apex, the ship target.
+
+⚠️ **AND `TIGHT {1.00 / 0.90 / 0.70}` — §4.1 EXACTLY AS WRITTEN — WOULD PARTLY UNDO ROUND 14.**
+`week.gd:stat_ceiling` (shipped 2026-08-09) lets a committed body push one stat to
+`SPIKE_HEADROOM 1.35 × nominal` out of a shared `6 × nominal` budget. That change is what took a
+real specialist from **4/24 careers to 26/32** — from a trap to a build. A primary tier of 1.00
+hands the headroom straight back. **If per-class caps ship at all, the primary/secondary tiers
+must be `{1.35, 1.15}` — `roster.gd:SHAPE_PRIMARY` / `SHAPE_SECONDARY`, the exact archetype vector
+every rival is already built from — with the restriction landing where the rework actually wants
+it: on the four OFF-class stats.** Measured, ARCHETYPE preserves nearly twice as much of a naive
+player's points as TIGHT (−9.3% vs −19.0%) while forcing nearly twice the spread (0.70 vs 0.40).
+It is better on both axes; TIGHT is dominated.
+
+## 3. WHAT I VERIFIED AND WHAT I REFUTED IN THE ROUND BRIEF
+
+**Verified.**
+- `monster_instance.gd:recompute_class()` overwrites all four derived fields unconditionally, and
+  `week.gd:580` calls it inside `apply_activity` **every week on the shipped path**. A stored
+  choice put anywhere near it is erased before the player sees it. The probe had to re-stamp the
+  class after every single simulated week to keep it alive — that is not a workaround, it is the
+  finding.
+- `class_for_stats` is under contract: `data/classify.json`, 46 cases, 4 axes, exact equality.
+- `Generalist` is the 19th class, is absent from `GameData.classes` (18), is `class_name_`'s own
+  default, and its kitless bug is guarded by `_probe_career_loop.gd:_phase_every_class_can_arm`
+  which rolls call off **`classBasic`**, not off `GameData.classes`.
+- "No species is locked out of a role" is a live, tested claim:
+  `_probe_archetypes.gd:128`, which shapes **every species into every archetype class** and
+  asserts zero misses plus <0.5% stat-total drift.
+
+**Refuted.**
+- ⚠️ **"KIT ALIGNMENT IS THE LARGEST LEVER IN THE GAME AND THE PLAYER CANNOT TOUCH IT."** The
+  first half is true; the second half does not lead where the brief takes it. Derivation makes
+  the kit follow the STATS; assignment makes it follow the CHOICE. **Either way they agree the
+  moment the player trains toward the class they picked.** Misalignment — the 4%, the 14x —
+  requires stats and kit to *disagree*, which under assignment happens only in TRANSIT. The 14x is
+  therefore not an upside the feature unlocks; it is a **cliff the feature installs**.
+- ⚠️ **"The one proposal with an effect size large enough to carry *knowing WHICH monster to make
+  is the skill*."** Measured at 0.97x over a player who chooses nothing. The effect size is zero.
+- **"Putting the commitment in the player's hand"** does not produce a skill gap, because the gap
+  it would produce already exists and the ladder does not convert it: today's fight already
+  discriminates **2.94x** between the naive and the competent training brain, and
+  `SHAPE_DIAGNOSIS.md` measures both completing careers at an identical **87.5%**. ⚠️ **A
+  mechanism that widens a fight-level gap the career converts to zero will also convert to zero.
+  The bottleneck is the LADDER'S CONVERSION, not the availability of the lever.** That is the
+  round's most actionable sentence and it is not about classes at all.
+
+**Not measured, and therefore not claimed.**
+- **Careers.** Everything above is round win-rate at a fixed rung, not `Career.won_game`. The
+  cheap sections were run first precisely so the round could stop before paying for the expensive
+  one. Given the 0.97x, a career run would be measuring noise.
+- **Legibility and agency.** A player who *chooses* their monster's trade may enjoy the game more
+  at an identical win rate. That is real, it is `CLAUDE.md`'s stated fantasy, and **no probe in
+  this repository can measure it** — `docs/OUTSTANDING.md` §3 already names the absence of a
+  single playtest record as the project's biggest unchecked assumption. See §11.
+- Whether a redesigned gate offering *genuinely different* classes (rather than adjacent ones)
+  would produce a real menu. NEIGHBOUR says adjacency does not; nothing here says a wider menu
+  could not.
+
+## 4. THE VERDICT, AND WHAT SHOULD HAPPEN INSTEAD
+
+**Do not build §1–§9 as specified.** Three named reasons, in order of size:
+
+1. **There is no upside to buy** (0.97x), and the confound that looks like one (2.86x) is the
+   training brain, free today.
+2. **The caps are inert exactly where the game is won** and punitive exactly where it is taught —
+   an inverted difficulty gradient (§2).
+3. **The downside is career-ending and arrives by accident**, not by a bad strategic read:
+   TRANSIT at 0.03x is what a player gets for pressing "reassign" on a trained monster.
+
+⚠️ **BUT THE USER'S DECISION OF RECORD IS NOT REFUTED — ITS MECHANISM IS.** *"A class can be
+ASSIGNABLE and that will have its own STAT CAPS on top, to ensure we can't get too much
+generalisation"* is a statement about **generalisation**, and generalisation is real and
+measurable: the naive player's spread is **0.03**, against **0.475** for every rival on the
+ladder, and that player completes the game 87.5% of the time. The finding is that
+**assignment is the wrong lever for it and the cap is aimed at the wrong number.** §10 is what to
+build instead, in the order the evidence supports.
+
+---
+
 **2026-08-03, revised same day.** First pass was a systems design proposal written for the
 coordinator; this revision turns it into a **buildable specification**, incorporating the
 decisions recorded in `docs/DECISIONS_2026-08-03.md`. Everything marked ⭐ PROPOSAL or with an
@@ -114,6 +314,13 @@ Three requirements, all stated directly by the coordinator's framing of the deci
    old emergent system, where "the class" was just whatever fell out passively.
 
 ### 2.2 ⭐ PROPOSAL: rank-and-floor gate
+
+> ⚠️ **ROUND 15 MEASURED THE MENU THIS GATE PRODUCES AND IT IS FLAT.** The gate's own worked
+> example (§2.3) opens Warrior / Skirmisher / Rogue on one body — adjacent classes sharing a stat.
+> Measured over 544 paired fights, choosing between adjacent classes is worth **0.99x**, and
+> per-rung it swings 0.63x–1.7x with no learnable direction. The gate is buildable exactly as
+> written (§10.3) and `GATE_FLOOR = 0.20` is measurably too low, but **a gate that offers a menu
+> of interchangeable options is a menu, not a decision.** §11.2 is the prerequisite.
 
 **A monster qualifies for class `C` (primary stat `P`, secondary stat `S`, from `CLASSES`) iff
 ALL of:**
@@ -358,6 +565,14 @@ Restore as its secondary.
 
 ### 4.1 CONFIRMED for this pass: the 3-tier formula
 
+> ⚠️ **THE TIER VALUES BELOW WERE MEASURED IN ROUND 15 AND ARE REFUTED — see §0.2.** `{1.00, 0.90,
+> 0.70}` is DOMINATED by `{1.35, 1.15, 0.70}` on both axes (it preserves half as much of a naive
+> player's points while forcing half the spread) and it hands back the `SPIKE_HEADROOM 1.35` that
+> round 14 bought to take a specialist from 4/24 careers to 26/32. Worse, **as a fraction of the
+> LEAGUE cap the whole scheme is inert at Masters and Tamers Apex** — a naive body reaches 761/stat
+> against a 770 off-class ceiling. The 3-TIER STRUCTURE survives; the values and the quantity they
+> are a fraction of do not. §10.1 is the replacement.
+
 **Decision:** *"Caps: 3-tier (primary 1.00 / secondary 0.90 / other 0.70) as the working
 proposal"* — adopted for this draft. The multiplier VALUES remain unmeasured proposals (§4.5);
 the 3-TIER STRUCTURE (vs. a 2-tier primary/everything-else scheme) is the part now settled.
@@ -370,8 +585,16 @@ the 3-TIER STRUCTURE (vs. a 2-tier primary/everything-else scheme) is the part n
 | `class` | string | one of 18 + Generalist | the monster's currently assigned class |
 | `c` | Career-like | — | carries `licenseIndex`, `potential`, `species`, `generation` |
 | `statCapFor(c)` | int | existing formula, unchanged | league cap × bloodline `potential`, gen-1 clamped |
-| `relationMult` | float | {1.00, 0.90, 0.70} | 1.00 if `stat` is the class's primary · 0.90 if secondary · 0.70 otherwise |
+| `relationMult` | float | ⚠️ SHIPPED: **{1.35, 1.15, 0.875}** (this row's {1.00, 0.90, 0.70} is refuted — see §0 and the note below) | primary · secondary · otherwise |
 | `classCap` | int | ≤ `statCapFor(c)` always | the final per-stat training ceiling |
+
+⚠️ **THE "OUTPUT RANGE" PARAGRAPH BELOW IS FALSE ON THE SHIPPED BUILD AND THE DIFFERENCE IS THE
+POINT.** It was written when `relationMult` never exceeded 1.00, so committing could only ever
+TIGHTEN a ceiling — which makes assignment a pure cost and an uncommitted monster strictly
+dominant. What shipped LIFTS the primary to 1.35× nominal and retires the free spike for the
+uncommitted state (`week.gd:UNASSIGNED_HEADROOM 1.00`), so a committed primary out-reaches
+anything an uncommitted body can touch by 385 points at Apex, for all 18 classes. Assignment
+redistributes room; it does not confiscate it. Read the paragraph as the ORIGINAL proposal.
 
 **Output range:** strictly ≤ `statCapFor(c)`, since `relationMult` never exceeds 1.00 — this
 formula only ever *tightens* the existing ceiling, never loosens it. A class's primary stat is
@@ -694,3 +917,238 @@ What remains is genuinely open, not a re-ask of settled ground:
    own training goal (§2.1's third requirement) or just silently narrows a menu. Recommend
    greyed-out-with-reason on legibility/competence grounds (SDT), but this is a UX-designer call,
    not a game-designer one — flagged for that handoff.
+
+---
+
+# 10. THE GODOT BUILD SPEC — what is buildable, and in what order
+
+⚠️ Everything in §1–§9 above was written against the **TypeScript** tree on 2026-08-03 and is
+kept for its reasoning. This section is the Godot reality as of 2026-08-10, and where the two
+disagree, this one is later. **§0's verdict governs: item 10.1 is the only part with measured
+support. 10.2 and 10.3 are conditional on decisions only the user can make.**
+
+## 10.1 BUILD THIS FIRST, AND IT IS NOT CLASSES — re-aim the cap at the career, not the league
+
+**The measured problem (§2): the anti-generalisation constraint is inert above Gold.** Fix the
+number it is a fraction *of*, and the class question does not even have to be answered yet.
+
+`week.gd:stat_ceiling()` already carries the right SHAPE — a shared `6 × nominal` budget with
+`SPIKE_HEADROOM 1.35` on any one stat — and its own comment says the budget "does not bind today,
+deliberately". Measured, a full career banks **~4,450 points against 6,600**, i.e. the budget is
+**48% larger than any career can spend**. It is not a guard, it is a decoration.
+
+- **File:** `monster-tamer/scripts/week.gd`, `stat_ceiling()` only. One constant, one line.
+- **Change:** the budget term `6.0 * nominal` becomes `TOTAL_BUDGET_MULT * nominal` with
+  `TOTAL_BUDGET_MULT` authored **below 6.0**. At 5.30 (= `1.35 + 1.15 + 4 × 0.70`, the archetype
+  vector's own sum) it removes 12% of the notional room; the honest starting point given the
+  measured 4,450/6,600 is nearer **4.2**, which is where it first binds on a full career.
+- ⚠️ **THIS IS A SHAPED FUNCTION, NOT A FIT.** Author ONE multiplier. Do not derive eleven
+  per-rung constants — round 12b baked instrument noise into the game permanently that way and
+  `career.gd` carries the scar.
+- **Acceptance, `_probe_class.tscn -- --gym`:** the naive arm's **spread rises above 0.20 at
+  Masters AND at Tamers Apex** (today 0.03 / 0.03) while its **total falls by no more than 10%**.
+  ⚠️ And the guard that makes this safe: **`_probe_shape.tscn -- --pol --seeds 32` must keep
+  FLAT ≥ 24/32.** `SHAPE_DIAGNOSIS.md` §5(a) is explicit — do not buy the gap by making the naive
+  player lose; its losers already stall with 108 blocked weeks and removing the on-ramp violates
+  `CLAUDE.md`.
+- ⚠️ **Do NOT touch `SPIKE_HEADROOM 1.35` or `FOCUS_FLOOR 0.75` in the same change.** Round 14
+  bought the specialist's viability with those two (4/24 → 26/32) and this round's ARCHETYPE
+  reading depends on them holding. One value at a time.
+
+## 10.2 IF ASSIGNABLE CLASS SHIPS ANYWAY — the overwrite-site table
+
+**This is the section that decides whether the feature does anything at all.** A stored player
+choice in this codebase is erased by default: `recompute_class()` writes all four derived fields
+unconditionally, and one of its callers runs **every week**.
+
+⚠️ **THE BRIEF SAID SIX CALLERS OF `recompute_class()`. THERE ARE FIVE, AND THAT UNDERCOUNT IS
+THE LESS DANGEROUS HALF OF THE ERROR — TWO SHIPPED FILES OVERWRITE THE DERIVED FIELDS WITHOUT
+CALLING `recompute_class()` AT ALL.** `breeding_ui.gd` and `lab_ui.gd` assign `class_name_`,
+`role` and `mana_role` inline. A fix applied only to `recompute_class()` would leave every bred
+and every lab-produced monster silently un-assigned — which is precisely this project's signature
+failure, and it would land on the two screens the meta-game is *built around*.
+
+| # | file:line | what it does today | required behaviour once class is STORED |
+|---|---|---|---|
+| 1 | `week.gd:579-581` (`apply_activity`) | `class_before = class_name_` → `recompute_class()` → `_redraft_if_stale(mi, class_before)`. **Runs every week for every monster.** | ⚠️ **THE CRITICAL ONE.** Must recompute `mana_role` / `basic_attack` / `max_hp` / `max_mp` from the new stats but **must NOT touch `class_name_` or `role`**. `_redraft_if_stale`'s `class_before` comparison then never fires on a stored class, which is correct: an assigned monster's kit goes stale on `learnLevel` alone, never on drift. |
+| 2 | `game_data.gd:209` (`make_monster`) | `recompute_class()` at generation | Correct as-is for *generation*: this is where `defaultClass` is decided. Should write the derived answer INTO the stored field once, not leave it derived. |
+| 3 | `game_data.gd:252` (`train`) | `recompute_class()` + unconditional `assign_moveset()` | ⚠️ **DEAD CODE — verified 2026-08-10.** `grep -rn "\.train("` returns only two ⚠️ comments describing its retirement (`monster_instance.gd:72`, `training_ui.gd:3`); the stable screen writes a PLAN and the tick resolves it. **Delete it rather than porting the change into it.** |
+| 4 | `roster.gd:365` (`_shape_to_class`) | `recompute_class()` + `assign_moveset(rng)` after reshaping stats | Must take the target class as authoritative — it already has it as the `want` parameter. Replace `recompute_class()` with a stamp of `want`. ⚠️ `roster.gd:531` calls it as `_shape_to_class(mi, mi.class_name_, …)` for market grades, which under a stored class becomes *shape this body toward the class it was sold as* — correct, and better than today. |
+| 5 | `save_game.gd:214` (`_deserialize_roster`) | `recompute_class()` on load, because derived fields are deliberately never persisted | ⚠️ **THE SAVE-COMPAT SITE.** See 10.4. Must read the stored class if the save has one and fall back to `class_for_stats` if it does not. |
+| 6 | `ui/breeding_ui.gd:306-308` | **INLINE** `child.class_name_ = ClassifyLib.class_for_stats(...)`, `.role`, `.mana_role` — bypasses `recompute_class()` entirely | Must set the child's stored class. ⚠️ **Design question this forces, and it is not small: does a bred child INHERIT a parent's assigned class, or is it born unassigned?** Inheritance makes breeding a way to pass down a trade (which is the vision); unassigned makes every child a fresh decision. Not answered here. |
+| 7 | `ui/lab_ui.gd:273-275` | **INLINE**, same three fields | Same as 6. |
+| 8 | `monster_instance.gd:153-156` (`_set_id`) | Re-drafts the kit when a lineage token arrives after a moveset exists | Unchanged, but the re-draft now draws from the STORED class. Verify the heirloom reserved slot still survives — `_probe_breed` covers it. |
+| 9 | `ui/stable_ui.gd:669,693` (`_class_after`) | Previews *"would this week's training tip me into a different class?"* on the training card | ⚠️ **This label becomes a LIE the day class is stored, and it is currently described in its own comment as "the single most decision-relevant line on the card".** It must be replaced, not deleted: under assignment the useful preview is *"this week's gain would qualify you for Skirmisher"* — the gate teaching its own training goal (§2.1 requirement 3). |
+| 10 | `formations.gd:130,273` | Reads `class_name_` to match a monster to a formation slot | Unchanged, and **strictly better**: a formation keyed to a stored class survives training, which is exactly what the comment at the top of that file wants. |
+| 11 | `_probe_career_loop.gd:126`, `_probe_ladder_slope.gd:264,306`, `_probe_shape.gd`, `_probe_training.gd`, `_probe_week.gd`, `_probe_archetypes.gd` | Probes that stamp `class_name_` or call `recompute_class()` directly | Must be swept in the same change. ⚠️ **`_probe_archetypes.gd:128` is the "no species is locked out of a role" test — see 10.3. It must keep passing or the change is wrong.** |
+
+**The rule, stated once so it can be checked mechanically:** after this change, `class_name_` and
+`role` are written in exactly **four** places — generation (2), reassignment (the new UI action),
+deserialisation (5), and the sum-preserving shaper (4). Anywhere else that assigns them is a bug.
+A cheap guard: make `class_name_` a `set`-guarded property that `push_error`s when written outside
+an explicit `assign_class()` call, and run `_probe_career_loop` — the error surfaces immediately.
+
+## 10.3 THE MECHANISM, PINNED
+
+Answering the round brief's item 3 as buildable detail. **All of it is conditional on 10.1's
+verdict; none of it is worth building at 0.97x.**
+
+**WHEN, and can it change.** Assigned at generation from `defaultClass` (§1.1). Reassignable at
+any time from the stable screen. ⚠️ **The cost is not gold, and §1.1's "TBD gold cost" is the
+wrong currency** — measured, reassignment already costs **0.03x** on the day it is made (TRANSIT),
+because the kit is redrawn onto a body that has none of the new class's stats. **That is the
+price, it is enormous, and it is paid in weeks of retraining.** Adding gold on top would be
+double-charging. What the build owes the player is not a fee but a **warning**: the reassign
+dialog must show the new kit and the stats it will not be able to use, before committing.
+
+**WHAT GATES IT.** §2.2's rank-and-floor gate, unchanged and buildable as written: `rank(P) ≤ 1`,
+`rank(S) ≤ 2`, `stats[P] ≥ GATE_FLOOR × stat_cap_for(mi, league_cap)`. Ties by `Classify.STATS`
+order — the same total order `_top_two()` already relies on, so no new convention. Godot home:
+`classify.gd` as a new `static func classes_available_for(stats, nominal_cap) -> Array`, sitting
+*beside* `class_for_stats` and never replacing it.
+⚠️ **`GATE_FLOOR = 0.20` IS UNMEASURED AND MEASURABLY TOO LOW.** At Iron (cap 500) it is 100, and
+a naive body reaches 500/stat — every class the rank test allows is open from very early. Author
+it as a shaped function of the same quantity 10.1 fixes (a fraction of what a career can BANK, not
+of the league ceiling) or it inherits §2's inversion exactly.
+
+**THE CAPS.** ⚠️ **`{1.00 / 0.90 / 0.70}` is refuted (§2): dominated by `{1.35 / 1.15 / 0.70}` on
+both total preserved and spread forced, and it undoes round 14's `SPIKE_HEADROOM`.** If caps ship,
+ship the archetype tiers. **Why assignment breaks the circularity, stated plainly and unchanged:**
+under derivation, class is a *function of* the stats, so a class-keyed cap raises the ceiling on
+the very stat that selected the class — the cap feeds its own input. A stored class is an
+*input*, not an output: nothing the player trains changes which cap applies, so there is no loop
+to close. The stat gate is the second, independent guard — a class cannot be assigned to a body
+whose stats bear no resemblance to it, so the cap can never be bought by declaration alone.
+
+**GENERALIST.** ⚠️ **It is the UNASSIGNED STATE and it must remain a real, armed class.** It is
+absent from `GameData.classes` (18) but present in `data.json:classBasic` (19) and it is
+`class_name_`'s own default. `monster_instance.gd:_fallback_lines()` gives it a derived kit off
+its two highest stats — that fallback is what stopped it shipping weaponless a second time and it
+**must not be removed**, because it is also the safety net for any future class added without a
+`classLines` entry. Under assignment it becomes honest rather than accidental: *"this monster has
+not committed to a trade"*, ungated, always available, with `relationMult` uniform on all six
+stats. `_probe_career_loop.gd:_phase_every_class_can_arm` rolls call off `classBasic` and must
+keep passing at 171/171.
+
+**THE NON-NEGOTIABLE — no species locked out of a role.** The test exists:
+**`_probe_archetypes.gd:128`**, which shapes every species into every archetype class and asserts
+zero misses. It survives assignment untouched, because assignment does not consult species at all.
+⚠️ **The thing that could break it is the GATE, not the cap**, and the check must be extended to
+say so: **for every species and every class, there must exist a reachable stat vector under the
+class caps for which `classes_available_for()` contains that class.** Because the gate is a rank
+test and rank is relative, and species aptitude is a RATE (never a ceiling — decision #9), the
+proof is constructive: any species can train any stat to the top of its own spread, only slower.
+**Assert it rather than argue it** — add the loop to `_probe_archetypes.gd` and let it fail loudly
+if a future aptitude change makes some path unreachable in a lifetime.
+
+## 10.4 SAVE MIGRATION
+
+`save_game.gd` is `SAVE_VERSION 2` and persists a **fixed field list** —
+`speciesId/stats/id/stamina/happiness/ageWeeks/careerWeek/retired/potential/lifespanYears/foods/
+children`. Derived fields are deliberately never stored (`save_game.gd:7-9`).
+
+- **The migration is a fallback read, not a script.** `assignedClass` absent → call
+  `class_for_stats(stats)` exactly as today. Every existing save loads with every monster keeping
+  the class it has always had, and **no player loses a roster.** Bump to `SAVE_VERSION 3` on write
+  only.
+- ⚠️ **There is a precedent for NOT adding a field, and it should be resisted here.** Lineage
+  rides on the `id` string as an appended `#gen,emph,...` token, specifically because
+  `save_game.gd` was another workstream's file. **Do not do that for class.** The lineage token is
+  safe only because *every field in it is fixed at birth* — `week.gd` seeds the training roll off
+  `mi.id`, so a mutable token would silently re-roll a monster's entire remaining career the
+  moment the player reassigned. A stored class is mutable by definition. It needs a real field.
+- **What the player is told:** nothing, on load — their monsters keep their classes. The first
+  time they open the stable, the class badge becomes an interactive control and the reassign
+  dialog explains itself. A migration the player has to be told about is a migration that took
+  something away.
+
+## 11. WHAT WOULD ACTUALLY CHANGE THE ANSWER
+
+Three things, none of which this round could measure and all of which are cheaper than building
+§1–§9:
+
+1. ⚠️ **THE LADDER'S CONVERSION, WHICH IS THE REAL BLOCKER AND IS NOT ABOUT CLASSES.** The fight
+   already separates naive from competent by **2.94x** and the career converts it to **zero**
+   (87.5% vs 87.5%, `SHAPE_DIAGNOSIS.md` n=32). Until that conversion works, *no* new stable-side
+   mechanic can produce a skill gap — it will be absorbed the same way. **This is the highest-value
+   diagnostic in the project right now** and it needs a probe that asks where a 2.94x round
+   advantage goes between the fight and `Career.won_game`.
+2. **A menu of genuinely DIFFERENT classes.** NEIGHBOUR (0.99x) says adjacent classes are
+   interchangeable — which is the same finding `CLAUDE.md` already states another way: *"today
+   they differ in exactly ONE way, their free attack."* §3's doctrine work is the fix for that,
+   and it is **prior** to assignment, not part of it. Assigning between eighteen classes that
+   play alike is assigning between one class.
+3. **A playtest.** The one claim in favour of assignable class that survives this round entirely
+   intact is that a player may want to *choose*, at an identical win rate. `docs/OUTSTANDING.md`
+   §3 names the absence of a single playtest record as the project's biggest unchecked assumption.
+   ⚠️ **If the user's answer is "I want the choice because it is the game I want to play", that is
+   a legitimate and sufficient reason and this document does not override it** — but it should be
+   taken as a *design* decision made in full view of a 0.97x, not as a *balance* decision the
+   evidence supports.
+
+---
+
+# ⚠️ §12 — ROUND 15 INTEGRATION: THE FEATURE IS SAFE, THE CEILING CHANGE IS NOT
+
+**2026-08-10 · integrator · instruments `scripts/_probe_integrate.gd` (new, 30 checks) and
+`scripts/_probe_shape.gd --pol --only-arm --nocommit` (new attribution flags).**
+
+## 12.1 The mechanism works and nothing overwrites the choice
+
+`./run_contract.sh` PASS (all six, 46 classify cases exact). `_probe_integrate` **30/30** — the
+player's commitment survives all seven writers of the derived fields (weekly tick, save round
+trip, a class-flipping stat change, `make_monster`, `_shape_to_class`, `_make_child`,
+`market_offers`), the **kit follows the ASSIGNMENT** and survives 14 weeks of off-class training
+and `_redraft_if_stale`, no species is locked out (1170 species x class pairs, 0 gate misses, 0
+cap misses, 0 disarmed kits), and the circularity is broken (headroom is a function of the choice
+only; `week.gd` makes no live call to `class_for_stats`).
+
+## 12.2 THE REGRESSION, ATTRIBUTED TO ONE CONSTANT
+
+16 career seeds, paired, identical seeds in every row. FLAT is the control and is **14/16 in every
+single row** — the naive on-ramp is untouched, exactly as the builders measured.
+
+| build | SPIKE (the committed specialist this round exists to sell) |
+|---|---|
+| HEAD / round 14 | **13/16** |
+| round 15 code, `UNASSIGNED_HEADROOM` put back to 1.35, no commit | **12/16** |
+| round 15 code as shipped (1.00), no commit | **4/16** |
+| round 15 code as shipped, committing through the shipped gate | **5/16** |
+| round 15 code, secondary 1.15 -> 1.35 and off 0.875 -> 0.825, committing | **6/16** |
+
+⚠️ **RETIRING THE FREE SPIKE COSTS THE SPECIALIST 8 CAREERS IN 16, AND COMMITTING BUYS BACK ONE.**
+The tier values are not the lever — raising the secondary all the way to the primary's 1.35 moves
+it 5 -> 6. **The binder is the OFF-CLASS ceiling.** A spike brain never *asks* for its four
+off-class stats, but every intensive and diverse drill raises them incidentally, and at 1.35 those
+incidental points bank into the stat TOTAL. Clipped at 0.875 they do not — which is precisely the
+measured -13.7% of lifetime total — and `career.gd:expected_climber_fill` prices difficulty on
+total and is structurally blind to shape. The committed build is therefore punished on the one
+axis the ladder can see.
+
+## 12.3 What this means for the decision in §0
+
+Round 15's verdict (assignment is 0.97x) is **unchanged and unrefuted** by the build. What the
+build adds is that the *ceiling* half of the design — not the assignment half — carries a live
+cost: as shipped, a player who specialises goes from 13/16 to 5/16 while the player who does
+nothing stays at 14/16. **That is an inverted incentive, and it is the round-14 trap rebuilt
+through a different door.** Three ways out, none of them tuning:
+
+1. **Ship assignment, drop the caps** (`UNASSIGNED_HEADROOM` back to `SPIKE_HEADROOM`, class
+   headroom retired). Assignment is then purely a kit/identity commitment, measured at 0.97x on
+   the fight and 14/16 -> 14/16 on the career: **inert, honest, and safe**. The caps' stated job —
+   stopping generalisation — does not bind at Masters or Apex anyway (§0.3, and `_probe_training`
+   §1: a career banks ~4,450 of 6,600).
+2. **Keep the caps and give the ladder a shape term.** Explicitly BANNED by round 14/15. That ban
+   and these caps are incompatible; one of them has to go, and it is a user decision.
+3. **Keep the caps and raise the off-class ceiling above what a career reaches** (~0.95+ at Apex),
+   which makes them decorative at the ship target and load-bearing only at Iron/Gold — the
+   inverted progression §0.3 already flagged.
+
+## 12.4 Instrument debt this round created
+
+- `_probe_career_arc.gd:_drill_plan_shaped` never commits and targets the nominal cap, so its
+  COMPETENT/EXPERT rows now measure the price of shape with none of its upside (`--policies`
+  reads NAIVE 5/5 vs COMPETENT 3/5, n=5). A ⚠️ block is on the function; the fix is to lift
+  `_probe_shape.gd:_commit_to_trade` into the parent, and it needs its own measurement.
+- `_probe_training.gd` §9's two acceptance targets are OPEN (13.7% vs a 10% budget; top
+  learnLevel 573 vs the flat body's 613). Both are downstream of 12.2.

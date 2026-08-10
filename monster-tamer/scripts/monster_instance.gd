@@ -265,11 +265,63 @@ var side: String = ""  # "A" or "B"
 var slot: int = 0
 
 
+## ⚠️ THE PLAYER'S COMMITMENT. "" means UNCOMMITTED, and an uncommitted monster behaves EXACTLY as
+## it always has — `recompute_class()` derives its class from its two highest stats every time it
+## runs. That default is not timidity, it is the migration: every existing save, every rival, every
+## market body and every probe monster loads and behaves byte-for-byte as before, and the feature
+## only ever turns on where a player (or `_shape_to_class`) has said so out loud.
+##
+## ⚠️ AND THIS FIELD IS WHY `recompute_class()` DID NOT HAVE TO BE DELETED FROM ITS FIVE CALLERS.
+## The overwrite problem (docs/CLASS_REWORK.md §10.2) was that a stored choice is stamped over by
+## `week.gd`'s weekly tick, by `save_game.gd` on load, and by two UI screens that bypass
+## `recompute_class()` altogether. Every one of those calls still runs, unchanged, in files this
+## workstream does not own — they simply no longer have anything to overwrite, because the
+## authority moved OUT of `class_name_` and into a field nothing else writes. The fix is at the
+## chokepoint rather than at eleven call sites, which is the only version of it that could be
+## verified rather than merely believed.
+var assigned_class: String = ""
+
+
+func is_class_assigned() -> bool:
+	return assigned_class != ""
+
+
+## Commit this monster to a trade. Does NOT gate — the caller checks
+## `Classify.classes_available_for()` first, because the gate needs the monster's own nominal cap
+## (league cap x potential) and this object does not know its league.
+##
+## ⚠️ PASS AN `rng` WHENEVER THE CLASS ACTUALLY CHANGES, OR THE KIT WILL NOT FOLLOW IT. Alignment
+## between class and kit is the largest measured lever in the game (round 15: 5.50x on a
+## byte-identical stat vector), and `week.gd:_redraft_if_stale` CANNOT rescue a forgotten redraw —
+## it fires on `class_before != class_name_`, and after a reassignment those are already equal by
+## the time the tick runs. So a reassignment without a redraw leaves the monster fighting its old
+## trade's kit forever, silently, which is the exact failure this whole round exists to prevent.
+## The rng is a parameter rather than a `RandomNumberGenerator.new()` because determinism is the
+## contract — an entropy-seeded generator hidden inside this call is how `make_monster` once
+## shipped a different monster every process.
+func assign_class(cls: String, rng: RandomNumberGenerator = null) -> void:
+	assigned_class = cls
+	recompute_class()
+	if rng != null:
+		assign_moveset(rng)
+
+
+## Return to the uncommitted state — class derives from stats again, as it always did.
+func clear_class_assignment() -> void:
+	assigned_class = ""
+	recompute_class()
+
+
+## Refresh everything downstream of stats. ⚠️ IT NO LONGER DECIDES THE CLASS OF A COMMITTED
+## MONSTER — it only re-derives one for a monster that never committed. `role`, `mana_role` and
+## `basic_attack` still track the monster every time, which is why the call had to be kept rather
+## than removed: a Warrior that trains into a Tank's stat shape is still a Warrior, but its mana
+## role and the power of its free attack must follow its actual body.
 func recompute_class() -> void:
-	class_name_ = Classify.class_for_stats(stats)
+	class_name_ = assigned_class if assigned_class != "" else Classify.class_for_stats(stats)
 	role = Classify.role_of_class(class_name_)
 	mana_role = Classify.mana_role_of(stats, class_name_)
-	basic_attack = Classify.basic_attack_for(stats)
+	basic_attack = Classify.basic_attack_for_class(class_name_, stats)
 
 
 func recompute_pools() -> void:
@@ -433,6 +485,12 @@ func clone_for_preview():
 	m.species_id = species_id
 	m.body = body
 	m.stats = stats.duplicate()
+	# ⚠️ THE COMMITMENT TRAVELS WITH THE PREVIEW. `week.gd.preview_week()` runs the REAL
+	# `apply_week` on this copy and diffs the result, so a copy that arrived uncommitted would
+	# re-derive its class inside the preview and the stable screen would quote a different class
+	# (and a different free attack) from the one the week actually produces.
+	m.assigned_class = assigned_class
+	m.class_name_ = class_name_
 	m.max_hp = max_hp
 	m.max_mp = max_mp
 	m.hp = hp

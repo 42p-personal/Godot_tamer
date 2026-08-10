@@ -32,6 +32,7 @@ const OFFER_COUNT := 4
 ## the measurement that came out of that and the graded market that replaced it.
 const RosterLib = preload("res://scripts/roster.gd")
 const RELEASE_REFUND_FRAC := RosterLib.RELEASE_REFUND_FRAC
+const WeekLib = preload("res://scripts/week.gd")
 
 var accent: Color
 var gold_label: Label
@@ -192,6 +193,39 @@ func _estimate_value(mi) -> int:
 	return Roster.market_price(mi)
 
 
+## The species' authored training profile, plus the class its aptitude pair points at. ⚠️ Read from
+## `week.gd:training_profile`/`stat_training_bonus` — the tick's own functions — so this row can
+## never disagree with the drills it is advising about.
+func _aptitude_line(mi) -> String:
+	var prof: Dictionary = WeekLib.training_profile(mi)
+	var major := str(prof.get("major", ""))
+	var minor := str(prof.get("minor", ""))
+	var flaw := str(prof.get("flaw", ""))
+	var parts: Array = []
+	if major != "":
+		parts.append("%s ×%.2f" % [major, WeekLib.stat_training_bonus(mi, major)])
+	if minor != "" and minor != major:
+		parts.append("%s ×%.2f" % [minor, WeekLib.stat_training_bonus(mi, minor)])
+	if flaw != "":
+		parts.append("%s ×%.2f" % [flaw, WeekLib.stat_training_bonus(mi, flaw)])
+	var suits := _class_for_pair(major, minor)
+	if suits == "":
+		suits = _class_for_pair(minor, major)
+	var tail := ("  →  trains toward %s" % suits) if suits != "" else ""
+	if parts.is_empty():
+		return "no authored training aptitude"
+	return "trains: %s%s" % [", ".join(PackedStringArray(parts)), tail]
+
+
+func _class_for_pair(primary: String, secondary: String) -> String:
+	if primary == "" or secondary == "" or primary == secondary:
+		return ""
+	for c in GameData.classes:
+		if str(c.get("primary", "")) == primary and str(c.get("secondary", "")) == secondary:
+			return str(c.get("name", ""))
+	return ""
+
+
 func _render_offers() -> void:
 	for c in offers_box.get_children():
 		c.queue_free()
@@ -234,6 +268,15 @@ func _offer_row(o: Dictionary, stable_full: bool) -> PanelContainer:
 	_row(col, "now %d/stat · ceiling %d (×%.2f) · %s" % [
 		int(round(_mean_stat(mi))), int(round(GameData.stat_cap() * mi.potential)),
 		mi.potential, _age_phrase(mi)], 12, _grade_colour(str(o.get("grade", ""))))
+	# ⚠️ THE CLASS DECISION IS MADE AT THE MARKET, NOT AT THE STABLE, and it was invisible here.
+	# What a recruit is WORTH depends on which class it will end up committed to, and the thing that
+	# decides that is `trainingProfile` — a species' authored major/minor/flaw — which nothing on
+	# this screen showed. Two recruits with identical stats and identical prices can be a 1.20x and
+	# a 0.80x on the same stat, and the player found out weeks later. CLAUDE.md's bar is a decision
+	# "made with knowledge the player has earned"; this is the earnable half, printed where it is
+	# spent. The class NAME here is a suggestion from aptitude, never a lock — any species can train
+	# into any class, and the whole point of an ASSIGNED class is that this row is advice.
+	_row(col, _aptitude_line(mi), 12, FOCUS_COLOR)
 	# The one-line flavour is the recruit pitch; the full bestiary story lives on the stable
 	# detail once the monster is yours.
 	var pitch := Label.new()

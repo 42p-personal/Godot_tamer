@@ -31,6 +31,21 @@ extends Node
 const MonsterInstanceScript = preload("res://scripts/monster_instance.gd")
 const WeekLib = preload("res://scripts/week.gd")
 
+
+## ⚠️ THIS PROBE SHIPPED A TEST DOUBLE FOR `assigned_class` FOR ABOUT AN HOUR AND THEN DID NOT NEED
+## IT. The field landed on `monster_instance.gd` mid-round (with `assign_class`, the gate, save
+## round-trip and the `clone_for_preview` copy), so §11 now exercises the REAL object. The double
+## is deliberately not kept "just in case": a probe that measures a stand-in is a probe that can
+## pass while the shipped path is broken, which is the exact failure §11 exists to catch.
+
+## The minimum surface `week.gd:stat_ceiling` needs, and deliberately NOT a MonsterInstance —
+## it stands in for every caller that is outside the assignment system (rival templates, the shape
+## probes) and pins that they still get round 14's ceiling.
+class PlainBody extends RefCounted:
+	var stats: Dictionary = {}
+	var potential: float = 1.0
+
+
 const STATS := ["STR", "DEX", "CON", "WIS", "INT", "CHA"]
 const APEX_CAP := 1100.0
 
@@ -165,6 +180,43 @@ func _apt_pair(mi) -> Array:
 	return [str(ranked[0]), str(ranked[1])]
 
 
+## ⚠️ A SHAPE PLAYER COMMITS, AND UNTIL ROUND 15 THERE WAS NOTHING TO COMMIT TO. Per-class caps
+## retired the free 1.35x spike that every body used to get on every stat; the spike is now bought
+## by ASSIGNING a class. So an arm that trains toward a stat pair and never assigns is modelling a
+## player making a strictly dominated choice, and the totals it reports are the price of that
+## mistake rather than the price of shape. These arms commit — through the SHIPPED gate, at the
+## moment the gate opens, exactly as the screen will.
+##
+## Returns true once committed (or already committed). A freshly generated monster qualifies for
+## nothing — `Classify.GATE_FLOOR` is 0.20 of the nominal cap and its stats start near 10 — so this
+## is called every week and simply does nothing until the training has earned the choice.
+func _commit_when_eligible(mi, want_primary: String, want_secondary: String, cap: float) -> bool:
+	if mi.is_class_assigned():
+		return true
+	var nominal := float(WeekLib.stat_cap_for(mi, cap))
+	var avail: Array = Classify.classes_available_for(mi.stats, nominal)
+	if avail.is_empty():
+		return false
+	var best := ""
+	var fallback := ""
+	for c in GameData.classes:
+		var cname := str(c.get("name", ""))
+		if not avail.has(cname):
+			continue
+		if str(c.get("primary", "")) != want_primary:
+			continue
+		if str(c.get("secondary", "")) == want_secondary:
+			best = cname
+			break
+		if fallback == "":
+			fallback = cname
+	var pick: String = best if best != "" else fallback
+	if pick == "":
+		return false
+	mi.assign_class(pick)
+	return true
+
+
 ## The drill that pays the most raw points into `stat` — always the extreme tier (+24/−4/−4).
 func _push_drill(stat: String) -> String:
 	return "x" + stat.to_lower()
@@ -202,6 +254,10 @@ func _run_policy(seed_id: String, policy: String, cap: float) -> Dictionary:
 					lo_stat = s
 			pick = _push_drill(lo_stat)
 		else:  # shape
+			_commit_when_eligible(mi, pair[0], pair[1], cap)
+			# ⚠️ THE POLICY'S OWN TARGET IS THE CLASS CEILING, NOT THE NOMINAL CAP. Reading
+			# `stat_cap_for` here would make the arm stop training its primary 385 points early —
+			# the instrument refusing the headroom the mechanic under test exists to sell.
 			var own_cap := WeekLib.stat_cap_for(mi, cap)
 			var pri: float = float(mi.stats[pair[0]])
 			var sec: float = float(mi.stats[pair[1]])
@@ -216,7 +272,7 @@ func _run_policy(seed_id: String, policy: String, cap: float) -> Dictionary:
 				var third := ""
 				var third_s := -9999.0
 				for s in STATS:
-					if pair.has(s) or float(mi.stats[s]) >= own_cap - 0.5:
+					if pair.has(s) or float(mi.stats[s]) >= WeekLib.stat_ceiling(mi, cap, s) - 0.5:
 						continue
 					var sc: float = WeekLib.stat_training_bonus(mi, s)
 					if sc > third_s:
@@ -301,6 +357,7 @@ func _potential_arm(pot: float, cap: float) -> Dictionary:
 			if mi.stamina < 30.0:
 				WeekLib.apply_week(mi, {"kind": "rest"}, 100000, 0, "meat", false, 10, cap, "Wood")
 				continue
+			_commit_when_eligible(mi, pair[0], pair[1], cap)
 			var pri: float = float(mi.stats[pair[0]])
 			var sec: float = float(mi.stats[pair[1]])
 			var want: String = pair[0] if pri < sec * (1.35 / 1.15) else pair[1]
@@ -495,6 +552,9 @@ func _ready() -> void:
 		var wk := 0
 		while not sm.retired and wk < 400:
 			wk += 1
+			# a deliberate specialist commits the moment the gate lets it — that is what buys the
+			# per-class primary ceiling the rest of this arm is measuring against
+			_commit_when_eligible(sm, target, "", cap)
 			sm.fed_this_week = false
 			if sm.stamina < 30.0:
 				WeekLib.apply_week(sm, {"kind": "rest"}, 100000, 0, "meat", false, 10, cap, "Wood")
@@ -651,7 +711,301 @@ func _ready() -> void:
 	_ok(float(pot_totals[1.25]) > float(pot_totals[1.0]) + 1.0,
 		"a x1.25 bloodline out-trains a wild one — potential reaches the shipped tick")
 
+	_section_11_class_caps(cap)
+
 	print("")
 	print("=== %d checks, %d failed  ·  %d acceptance targets, %d OPEN ===" % [
 		_checks, _fail, _targets, _targets_open])
 	get_tree().quit(0 if _fail == 0 else 1)
+
+
+# =============================================================================
+# 11. PER-CLASS STAT CAPS (docs/CLASS_REWORK.md §2) — added round 15.
+#
+# Four things this section has to prove, because each is a way the feature could ship looking
+# correct and be worthless:
+#   a. the composition matches the SPEC and the SCREEN (league cap x potential x class relation)
+#   b. the tick and the preview agree once the ceiling depends on the class — the clone bug
+#   c. a COMMITTED build out-reaches an uncommitted one on its own axis (the upside), while an
+#      evenly-trained body loses nothing (the non-punishment)
+#   d. NO SPECIES IS LOCKED OUT OF ANY ROLE — CLAUDE.md's standing rule, which outranks the feature
+# =============================================================================
+
+## A monster carrying the not-yet-shipped `assigned_class` field. `cls` == "" is the uncommitted
+## state; anything in `GameData.classes` is a real commitment.
+func _make_assigned(id_: String, cls: String, sp_id: String = "") -> Object:
+	var sid := sp_id
+	if sid == "":
+		sid = str(GameData.species_by_id.keys()[0])
+	var sp: Dictionary = GameData.species_by_id[sid]
+	var mi = MonsterInstanceScript.new()
+	mi.id = id_
+	mi.species_id = sid
+	mi.species_name = str(sp["name"])
+	mi.body = str(sp["body"])
+	mi.favourite_food = "meat"
+	mi.hated_food = "fruit"
+	mi.happiness = 5
+	mi.stamina = 100.0
+	mi.age_weeks = 48
+	mi.lifespan_years = 8.0
+	for stat in STATS:
+		mi.stats[stat] = float(sp["base"].get(stat, 10.0))
+	# ⚠️ `assign_class` (not a raw field write) — it is the shipped entry point and it recomputes
+	# role/mana role/free attack with it. Writing the field directly would test a path no screen uses.
+	if cls != "":
+		mi.assign_class(cls)
+	mi.recompute_class()
+	mi.recompute_pools()
+	mi.hp = mi.max_hp
+	mi.mp = mi.max_mp
+	return mi
+
+
+## The ceiling formula EXACTLY as it stood before per-class caps landed, kept here as the
+## reference the legacy path is diffed against. If someone edits `week.gd:stat_ceiling` and the
+## no-field path stops matching this, the caps have silently changed the game for every build that
+## has not shipped assignment yet — the one regression the feature detect exists to make impossible.
+func _legacy_ceiling(mi, league_cap: float, stat: String) -> float:
+	var nominal := float(WeekLib.stat_cap_for(mi, league_cap))
+	var spent := 0.0
+	for s in mi.stats:
+		if str(s) != stat:
+			spent += float(mi.stats[s])
+	return maxf(nominal, minf(nominal * WeekLib.SPIKE_HEADROOM, 6.0 * nominal - spent))
+
+
+func _section_11_class_caps(cap: float) -> void:
+	print("")
+	print("--- (11) PER-CLASS STAT CAPS: composition, mirror, upside, lockout ---")
+
+	# ── 11a. the no-`assigned_class` fallback is still byte-identical to round 14 ───────────
+	# ⚠️ THIS PATH IS NO LONGER REACHED BY A REAL MONSTER and it is kept on purpose. Every
+	# `MonsterInstance` now carries `assigned_class`, so `week.gd:assignment_active` is true for the
+	# whole roster — but `stat_ceiling` is a static that anything with `stats`/`potential` may call
+	# (rival templates and the shape probes do), and for those it must still behave exactly as it
+	# did in round 14 rather than silently applying an uncommitted body's caps to an object that
+	# was never in the assignment system at all.
+	var legacy_max_diff := 0.0
+	for i in range(6):
+		var lm := PlainBody.new()
+		lm.potential = [1.0, 1.10, 1.25][i % 3]
+		for s in STATS:
+			lm.stats[s] = float(40 + (i * 37 + STATS.find(s) * 91) % 700)
+		for s2 in STATS:
+			legacy_max_diff = maxf(legacy_max_diff, absf(
+				WeekLib.stat_ceiling(lm, cap, s2) - _legacy_ceiling(lm, cap, s2)))
+	_ok(legacy_max_diff < 0.001,
+		"an object with no assigned_class still gets round 14's exact ceiling (max diff %.4f)" % legacy_max_diff)
+
+	# ── 11b. the composition, stated and checked ────────────────────────────────────────────
+	# league cap x bloodline potential -> NOMINAL; class relation scales that scalar; the shared
+	# 6 x nominal budget is applied last and may only remove room ABOVE nominal.
+	var probe_class := str(GameData.classes[0].get("name", ""))
+	var probe_pair := WeekLib.class_stat_pair(probe_class)
+	var cm = _make_assigned("comp", probe_class)
+	cm.potential = 1.20
+	for s in STATS:
+		cm.stats[s] = 10.0          # nothing spent, so the budget term cannot bind
+	var nominal := float(WeekLib.stat_cap_for(cm, cap))
+	print("  %s (%s primary / %s secondary) at cap %.0f x potential %.2f -> nominal %.0f" % [
+		probe_class, probe_pair[0], probe_pair[1], cap, cm.potential, nominal])
+	# ⚠️ THE CLASS RELATION IS GONE FROM THE COMPOSITION (per-class caps retired, 2026-08-10).
+	# The ceiling is league cap x bloodline potential x SPIKE_HEADROOM, IDENTICALLY for all six
+	# stats — the assigned class does not enter it at all. Asserting the flat shape is what stops
+	# a future round quietly reintroducing a class term here without the ladder learning to see
+	# shape, which is the pairing that cost a committed specialist 8 careers in 16.
+	var comp_ok := true
+	var want := nominal * WeekLib.SPIKE_HEADROOM
+	for s in STATS:
+		var got := WeekLib.stat_ceiling(cm, cap, s)
+		print("    %s ceiling %6.0f  (expected %6.0f, flat)" % [s, got, want])
+		if absf(got - want) > 0.001:
+			comp_ok = false
+	_ok(comp_ok, "the ceiling composes as league cap x potential x spike headroom — NO class term")
+
+	# the uncommitted state: uniform, and NO free spike
+	var um = _make_assigned("uncommitted", "")
+	for s in STATS:
+		um.stats[s] = 10.0
+	var uni_ok := true
+	for s in STATS:
+		if absf(WeekLib.stat_ceiling(um, cap, s) - float(WeekLib.stat_cap_for(um, cap))) > 0.001:
+			uni_ok = false
+	# ⚠️ INVERTED WITH THE RETIREMENT OF THE PER-CLASS CAPS (user decision 2026-08-10). This once
+	# asserted "no free spike" — that an uncommitted body was pinned to the nominal cap so that
+	# committing had something to sell. The caps are gone (see `week.gd:class_headroom`), so round
+	# 14's SPIKE_HEADROOM is back for everyone and the free spike is the CORRECT behaviour: it is
+	# what took a specialist from 4/24 careers to 26/32, and clipping it cost 8 of 16 back.
+	_ok(not uni_ok, "an UNASSIGNED body keeps round 14's spike headroom — the per-class caps are OFF")
+
+	# ── 11c. the screen cannot lie about the tick ───────────────────────────────────────────
+	# This is the check that catches clone_for_preview not copying the class. Deliberately run on a
+	# body ALREADY pressed against its off-class ceiling, the only state where a wrong class in the
+	# clone changes the answer.
+	var mirror_bad := 0
+	var mirror_cases := 0
+	for i in range(12):
+		var cls := str(GameData.classes[i % GameData.classes.size()].get("name", ""))
+		var pair := WeekLib.class_stat_pair(cls)
+		var a = _make_assigned("mir-%d" % i, cls)
+		var b = _make_assigned("mir-%d" % i, cls)
+		for s in STATS:
+			var v: float = cap * WeekLib.CLASS_OFF_HEADROOM - 6.0
+			if s == pair[0]:
+				v = cap * WeekLib.CLASS_PRIMARY_HEADROOM - 6.0
+			elif s == pair[1]:
+				v = cap * WeekLib.CLASS_SECONDARY_HEADROOM - 6.0
+			a.stats[s] = v
+			b.stats[s] = v
+		var drill: String = str(WeekLib.DRILLS[i % WeekLib.DRILLS.size()]["id"])
+		var pv: Dictionary = WeekLib.preview_week(a, {"kind": "train", "drillId": drill},
+			500, 0, "meat", false, 10, cap, "Wood")
+		var before: Dictionary = b.stats.duplicate()
+		WeekLib.apply_week(b, {"kind": "train", "drillId": drill}, 500, 0, "meat", false, 10, cap, "Wood")
+		for s3 in STATS:
+			mirror_cases += 1
+			if absf((float(b.stats[s3]) - float(before[s3])) - float(pv["statDeltas"].get(s3, 0.0))) > 0.001:
+				mirror_bad += 1
+	_ok(mirror_bad == 0,
+		"preview == apply at the CLASS ceiling on %d deltas (the clone carries the class)" % mirror_cases)
+
+	# ── 11d. commitment reaches FURTHER than non-commitment reaches anywhere ────────────────
+	var reach_bad := 0
+	var reach_gain := 0.0
+	for c in GameData.classes:
+		var cname := str(c.get("name", ""))
+		var pri := str(c.get("primary", ""))
+		var am = _make_assigned("reach-%s" % cname, cname)
+		var nm = _make_assigned("reach-un-%s" % cname, "")
+		for s in STATS:
+			am.stats[s] = 10.0
+			nm.stats[s] = 10.0
+		var committed := WeekLib.stat_ceiling(am, cap, pri)
+		var best_un := 0.0
+		for s in STATS:
+			best_un = maxf(best_un, WeekLib.stat_ceiling(nm, cap, s))
+		reach_gain += committed - best_un
+		if committed <= best_un + 0.001:
+			reach_bad += 1
+	print("  committed primary ceiling beats the best uncommitted ceiling by %.0f on average" % [
+		reach_gain / float(GameData.classes.size())])
+	# ⚠️ RETIRED WITH THE CAPS, AND DELIBERATELY NOT REPLACED BY A WEAKER VERSION. This asserted
+	# that committing bought reach. It no longer can: every stat on every body gets the same
+	# ceiling, which is the entire point of the retirement. Committing now buys KIT ALIGNMENT and
+	# nothing else, and that is asserted where it lives — `_probe_assign.gd` checks the moveset
+	# follows the assignment, and that the ceiling does NOT move.
+	_ok(reach_bad == GameData.classes.size(),
+		"no class buys stat reach — commitment is priced in kit alignment alone (%d/%d)"
+		% [reach_bad, GameData.classes.size()])
+
+	# ...and an evenly-trained body is not punished for it
+	var flat_a = _make_assigned("flat-a", "")
+	var flat_b = _make("flat-b")
+	for s in STATS:
+		flat_a.stats[s] = cap
+		flat_b.stats[s] = cap
+	var flat_bad := 0
+	for s in STATS:
+		if absf(WeekLib.stat_ceiling(flat_a, cap, s) - WeekLib.stat_ceiling(flat_b, cap, s)) > 0.001:
+			flat_bad += 1
+	_ok(flat_bad == 0,
+		"an evenly-trained body's ceiling is UNCHANGED by the caps — the naive player pays nothing")
+
+	# ── 11e. NO SPECIES IS LOCKED OUT OF ANY ROLE ──────────────────────────────────────────
+	# CLAUDE.md's standing rule, and it outranks the feature. Two halves, because a structural
+	# proof alone would be exactly the kind of argument this project keeps finding was wrong:
+	#   STRUCTURAL — the ceiling is a function of (class, potential, league cap) and NEVER of the
+	#                species, so a cap cannot forbid a species anything.
+	#   MEASURED   — the worst real case (a species training the stat it has an authored FLAW in,
+	#                as that class's PRIMARY) must still climb. Slower or shallower, never forbidden.
+	var species_ids: Array = GameData.species_by_id.keys()
+	var ceil_bad := 0
+	var ref_ceilings := {}
+	for c2 in GameData.classes:
+		var cn := str(c2.get("name", ""))
+		for si in range(species_ids.size()):
+			var sm = _make_assigned("lock-%d" % si, cn, str(species_ids[si]))
+			for s in STATS:
+				sm.stats[s] = 10.0
+			for s4 in STATS:
+				var key := "%s/%s" % [cn, s4]
+				var v2 := WeekLib.stat_ceiling(sm, cap, s4)
+				if not ref_ceilings.has(key):
+					ref_ceilings[key] = v2
+				elif absf(float(ref_ceilings[key]) - v2) > 0.001:
+					ceil_bad += 1
+	_ok(ceil_bad == 0,
+		"the class ceiling is identical for all %d species across %d class x stat combinations — a cap cannot lock a species out" % [
+			species_ids.size(), ref_ceilings.size()])
+
+	# the measured half: find the worst species/stat pairing and train it as a class primary
+	var worst_sp := ""
+	var worst_stat := ""
+	var worst_bonus := 9.0
+	for sid in species_ids:
+		var t = _make_assigned("flawscan", "", str(sid))
+		for s in STATS:
+			var bns := WeekLib.stat_training_bonus(t, s)
+			if bns < worst_bonus:
+				worst_bonus = bns
+				worst_sp = str(sid)
+				worst_stat = s
+	var target_class := ""
+	for c3 in GameData.classes:
+		if str(c3.get("primary", "")) == worst_stat:
+			target_class = str(c3.get("name", ""))
+			break
+	var lm2 = _make_assigned("locked", target_class, worst_sp)
+	var start_v := float(lm2.stats[worst_stat])
+	var wk2 := 0
+	while not lm2.retired and wk2 < 400:
+		wk2 += 1
+		lm2.fed_this_week = false
+		if lm2.stamina < 30.0:
+			WeekLib.apply_week(lm2, {"kind": "rest"}, 100000, 0, "meat", false, 10, cap, "Wood")
+			continue
+		WeekLib.apply_week(lm2, {"kind": "train", "drillId": _push_drill(worst_stat)}, 100000, 0,
+			"meat", false, 10, cap, "Wood")
+	var ceil_v := WeekLib.stat_ceiling(lm2, cap, worst_stat)
+	print("  worst case: %s training %s (aptitude x%.2f) as %s primary" % [
+		lm2.species_name, worst_stat, worst_bonus, target_class])
+	print("    %.0f -> %.0f against a class ceiling of %.0f (%.0f%% of it)" % [
+		start_v, float(lm2.stats[worst_stat]), ceil_v, 100.0 * float(lm2.stats[worst_stat]) / maxf(1.0, ceil_v)])
+	_ok(float(lm2.stats[worst_stat]) > start_v * 5.0,
+		"a species with an authored FLAW in a class primary stat still trains into that class")
+
+	# ── 11g. THE TIERS SUM TO THE BUDGET — committing redistributes room, never shrinks it ──
+	# ⚠️ THE ONE PROPERTY THAT MAKES THIS A DECISION RATHER THAN A TAX, and it is arithmetic, so it
+	# is asserted rather than argued. If someone lowers the off-class tier to `CLASS_REWORK.md`
+	# §4.1's 0.70 this goes RED at 5.30 vs 6.00 and names the 12% of a career it would cost.
+	var tier_sum: float = WeekLib.CLASS_PRIMARY_HEADROOM + WeekLib.CLASS_SECONDARY_HEADROOM 		+ 4.0 * WeekLib.CLASS_OFF_HEADROOM
+	print("  class tiers %.3f + %.3f + 4 x %.3f = %.3f  (uncommitted budget 6.000)" % [
+		WeekLib.CLASS_PRIMARY_HEADROOM, WeekLib.CLASS_SECONDARY_HEADROOM,
+		WeekLib.CLASS_OFF_HEADROOM, tier_sum])
+	_ok(absf(tier_sum - 6.0) < 0.001,
+		"the six class ceilings sum to the SAME 6 x nominal budget an uncommitted body gets")
+
+	# ── 11f. round 14 must survive: a committed specialist still reaches the top ────────────
+	# FOCUS_FLOOR is 0.75 because at 0.55 a committed build lost 17 careers in 24. If the caps
+	# re-impose that cost by another route the trap has been rebuilt, so this is the same check §6
+	# runs, with the assignment ON.
+	var spec_class := ""
+	for c4 in GameData.classes:
+		if str(c4.get("primary", "")) == "STR":
+			spec_class = str(c4.get("name", ""))
+			break
+	var sp2 = _make_assigned("spec-assigned", spec_class)
+	var wk3 := 0
+	while not sp2.retired and wk3 < 400:
+		wk3 += 1
+		sp2.fed_this_week = false
+		if sp2.stamina < 30.0:
+			WeekLib.apply_week(sp2, {"kind": "rest"}, 100000, 0, "meat", false, 10, cap, "Wood")
+			continue
+		WeekLib.apply_week(sp2, {"kind": "train", "drillId": _push_drill("STR")}, 100000, 0,
+			"meat", false, 10, cap, "Wood")
+	print("  committed %s specialist: STR %.0f / nominal %.0f / class ceiling %.0f" % [
+		spec_class, float(sp2.stats["STR"]), cap, WeekLib.stat_ceiling(sp2, cap, "STR")])
+	_ok(float(sp2.stats["STR"]) >= cap * 0.85,
+		"a committed STR specialist still gets within 15%% of the Apex nominal cap (round 14 holds)")

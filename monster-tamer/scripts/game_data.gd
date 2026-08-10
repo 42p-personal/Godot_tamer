@@ -206,6 +206,14 @@ func make_monster(species_id: String, training_level: float = 0.0, rng: RandomNu
 			mi.stats[stat] += room * training_level * mult * room_mult
 			mi.stats[stat] = minf(cap, mi.stats[stat])
 
+	# ⚠️ A GENERATED MONSTER IS BORN UNCOMMITTED, AND THAT IS A DELIBERATE REFUSAL OF
+	# docs/CLASS_REWORK.md §10.2 row 2, which asks generation to stamp the derived class into the
+	# stored field. Doing that would commit EVERY monster in the game at birth — every rival, every
+	# market body, every probe fixture — and freeze its class against training from week one. That
+	# is not a UI change, it is a change to what the whole ladder measures, and round 15 priced the
+	# feature it would be paying for at 0.97x. Uncommitted is byte-identical to today's behaviour;
+	# the commitment is made where a player (or `roster.gd:_shape_to_class`, for a finished body
+	# that was SOLD as a trade) says so out loud. See the report for what it would take to flip it.
 	mi.recompute_class()
 	mi.recompute_pools()
 	# ⚠️ THE FALLBACK MUST BE DETERMINISTIC. This was `RandomNumberGenerator.new()` — ENTROPY
@@ -228,43 +236,12 @@ func make_monster(species_id: String, training_level: float = 0.0, rng: RandomNu
 	return mi
 
 
-## Apply one training drill to a live monster (mockup version of drills.ts). Basic drills raise
-## one stat modestly with no cost; intensive drills raise one stat more, at a flat cost to a
-## second. Numbers approximate `src/drills.ts`'s BASIC_GAIN/INTENSIVE_GAIN bands, not copied
-## exactly (that file rolls a happiness-weighted range per week; this is a single deterministic
-## step sized for a demo — see the doc note at the top of this file).
-func train(mi, stat: String, intensive: bool, paired_stat: String = "") -> Dictionary:
-	var before_class: String = mi.class_name_
-	var gain := 12.0 if intensive else 6.0
-	# ⚠️ Room is measured against the CURRENT LEAGUE's cap, so a monster at the Wood ceiling
-	# genuinely cannot be trained further until the player is promoted. That is the ladder doing
-	# real work rather than merely scaling numbers — and it means `applied` can legitimately be 0,
-	# which the UI must be able to say out loud rather than silently doing nothing.
-	var room: float = maxf(0.0, stat_cap() - mi.stats[stat])
-	var applied: float = minf(gain, room)
-	mi.stats[stat] += applied
-
-	var cost := 0.0
-	if intensive and paired_stat != "" and paired_stat != stat:
-		cost = minf(4.0, mi.stats[paired_stat])
-		mi.stats[paired_stat] -= cost
-
-	mi.recompute_class()
-	mi.recompute_pools()
-	# ⚠️ MUST RE-ROLL THE MOVESET HERE, NOT JUST CLASS/POOLS. `assign_moveset` draws from
-	# `CLASS_LINES[class_name_]` — a class change with a stale moveset would show a Warrior still
-	# fighting with its old Tank-affinity Warden/Guardian picks, which is exactly the kind of
-	# "trained it but nothing downstream followed" bug this loop exists to avoid (caught by
-	# inspecting the stable screen after a training pass moved Aegisox Tank -> Warrior).
-	mi.assign_moveset(RandomNumberGenerator.new())
-	mi.hp = minf(mi.hp, float(mi.max_hp))
-	mi.mp = minf(mi.mp, float(mi.max_mp))
-
-	return {
-		"stat": stat, "gain": applied, "pairedStat": paired_stat, "cost": cost,
-		"classBefore": before_class, "classAfter": mi.class_name_,
-		"classChanged": before_class != mi.class_name_,
-	}
+## ⚠️ `train()` WAS DELETED HERE (round 15, docs/CLASS_REWORK.md §10.2 row 3). It was a
+## verified-dead sixth writer of the derived class fields: `grep -rn "\.train("` returned only
+## two comments describing its own retirement (`monster_instance.gd:72`, `ui/training_ui.gd:3`).
+## The stable screen writes a PLAN and `week.gd` resolves it; nothing has called this since.
+## It is gone rather than fixed because a dead code path that stamps `class_name_` is a loaded
+## gun aimed at a stored player choice, and the cheapest way to make it safe is to not have it.
 
 
 ## The long-form bestiary bio for a species, falling back to its one-line flavour. Screens

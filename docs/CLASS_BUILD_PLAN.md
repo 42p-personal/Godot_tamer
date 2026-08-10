@@ -13,9 +13,28 @@ dependency on the tree AI can land earlier as pure data (§7 Stage 0); only the 
 `Tactics` wiring genuinely has to wait.
 
 ⚠️ **THE BALANCE BASELINE IS STILL SUSPENDED.** Every specific number in this document — the
-`{1.00, 0.90, 0.70}` cap tier multipliers, the `0.20` gate floor, the reassignment gold/weeks cost
-— is structure, not a measured value. They are written down so the STRUCTURE is buildable now;
-the values are queued for the deliberate re-baseline per `CLAUDE.md`, one value at a time.
+cap tier multipliers, the `0.20` gate floor, the reassignment gold/weeks cost — is structure, not
+a measured value. They are written down so the STRUCTURE is buildable now; the values are queued
+for the deliberate re-baseline per `CLAUDE.md`, one value at a time.
+
+⚠️ **THE SHIPPED CAP TIERS ARE `{1.35, 1.15, 0.875}`, NOT THE `{1.00, 0.90, 0.70}` THIS DOCUMENT
+STILL QUOTES BELOW (round 15, `week.gd:CLASS_*_HEADROOM`).** Two measurements moved them and both
+are worth carrying, because each kills a different plausible-looking value:
+
+- **A primary tier of 1.00 partly undoes round 14.** `SPIKE_HEADROOM 1.35` is what took a
+  specialist career from 4/24 to 26/32; a committed primary capped at the nominal cap hands that
+  back and makes committing strictly worse than not committing — a trap with a price tag, which is
+  the exact shape round 14 spent itself undoing.
+- **An off-class tier of 0.70 is DOMINATED.** `1.35 + 1.15 + 4 x 0.70 = 5.30` against the `6.00`
+  an uncommitted body already gets, so committing shrinks a monster's total room by 12% before it
+  has decided anything. `0.875` sums to exactly `6.00`: committing REDISTRIBUTES room and never
+  removes it. And at identical anti-generalisation strength (no off-class stat passes its tier
+  under either value) 0.70 measured a strictly smaller career total — 3694 vs 3776 points on the
+  same seeds. `_probe_training.gd` §11g asserts the sum-to-6.0 property as arithmetic, so lowering
+  it turns that check red and prints the budget it would cost.
+
+⚠️ **Read the tier values below as REFUTED-AS-WRITTEN.** The three-tier STRUCTURE they describe is
+what shipped; the numbers are not.
 
 ---
 

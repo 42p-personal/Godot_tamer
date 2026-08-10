@@ -136,6 +136,43 @@ func projected_cost(monsters: Array) -> Dictionary:
 	return {"gold": gold_cost, "stamina": stamina_cost}
 
 
+## WHICH ceiling a stat is standing on, in the player's own words. Named per stat, because the
+## remedy is different for each: promotion raises the league cap, reassignment moves which stats
+## are off-class, and nothing at all raises a class primary short of a better bloodline.
+##
+## ⚠️ READ FROM `week.gd`, NEVER RE-DERIVED. `class_headroom` is the tick's own function; a second
+## copy of the tier table on this screen is exactly the drift `stable_ui.gd`'s `INTENSIVE_PAIR`
+## note documents (a hand-copied six-entry table that had silently gone wrong in three ways).
+##
+## ⚠️ EVERY STAT IS "league" NOW, BECAUSE THE PER-CLASS CAPS ARE RETIRED (see the long block above
+## `week.gd:class_headroom`). The tier vocabulary is kept rather than deleted because THIS SCREEN'S
+## WHOLE JOB IS TO MIRROR THE TICK, and the tick still has a real ceiling — the league cap times
+## bloodline potential, less the shared budget. What it must never again do is name a tier the tick
+## does not apply: this function returned "off-class" and the caller told the player their stat
+## "stops at 70% of the league cap" while `class_headroom` handed that same stat 1.35x. A screen
+## that invents a constraint is worse than one that omits it, because the player plans around it.
+func stat_ceiling_tier(mi, _stat: String) -> String:
+	if not WeekLib.assignment_active(mi):
+		return "league"
+	return "league"
+
+
+## ⚠️ THE PER-CLASS TIER MESSAGES ARE GONE WITH THE CAPS THEY DESCRIBED. This function used to
+## branch four ways and tell the player things like "%s is OFF-CLASS for a %s — it stops at 70%% of
+## the league cap"; none of that binds any more (see `week.gd:class_headroom`). It now names the
+## ceiling the tick ACTUALLY applies — league cap x bloodline potential, less the shared budget —
+## and says which of the two the player can move, because those have different remedies: promotion
+## raises the league cap, a better bloodline raises the multiplier, and nothing else does either.
+func _ceiling_reason(mi, gains: Dictionary, cap: float) -> String:
+	for stat in gains.keys():
+		if float(gains[stat]) <= 0.0:
+			continue
+		var ceiling: float = WeekLib.stat_ceiling(mi, cap, str(stat))
+		return "%s is at this monster's ceiling (%d) — win promotion to raise the league cap, or breed a better bloodline." % [
+			stat, int(round(ceiling))]
+	return "At the league ceiling — win promotion to train this further."
+
+
 ## Can this monster take this drill, and if not, WHY not — the string is shown on the disabled
 ## button. ⚠️ Never a dead button with no explanation (`docs/UI_LAYOUT_RULES.md` rule 2's spirit).
 ##
@@ -173,7 +210,13 @@ func drill_note(mi, drill_id: String, cap: float) -> Dictionary:
 	if not any_raised:
 		at_cap = false
 	if at_cap:
-		return {"allowed": false, "note": "At the league ceiling — win promotion to train this further."}
+		# ⚠️ A CEILING THE PLAYER CANNOT NAME IS A BUG REPORT WAITING TO HAPPEN. There are now THREE
+		# reasons a drill can be refused and only one of them is the league: a stat can be at its
+		# league ceiling (win promotion), at its OFF-CLASS ceiling (0.70 of it — reassign, or train
+		# something this class is for), or at its class primary/secondary ceiling (the real top).
+		# Saying "win promotion" to a player whose Rogue is pinned at 0.70 x cap on CON would be the
+		# screen giving advice that cannot work.
+		return {"allowed": false, "note": _ceiling_reason(mi, gains, cap)}
 	var stam: float = WeekLib.drill_stamina(str(d.get("kind", "basic")))
 	if mi.stamina < 30.0:
 		return {"allowed": true, "note": "Exhausted — gains halved. A rest week would pay for itself."}
@@ -234,7 +277,24 @@ func _why_lines(mi, p: Dictionary) -> Array:
 		var fm: float = WeekLib.food_train_mult(food, str(stat))
 		if fm > 1.0:
 			out.append("%s food boost ×%.2f" % [stat, fm])
+		# ⚠️ THE CLASS CEILING IS A LIVE TERM IN THE WEEK, SO IT BELONGS IN THE CHAIN. It is a clamp
+		# on the result rather than a multiplier on the roll, but it is the term most likely to be
+		# the reason a week landed smaller than the card promised — and the whole point of this list
+		# is that the player can explain the week afterwards.
+		var tier := stat_ceiling_tier(mi, str(stat))
+		if tier != "league" and tier != "unassigned":
+			var ceil_v: float = WeekLib.stat_ceiling(mi, cap_of_record(), str(stat))
+			var room: float = ceil_v - float(mi.stats.get(stat, 0.0))
+			if room < 40.0:
+				out.append("%s is %s for a %s — %d points of room left" % [
+					stat, tier, WeekLib.assigned_class_of(mi), int(maxf(0.0, round(room)))])
 	return out
+
+
+## The cap the tick will actually be run at this week. ⚠️ Read from Career, never passed in — the
+## narration must describe the week that RAN, and the week that ran used Career's cap.
+func cap_of_record() -> float:
+	return Career.current_stat_cap() if has_node("/root/Career") else 300.0
 
 
 ## ⚠️ THE ONLY THING THAT MOVES THE CLOCK. Runs the tick over the whole stable, clears the plans,

@@ -12,6 +12,14 @@
 ## `species_id` and the six raw `stats` are persisted; everything else rebuilds from those plus
 ## the species table.
 ##
+## ⚠️ ONE EXCEPTION AS OF v3, AND IT IS THE POINT OF THE EXCEPTION: `assignedClass` IS STORED.
+## A class the player COMMITTED to is not derived — it is the single most consequential decision
+## they make about a monster (round 15: kit alignment is the largest measured lever in the game),
+## and a decision that a save/load re-derives is a decision that does not exist. It is still true
+## that `class_name_` is never stored: the stored thing is the COMMITMENT, and `class_name_` is
+## still recomputed from it on load. "" means the monster never committed, which is what every
+## v1/v2 save reads back as, and those monsters derive exactly as before.
+##
 ## ⚠️ "DERIVED" IS NOT THE SAME AS "EARNED", AND v1 CONFLATED THEM. The first format saved six
 ## stats and nothing else, so a save/load quietly wiped every number the player had spent a week
 ## or a purse on: the barn extension bought at the Shop (career.gd:barn_capacity), the licences
@@ -32,7 +40,7 @@ const SAVE_PATH := "user://save.json"
 ## 1 — stats only. 2 — the career state a player actually earns (barn, licences, freezer) plus
 ## each monster's weekly-tick state. A v1 file still loads: every v2 field falls back to the value
 ## a fresh monster/career would have, which is exactly what v1 was doing implicitly.
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 
 ## Licences ride along in `Career.licences` (a real Dictionary — `career.gd:holds_licence()`
 ## explains why it is not `set_meta`), so this format persists that dictionary wholesale rather
@@ -172,6 +180,13 @@ func _serialize_monster(m) -> Dictionary:
 		# `week.gd` rolls training off. Regenerating it on load would re-roll every future
 		# training result for a monster mid-career.
 		"id": m.id,
+		# ⚠️ THE ONE FIELD THAT IS STORED RATHER THAN DERIVED, AND IT MUST NOT RIDE ON `id`.
+		# Lineage rides the `id` string precisely because every field in that token is FIXED AT
+		# BIRTH — `week.gd` seeds the training roll off `mi.id`, so a mutable token would silently
+		# re-roll a monster's entire remaining career the moment the player reassigned. A class
+		# commitment is mutable by definition, so it needs a real field. "" = uncommitted, which
+		# is what every v1/v2 save reads back as, which is the whole migration.
+		"assignedClass": m.assigned_class,
 		"stamina": m.stamina,
 		"happiness": m.happiness,
 		"ageWeeks": m.age_weeks,
@@ -211,6 +226,14 @@ func _deserialize_roster(arr: Array) -> Array:
 		for stat in Classify.STATS:
 			mi.stats[stat] = float(stats.get(stat, 10.0))
 
+		# ⚠️ READ THE COMMITMENT BEFORE `recompute_class()`, NOT AFTER. This line IS the save
+		# migration and it is a fallback read, not a script: absent `assignedClass` => "" =>
+		# `recompute_class()` derives exactly as it always has, so every existing save loads with
+		# every monster keeping the class it has always had and nobody loses a roster. Ordering is
+		# load-bearing — set after the recompute and the first weekly tick would quietly re-derive
+		# over the player's choice, which is the exact failure docs/CLASS_REWORK.md §10.2 exists
+		# to prevent.
+		mi.assigned_class = str(entry.get("assignedClass", ""))
 		mi.recompute_class()
 		mi.recompute_pools()
 		var load_rng := RandomNumberGenerator.new()

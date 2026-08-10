@@ -458,6 +458,21 @@ func _drill_plan_greedy(mi, league_cap: float) -> Dictionary:
 ## `career.gd:expected_climber_fill` is a total over a cap and CANNOT SEE the difference, which is
 ## precisely why the two policies have to be measured against each other rather than reasoned about.
 ## Moved here from `_probe_gold_wall.gd:ArcVariant` — one autopilot, not two.
+##
+## ⚠️ KNOWN GAP, ROUND 15 INTEGRATOR, DELIBERATELY NOT FIXED IN THIS ROUND. This brain does two
+## things that are now wrong and they must be fixed TOGETHER, with their own measurement:
+##   1. it NEVER calls `MonsterInstance.assign_class`, so every body it trains stays UNCOMMITTED
+##      and takes `week.gd:UNASSIGNED_HEADROOM` (1.00) instead of the 1.35/1.15 a committed body
+##      buys — it pays the whole price of shape and buys none of the upside;
+##   2. it targets `stat_cap_for` (the NOMINAL cap) rather than `stat_ceiling` (what the tick
+##      actually clamps against), so even a committed body would stop training 385 points early.
+## `_probe_shape.gd:_drill_plan_greedy` / `_commit_to_trade` / `_drill_plan_spike` carry the fixed
+## versions of both — lift them here when the fix is measured. Until then, every COMPETENT/EXPERT
+## /shaped figure this file prints is the cost of shape WITHOUT its upside, and `--policies`'
+## "COMPETENT won 3/5 vs NAIVE 5/5" must not be read as evidence that competence does not pay.
+## ⚠️ It was left alone because round 15 already moved two variables at once (per-class caps AND
+## the retirement of the free spike) and a third simultaneous change to the instrument would have
+## made the collapse of the SPIKE arm unattributable. One thing at a time — see docs/CLASS_REWORK.md.
 func _drill_plan_shaped(mi, league_cap: float) -> Dictionary:
 	var cap: float = WeekLib.stat_cap_for(mi, league_cap)
 	var best := ""

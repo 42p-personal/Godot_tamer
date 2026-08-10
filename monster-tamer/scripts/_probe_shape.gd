@@ -43,6 +43,7 @@ func _ready() -> void:
 	var args: Array = OS.get_cmdline_user_args()
 	args.append_array(OS.get_cmdline_args())
 	var all: bool = "--all" in args
+	s_nocommit = "--nocommit" in args
 	if all or "--gym" in args:
 		_run_shape_gym()
 	if all or "--nine" in args:
@@ -61,10 +62,57 @@ func _ready() -> void:
 ## travel weeks, the dynasty — is the parent's autopilot, unchanged, so an arm-to-arm difference
 ## can only be the training brain.
 func _drill_plan_greedy(mi, league_cap: float) -> Dictionary:
+	# ⚠️ A SHAPED ARM THAT NEVER ASSIGNS IS MEASURING A PLAYER WHO DOES NOT EXIST. Since round 15
+	# landed the assignable class, `week.gd:class_headroom` retires the free 1.35x spike for an
+	# UNCOMMITTED body and sells it back only to one that has committed. An arm that trains toward
+	# a stat pair and never presents at the gate therefore pays the entire price of commitment and
+	# buys none of its upside — a strictly dominated choice, and the arm would report its cost as
+	# if it were the cost of SHAPE. So the shaped brains commit the moment the gate opens, exactly
+	# as a player would, and the commit runs through the SHIPPED `Classify.classes_available_for`
+	# so the gate itself is under test rather than assumed.
+	#
+	# ⚠️ FLAT IS DELIBERATELY UNTOUCHED. It is the guarded arm (>= 24/32) and the naive on-ramp
+	# this round must not collapse; a flat body qualifies for nothing anyway (its primary never
+	# separates), so committing it would be a no-op that only risked perturbing the baseline.
+	if s_brain != "flat" and not s_nocommit:
+		_commit_to_trade(mi, league_cap)
 	if s_brain == "spike":
 		return _drill_plan_spike(mi, league_cap)
 	p_shaped_training = (s_brain == "apt")
 	return super(mi, league_cap)
+
+
+## Present at the gate and take the class matching this body's trade, once it qualifies. Returns
+## true once committed. ⚠️ NO `rng` IS PASSED because `week.gd:_redraft_if_stale` runs on the very
+## next tick of the same week loop and a career-arc body is always outgrowing its kit — but that is
+## true HERE and is not a general licence: `MonsterInstance.assign_class`'s own ⚠️ is the rule for
+## player-facing callers, which must pass one.
+func _commit_to_trade(mi, league_cap: float) -> bool:
+	if mi == null or not ("assigned_class" in mi):
+		return false
+	if mi.is_class_assigned():
+		return true
+	var pair: Array = _trade_pair(mi)
+	var nominal := float(WeekLib.stat_cap_for(mi, league_cap))
+	var avail: Array = Classify.classes_available_for(mi.stats, nominal)
+	if avail.is_empty():
+		return false
+	var exact := ""
+	var partial := ""
+	for c in GameData.classes:
+		var cname := str(c.get("name", ""))
+		if not avail.has(cname) or str(c.get("primary", "")) != str(pair[0]):
+			continue
+		if str(c.get("secondary", "")) == str(pair[1]):
+			exact = cname
+			break
+		if partial == "":
+			partial = cname
+	var pick: String = exact if exact != "" else partial
+	if pick == "":
+		return false
+	mi.assign_class(pick)
+	return true
 
 
 ## The monster's TRADE: the class whose [primary, secondary] its aptitudes best support. Cached on
@@ -96,13 +144,20 @@ func _trade_pair(mi) -> Array:
 ## the secondary. Never trains the other four, so it pays `focus_cost` in full and buys the exact
 ## stat vector a rival archetype is built to.
 func _drill_plan_spike(mi, league_cap: float) -> Dictionary:
-	var cap: float = WeekLib.stat_cap_for(mi, league_cap)
 	var pair: Array = _trade_pair(mi)
 	var pri: float = float(mi.stats.get(pair[0], 0.0))
 	var sec: float = float(mi.stats.get(pair[1], 0.0))
 	var want := ""
-	var pri_room: bool = pri < cap - 0.5
-	var sec_room: bool = sec < cap - 0.5
+	# ⚠️ THE TARGET IS THE CLASS CEILING, NOT THE NOMINAL CAP. `stat_ceiling` is what the weekly
+	# tick actually clamps against; `stat_cap_for` is only its nominal input. Reading the nominal
+	# here made a committed spike stop training its primary 385 points early — the instrument
+	# refusing the exact headroom the mechanic under test exists to sell, and then reporting the
+	# shortfall as the price of shape. For an uncommitted body the two are identical, so FLAT is
+	# unaffected. Same rule as `_probe_training.gd:257`.
+	var pri_cap: float = WeekLib.stat_ceiling(mi, league_cap, str(pair[0]))
+	var sec_cap: float = WeekLib.stat_ceiling(mi, league_cap, str(pair[1]))
+	var pri_room: bool = pri < pri_cap - 0.5
+	var sec_room: bool = sec < sec_cap - 0.5
 	if pri_room and (not sec_room or pri < sec * (Roster.SHAPE_PRIMARY / Roster.SHAPE_SECONDARY)):
 		want = str(pair[0])
 	elif sec_room:
@@ -115,7 +170,10 @@ func _drill_plan_spike(mi, league_cap: float) -> Dictionary:
 		var third := ""
 		var third_s := -INF
 		for s in Classify.STATS:
-			if pair.has(s) or float(mi.stats.get(s, 0.0)) >= cap - 0.5:
+			# off-class stats are ceilinged BELOW nominal once committed (0.875 x nominal), so the
+			# fallback must read the same ceiling the tick clamps against or it burns weeks
+			# training a stat that cannot move.
+			if pair.has(s) or float(mi.stats.get(s, 0.0)) >= WeekLib.stat_ceiling(mi, league_cap, s) - 0.5:
 				continue
 			var sc: float = WeekLib.stat_training_bonus(mi, s)
 			if sc > third_s:
@@ -397,18 +455,33 @@ func _other_class(c: String) -> String:
 ## between them IS the training brain. COMPETENT is kept as the bridge to the existing table.
 const POL_ARMS := ["FLAT", "APT", "SPIKE", "COMPETENT"]
 
+## ⚠️ ATTRIBUTION FLAGS, ADDED BY THE ROUND-15 INTEGRATOR. Both default to the full run, so an
+## unflagged invocation is byte-identical to the one that produced the shipped table.
+##   `--only-arm SPIKE`  run one arm (still paired against FLAT, which is always run)
+##   `--nocommit`        the shaped brains do NOT present at the gate — round 14's behaviour on
+##                       the round 15 build. This is the ONLY way to separate "the per-class caps
+##                       cost the specialist" from "committing costs the specialist", because the
+##                       shipped table changed both at once and a two-variable move cannot be
+##                       attributed after the fact.
+var s_nocommit := false
+
+
 func _run_policy_table() -> void:
 	var n: int = clampi(_arg_int("--seeds", 8), 1, MORE_SEEDS.size())
 	var weeks: int = _arg_int("--weeks", POLICY_WEEKS)
-	print("\n─── 3. THE POLICY TABLE (%d seeds x %d weeks x %d arms) ───" % [
-		n, weeks, POL_ARMS.size()])
+	var only: String = _arg_str("--only-arm", "").to_upper()
+	var arms: Array = POL_ARMS.duplicate()
+	if only != "" and POL_ARMS.has(only):
+		arms = ["FLAT", only] if only != "FLAT" else ["FLAT"]
+	print("\n─── 3. THE POLICY TABLE (%d seeds x %d weeks x %d arms%s) ───" % [
+		n, weeks, arms.size(), "  [NOCOMMIT]" if s_nocommit else ""])
 	var res := {}
-	for arm in POL_ARMS:
+	for arm in arms:
 		res[arm] = _run_arm(arm, n, weeks)
 	print("")
 	print("  %-10s  %-16s  %-8s  %-9s  %-7s  %-7s  %-7s  %s" % [
 		"arm", "WON (95% CI)", "med wks", "med rung", "spread", "goldEnd", "empty", "capped wks"])
-	for arm in POL_ARMS:
+	for arm in arms:
 		var r: Dictionary = res[arm]
 		print("  %-10s  %-16s  %-8d  %-9d  %-7.2f  %-7d  %-7.1f  %.0f" % [
 			arm, _wilson(int(r["won"]), n), int(r["medWeeks"]), int(r["medReached"]),
@@ -416,13 +489,14 @@ func _run_policy_table() -> void:
 	print("")
 	## ⚠️ PAIRED, ON THE SAME SEEDS. An unpaired comparison of two 8-seed proportions is what put
 	## "NAIVE 7/8 beats COMPETENT 6/8" in the brief, and that was noise.
-	for arm in ["APT", "SPIKE", "COMPETENT"]:
-		_paired(res["FLAT"], res[arm], "FLAT", arm, n)
+	for arm in arms:
+		if arm != "FLAT":
+			_paired(res["FLAT"], res[arm], "FLAT", arm, n)
 	print("")
 	print("  ── what gated the careers that did NOT win ──")
 	print("  %-10s  %-6s  %-9s  %-9s  %-9s  %-9s  %s" % [
 		"arm", "lost", "goldEnd", "emptyStl", "fee-refus", "blockedWk", "stall reason (modal)"])
-	for arm in POL_ARMS:
+	for arm in arms:
 		var r: Dictionary = res[arm]
 		print("  %-10s  %-6d  %-9d  %-9.1f  %-9.1f  %-9.1f  %s" % [
 			arm, n - int(r["won"]), int(r["lostGold"]), float(r["lostEmpty"]),

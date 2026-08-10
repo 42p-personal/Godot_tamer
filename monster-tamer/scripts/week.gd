@@ -340,17 +340,173 @@ static func stat_cap_for(mi, league_cap: float) -> float:
 const SPIKE_HEADROOM := 1.35
 
 
-## The ceiling THIS stat may actually be trained to on THIS body: the nominal cap x SPIKE_HEADROOM,
-## less anything the rest of the monster has already spent out of the shared `6 x nominal` budget.
-## For a balanced body the budget term never binds and this returns the nominal cap, unchanged.
+# ── PER-CLASS STAT CAPS (docs/CLASS_REWORK.md §2 / docs/CLASS_BUILD_PLAN.md §2) ────────────────
+#
+# The design lock: a class is ASSIGNED, and the assignment carries its own per-stat ceilings on
+# top of the league cap, so a monster cannot max all six. `CLASS_BUILD_PLAN.md` §2 states the
+# composition and this is that formula, unchanged in shape:
+#
+#     class ceiling(stat) = stat_cap_for(mi, league_cap) x relation(stat, assigned class)
+#
+# ⚠️ THE CLASS MULTIPLIES `stat_cap_for`'s OUTPUT, NEVER ITS INPUTS. League cap and bloodline
+# potential compose first into the NOMINAL cap (that is what every screen and the league text mean
+# by "the cap"); the class relation then scales that one scalar per stat; the shared `6 x nominal`
+# TOTAL budget is applied last and may only ever claw back room ABOVE the nominal cap. Order
+# matters because a bred x1.25 body must get 25% more room on its primary too — folding the class
+# in before `potential` would have handed the bonus to the wrong term.
+#
+# ⚠️ THE TIER VALUES ARE NOT INVENTED, AND NEITHER §4.1's `{1.00, 0.90, 0.70}` NOR round 15's
+# `{1.35, 1.15, 0.70}` IS USED. The three shipped here are `roster.gd:_shape_to_class`'s archetype
+# vector VERBATIM — 1.35 primary, 1.15 secondary, 0.875 on the other four — the same weights the
+# game already reshapes its own rivals onto. They were chosen for one property neither proposal
+# has:
+#
+#     1.35 + 1.15 + 4 x 0.875 = 6.00
+#
+# The six class ceilings sum to EXACTLY the `6 x nominal` budget an uncommitted body already has,
+# so committing REDISTRIBUTES a monster's room and never shrinks it. Any total an uncommitted body
+# can bank, a committed one can bank too — just distributed differently. That is what makes this a
+# decision rather than a tax, and it is checkable arithmetic rather than a judgement call
+# (`_probe_training.gd` §11g asserts the sum).
+#
+# ⚠️ AND `0.70` WAS MEASURED AND REFUSED. `{1.35, 1.15, 0.70}` sums to 5.30 — it takes 12% of a
+# committed build's total room away outright. Measured on `_probe_training.gd` §9 (three careers,
+# identical seeds, the shape arm committing through the shipped gate), a committed build's career
+# total against the naive lowest-stat rule:
+#
+#     round 14 (no class caps, free 1.35x spike on every stat) :  4557   (+2.5%)
+#     class caps, off-class 0.70                               :  3694  (-16.1%)
+#     class caps, off-class 0.875 (shipped)                    :  3776  (-13.7%)
+#
+# 0.875 is strictly better for the committed build at identical anti-generalisation strength — no
+# off-class stat may pass 0.875 x nominal under either — so 0.70 is dominated, exactly as round 15
+# showed `{1.00, 0.90, 0.70}` was dominated.
+#
+# ⚠️ AND READ THE THIRD COLUMN, BECAUSE IT IS THE HONEST PROBLEM WITH THIS WHOLE FEATURE.
+# Even at the sum-preserving tier a committed build banks 13.7% fewer points than a naive one,
+# where round 14 had it +2.5% ahead. The room is equal; what the caps remove is the committed
+# build's ability to spend the back half of its career GENERALISING into third and fourth stats
+# past the nominal cap — which is precisely what they are for, and precisely how round 14 bought
+# that +2.5% back. `career.gd:expected_climber_fill` still prices the player on stat TOTAL and is
+# structurally blind to shape, so a 13.7% smaller total is priced as a 13.7% weaker monster.
+# **The caps and the ladder's difficulty model are in direct conflict, and the ladder is the one
+# that has to move.** See the report: this is BLOCKING on `career.gd`, not on this file.
+const CLASS_PRIMARY_HEADROOM := 1.35
+const CLASS_SECONDARY_HEADROOM := 1.15
+const CLASS_OFF_HEADROOM := 0.875
+
+# ⚠️ THIS IS THE WHOLE UPSIDE OF COMMITTING, AND IT IS WHY IT IS 1.00 RATHER THAN 1.35.
+# Before per-class caps, `SPIKE_HEADROOM` handed 1.35x on ANY stat to EVERY body — so committing
+# to a class could only ever take room away, and an uncommitted monster strictly dominated a
+# committed one. That is a trap with a price tag on it, the exact shape round 14 spent itself
+# undoing. Retiring the free spike for the UNASSIGNED state is what makes the assigned primary's
+# 1.35 something the player BUYS rather than something they already had.
+#
+# ⚠️ AND IT COSTS AN EVENLY-TRAINED BODY NOTHING, MEASURED (`_probe_training.gd` §11). The shared
+# `6 x nominal` budget already pins a flat body to exactly the nominal cap on all six — a stat can
+# only reach into the spike when the other five have left room, which by construction a flat body
+# never does. So the naive player's ceiling is unchanged at every rung; only a body that was
+# already lopsided loses anything, and that body is precisely the one that should be assigning.
+const UNASSIGNED_HEADROOM := 1.00
+
+
+## Is the assignable-class system present on this build? `assigned_class` is
+## `monster_instance.gd`'s field (NOT this workstream's file) and lands with the gate.
+##
+## ⚠️ THIS IS A FEATURE DETECT, NOT A NULL CHECK, AND IT IS DELIBERATE. Until that field exists
+## this file must reproduce round 14's behaviour EXACTLY — otherwise landing the caps ahead of the
+## assignment UI would strip the spike from every monster in the game with nothing yet able to buy
+## it back. With the field absent, `class_headroom` returns `SPIKE_HEADROOM` on every stat and
+## `stat_ceiling` is byte-identical to the version this replaced.
+static func assignment_active(mi) -> bool:
+	return mi != null and ("assigned_class" in mi)
+
+
+## The class whose caps bind THIS body: the stored player choice, or "" for the uncommitted state.
+##
+## ⚠️ NEVER `class_for_stats(mi.stats)`. Deriving the class here would rebuild the exact
+## circularity CLAUDE.md says assignment exists to remove — a cap keyed on the class that was
+## itself keyed on the two highest stats raises the ceiling on the stat that chose it. The caps
+## bind a CHOICE or they bind nothing.
+static func assigned_class_of(mi) -> String:
+	if not assignment_active(mi):
+		return ""
+	return str(mi.assigned_class)
+
+
+## [primary, secondary] for a class name, from the generated table. ⚠️ `Generalist` is NOT in
+## `GameData.classes` and that is correct — it is the class you fall into, not one you assign, so
+## it resolves to ["", ""] and takes the uncommitted uniform ceiling below.
+static func class_stat_pair(cls: String) -> Array:
+	if cls == "":
+		return ["", ""]
+	for c in GameData.classes:
+		if str(c.get("name", "")) == cls:
+			return [str(c.get("primary", "")), str(c.get("secondary", ""))]
+	return ["", ""]
+
+
+## ⚠️ THE PER-CLASS CAPS ARE RETIRED. EVERY BODY GETS `SPIKE_HEADROOM` ON EVERY STAT, WHICH IS
+## ROUND 14'S BEHAVIOUR EXACTLY. Assignment ships; its stat caps do not. This is a user decision
+## (2026-08-10) taken on round 15's measurements, and the reasoning is worth keeping because the
+## constants below are still here and will look like an oversight otherwise.
+##
+## THEY INVERTED THE INCENTIVE THEY WERE BUILT TO CREATE. Measured, single-variable sweep, paired
+## seeds (`_probe_shape --pol`, ±12 pts at n=16): a committed specialist won 13/16 careers under
+## round 14, and 5/16 with these caps live — while the naive player never moved off 14/16.
+## Committing through the gate bought back exactly ONE career. The tiers are not the lever either:
+## raising the secondary all the way to the primary's 1.35 moved it 5/16 -> 6/16.
+##
+## THE MECHANISM, because it is the part worth remembering. A spike brain never ASKS for its four
+## off-class stats, but every intensive and diverse drill raises them incidentally. At 1.35 those
+## incidental points bank into the stat TOTAL; clipped to 0.875 they do not — which is the measured
+## -13.7% total. And `career.gd:expected_climber_fill` prices difficulty on TOTAL and is
+## structurally blind to shape. So the caps charged the specialist a real price in the only currency
+## the ladder can see, and paid them in one the ladder cannot. The player who did nothing was
+## untouched; the player who specialised lost half their careers. That is round 14's trap rebuilt
+## through a different door, and round 14 exists because that trap made commitment unshippable.
+##
+## ⚠️ AND THE ANTI-GENERALISATION JOB THEY WERE FOR WAS NOT BEING DONE ANYWAY. Expressed as a
+## fraction of the LEAGUE cap they bite at Iron and Gold and do NOTHING at Masters and Apex — the
+## rungs where every losing career actually stalls. A full career banks ~4,450 points against the
+## 6,600 six stats at the Apex cap would need, so a naive body reaches 761/stat against a 770
+## off-class ceiling: THE CAP MISSES BY NINE POINTS. A constraint that lands only on the rungs that
+## exist to teach and vanishes at the ship target is CLAUDE.md's named genre failure, inverted
+## progression, and shipping it would have been worse than shipping nothing.
+##
+## ⚠️ THE JOB IS REAL AND STILL OPEN — maxing all six stats IS reachable and nothing stops a monster
+## generalising. Its correct home is the shared budget term in `stat_ceiling` below (`6.0 x
+## nominal` against a career that banks ~4,450), NOT a per-class multiplier. One constant, and it
+## binds at every rung by construction because it is denominated in the player's own budget rather
+## than in the league's cap. Acceptance if a future round takes it on: naive spread > 0.20 at
+## Masters AND Apex, stat total down <= 10%, and `_probe_shape --pol` keeps FLAT >= 24/32.
+##
+## ⚠️ DO NOT SIMPLY SWITCH THIS BACK ON. The caps are not mistuned, they are mis-keyed; re-enabling
+## them without the ladder learning to see shape re-imports the 13/16 -> 5/16 collapse whole. And
+## `career.gd` carries an explicit BAN on teaching it shape, because round 14 measured that the
+## ladder ALREADY pays +20 points of ADVANCE for shape without charging for it. That ban and these
+## caps cannot both stand — which is exactly why only one of them shipped.
+static func class_headroom(_mi, _stat: String) -> float:
+	return SPIKE_HEADROOM
+
+
+## The ceiling THIS stat may actually be trained to on THIS body: the nominal cap x the class
+## relation, less anything the rest of the monster has already spent out of the shared
+## `6 x nominal` budget. For a balanced body the budget term never binds and this returns the
+## nominal cap, unchanged.
+##
+## ⚠️ THE BUDGET MAY ONLY REMOVE ROOM *ABOVE* THE NOMINAL CAP — that is what the inner
+## `minf(per_stat, nominal)` floor is for. Without it, an off-class stat capped at 0.70 could be
+## squeezed a second time by the budget and a committed build would be paying for its shape twice.
 static func stat_ceiling(mi, league_cap: float, stat: String) -> float:
 	var nominal := float(stat_cap_for(mi, league_cap))
+	var per_stat := nominal * class_headroom(mi, stat)
 	var spent_elsewhere := 0.0
 	for s in mi.stats:
 		if str(s) != stat:
 			spent_elsewhere += float(mi.stats[s])
 	var from_budget: float = 6.0 * nominal - spent_elsewhere
-	return maxf(nominal, minf(nominal * SPIKE_HEADROOM, from_budget))
+	return maxf(minf(per_stat, nominal), minf(per_stat, from_budget))
 
 
 ## How far a monster's TOP stat may outrun its TOP carried move's `learnLevel` before the kit is
@@ -631,6 +787,14 @@ static func apply_week(mi, action: Dictionary, gold: int, rental: int, food_id: 
 ## no second implementation to drift.
 static func preview_week(mi, action: Dictionary, gold: int, rental: int, food_id: String, forage: bool, price: int, cap: float, league_name: String) -> Dictionary:
 	var scratch = mi.clone_for_preview()
+	# ⚠️ THE CLONE MUST CARRY THE COMMITMENT, AND THAT IS NOT THIS FILE'S JOB — IT IS TRIPWIRED
+	# INSTEAD. `stat_ceiling` now reads the assigned class, so a clone that arrived uncommitted
+	# would clamp the preview against a DIFFERENT ceiling from the one the tick applies and the
+	# stable screen would quietly lie about the week. `monster_instance.gd:clone_for_preview`
+	# copies `assigned_class` and `class_name_` for exactly this reason; there is deliberately no
+	# second copy of that here, because two files writing the same field is how they drift.
+	# `_probe_training.gd` §11c is the guard — it was confirmed to go RED when the copy is removed,
+	# so this is a check that can fail, not one that merely passes.
 	var before_stats: Dictionary = mi.stats.duplicate()
 	var before_stamina: float = mi.stamina
 	var before_happiness: int = mi.happiness

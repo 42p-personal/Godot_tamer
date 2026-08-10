@@ -20,6 +20,7 @@
 ## battle_ui.gd).
 extends Control
 
+const Pace = preload("res://scripts/ui/ending_ui.gd")
 const UiTheme = preload("res://scripts/ui/theme.gd")
 
 ## The player's own guild colour + badge — Art.team_identity(0), used as the UI accent throughout
@@ -111,6 +112,16 @@ func _build_ui() -> void:
 			"Your monsters, mid-career. Class is emergent — the two stats it's strongest in decide what it fights as, right now."),
 		"secondary")
 	title_col.add_child(subtitle)
+
+	## ⚠️ THE CLOCK, ON THE SCREEN WHERE THE ROSTER DECISIONS ARE MADE. Round 17 made PACE the
+	## score; a score revealed only at the end changes nothing, and this is the screen a player
+	## sits on between cups. One adapter (`ui/ending_ui.gd`) reads `Career` — no par curve, no
+	## grade band and no verdict is authored here. Empty snapshot = draw NOTHING.
+	var pace_snap: Dictionary = Pace.snapshot()
+	if not pace_snap.is_empty():
+		var pace_lbl := UiTheme.body_text(Pace.pace_line(pace_snap), "secondary")
+		pace_lbl.add_theme_color_override("font_color", Pace.pace_color(pace_snap))
+		title_col.add_child(pace_lbl)
 
 	var chip := _career_chip()
 	if chip != null:

@@ -1,3 +1,32 @@
+# ⚠️ PROVENANCE SWEEP — round 17, 2026-08-10. READ BEFORE QUOTING ANY NUMBER IN THIS FILE
+
+**Why this banner exists:** a stale figure in `docs/SHAPE_DIAGNOSIS.md` (SPIKE 26/32) was quoted
+into a round-16 brief and cost a round, and that was the *second* time — round 14 inherited a wrong
+Gold/`teamSize` claim from round 10 the same way. **A number in a doc with no provenance is a trap
+for the next round.** This file is the largest accumulation of quotable numbers in the repo and it
+spans four rounds and at least five different trees, so every figure below now carries either a
+re-measurement or the reason it cannot be trusted.
+
+⚠️ **The single most-quoted sentence in this file is the one that no longer reproduces:**
+
+| claim, and where | status on HEAD | the contradicting reading |
+|---|---|---|
+| **"the naive player now wins MORE often than the competent one"** — INTEGRATOR VERDICT, and RETRACTION 2 (NAIVE 7/8 vs COMPETENT 6/8) | ⚠️ **THE ORDERING NO LONGER HOLDS.** It has flipped back, and it was never significant in either direction | round 16 `_probe_terminal --census --seeds 16`: **NAIVE 14/16 [0.64–0.97] · COMPETENT 15/16 [0.72–0.99] · EXPERT 15/16**. Round 17 re-run, NAIVE n=6: **6/6**. NAIVE's rate (87.5%) reproduces exactly; COMPETENT's 75% does not |
+| the *conclusion* drawn from it — **completion is coincident between policies, so the stable half is not load-bearing for ACCESS** | **SURVIVES, and is now the strongest finding in the repo** — fifth consecutive round | `docs/CONVERSION_DIAGNOSIS.md` §2b explains it mechanically: unlimited free retries make P(clear)=1, so only E[attempts] can move |
+| **median 458 / 366 / 366 weeks** (ladder C) | **superseded, same shape** | round 16 n=16: **502 / 352 / 348**. Round 17 n=6 NAIVE: **486**. The ~30% pace separation is the durable part; the absolute weeks are not |
+| **"the cup budget is already over at 32.7 against a 25–28 target"** (INTEGRATOR VERDICT) | ⚠️ **THE 32.7 IS CONDITIONAL AND WAS QUOTED UNCONDITIONALLY** | `CONVERSION_TRACE.md` §1: ADVANCE is a **step function of roster fill** (0% below ~0.40, 83–100% above ~0.45), and its eleven rates are measured at `expected_climber_fill`. Real careers enter **123–130 cups**, not 32.7. Quoting it unconditionally produced a 4–7x arithmetic error in a round-16 brief |
+| **§5 item 1 — "37% of the career unable to enter the frontier"** | **CLOSED.** Superseded twice | round-11 addendum: 30% → 6% via `SHORT_ENTRY_ALLOWANCE`. Round 17 census, NAIVE n=6: frontier enterable **81.9%** of weeks, farming below **18.1%**, **NO RUNG 0.0%** |
+| **§5 item 3 — "make a cup cost a week"** | **CLOSED.** A cup costs weeks (`CupRun.travel`) | round 17 census: **167.5 road weeks** per career, 3.86 weeks per cup |
+| **§4 R1 — "retired monsters still fight; no team selection … SURVIVES in the game"** | ⚠️ **FIXED, ROUND 17** | the rule is one function now — `roster.gd:fieldable()/fielded_team()/entry_block_reason()` — and all four doors call it (`career.gd`, `ui/tactics_ui.gd`, `ui/tournament_ui.gd` ×2). `_probe_terminal --audit` asserts it, including against the real `tournament_ui.gd` tree, and now FAILS on regression. See below |
+| **§3's re-baseline table — "STALLED at Gold after 449 weeks"** | **superseded; the arc now wins** | it already carries its own provenance warning (measured on a tree being retuned live). Round 17 NAIVE n=6 clears Tamers Apex on 6/6 |
+| **B2 (first preserve wk 336 / first birth 338), B3 (2,688g freezer rent), G1, "no monster can fill a Platinum+ cap in one lifetime"** | ⚠️ **UNVERIFIED ON HEAD — not contradicted, not confirmed** | none of these were re-measured this round, and `week.gd` has since gained `SPIKE_HEADROOM`/`stat_ceiling()` (round-14 addendum), which acts directly on the last one. Treat as round-10 readings until re-run |
+
+⚠️ **AND THE HONEST LIMIT OF THIS SWEEP.** Every completion proportion in it is n=6, n=8 or n=16 —
+±40, ±35 and ±25 points. `14/16 vs 15/16` and `7/8 vs 6/8` are the *same* null read twice with the
+sign flipped by noise. **The ordering is not the finding in either direction; the coincidence is.**
+
+---
+
 # ⚠️ THE REFERENCE PLAYER — the standing definition (2026-08-09, round 12)
 
 **Every difficulty number this project has ever quoted is a statement about a player nobody
@@ -500,7 +529,7 @@ This is the section to read before quoting the previous edition.
 | **T2** stamina is not a currency (rest refunds flat) | **SURVIVES.** Unchanged in `week.gd`. |
 | **D1** foraging is strictly dominated | **SURVIVES.** |
 | **D2** feeding is worth ~19% and is priced correctly | **SURVIVES**, now ~23% (10.10 → 12.47/wk across the happiness range). Still the healthiest number in the file. |
-| **R1** retired monsters still fight; no team selection | **SURVIVES in the game**, worked around in the probe (it sorts its barn and counts only non-retired bodies as fieldable). The workaround is exactly the UI the player does not have. |
+| **R1** retired monsters still fight; no team selection | ⚠️ **FIXED, ROUND 17 (2026-08-10)** — after surviving eleven rounds. `roster.gd:126` documented "a retiree cannot train, feed, or compete"; `week.gd:650/604` enforced the first two and **nothing enforced the third**, at four separate doors. The rule is now ONE function (`roster.gd:fieldable()` / `fielded_team()` / `entry_block_reason()`) and all four call it. The player is TOLD why rather than handed a dead button (`UI_LAYOUT_RULES.md` rule 2). `_probe_terminal --audit` asserts the predicate, its canary, the headless path and the real `ui/tournament_ui.gd` tree, and **fails** on regression. ⚠️ The probe workaround this row describes (`_probe_career_arc` counting only non-retired bodies) means **every arc number in this file was already measured under the fixed rule** — so nothing above moves, and the fix changes the shipped game only. |
 
 ---
 

@@ -78,7 +78,12 @@ func _build_ui() -> void:
 	b_header.add_theme_color_override("font_color", Color(0.9, 0.45, 0.4))
 	team_b_col.add_child(b_header)
 
-	var team_a := Roster.monsters.slice(0, mini(TEAM_SIZE, Roster.monsters.size()))
+	## One predicate for "who fights" (roster.gd:fielded_team) — this screen is a standalone
+	## demo, but a second definition of the team sheet is exactly what round 17 spent a day
+	## deleting. Falls back to the raw slice only if nothing is fieldable, so the demo still runs.
+	var team_a := Roster.fielded_team(TEAM_SIZE)
+	if team_a.is_empty():
+		team_a = Roster.monsters.slice(0, mini(TEAM_SIZE, Roster.monsters.size()))
 	var avg_t := 0.25
 	var team_b := Roster.make_rival_team(team_a.size(), avg_t)
 

@@ -21,6 +21,10 @@ extends Node
 
 const BattleSimScript = preload("res://scripts/battle_sim.gd")
 const TacticsScript = preload("res://scripts/tactics.gd")
+## ⚠️ PRELOADED FOR ONE CONSTANT — `WEEKS_PER_YEAR`. A season is a game YEAR and the grade below
+## is quoted in seasons, so the number has to come from the file that owns the calendar. A second
+## copy of 48 in this file is exactly the hand-transcribed table the house rules forbid.
+const WeekLib = preload("res://scripts/week.gd")
 const DATA_PATH := "res://data/data.json"
 const STARTING_GOLD := 500
 
@@ -44,6 +48,23 @@ var barn_capacity: int = STARTING_BARN_CAPACITY
 
 var leagues_won: Array = []              # Array[bool], parallel to `leagues` — cleared at least once
 var won_game: bool = false               # terminal: Tamers Apex swept
+
+## ⚠️ THE ONE NEW NUMBER THE GRADE NEEDED, AND IT IS RECORDED RATHER THAN DERIVED FOR A REASON.
+## `week` keeps ticking after the title lands (nothing stops the clock), so "the week you won" is
+## NOT recoverable from `week` after the fact. -1 = the game has not been won.
+var won_week: int = -1
+
+## ── THE FRONTIER RECORD — what this rung has actually cost so far ────────────────────────────
+## ⚠️ THE ONLY STATE ADDED FOR THE OUTCLASSED VERDICT, AND IT IS DELIBERATELY FOUR INTS, NOT A LOG.
+## `docs/CONVERSION_DIAGNOSIS.md` §2c: one career in 48 sat forever at a rung it won 3.3% of ROUNDS
+## at, and the game rendered it identically to bad luck. Distinguishing the two needs the round
+## rate, not the cup rate — a stalled-but-live roster wins ~50% of rounds and loses the draw; an
+## outclassed one wins almost none — and nothing in `Career` carried rounds at all. Reset the
+## moment the frontier moves, because the question is always "at THIS rung".
+var frontier_since_week: int = 0
+var frontier_cups: int = 0
+var frontier_rounds: int = 0
+var frontier_round_wins: int = 0
 
 ## Licences bought at the Ranch Shop — licence name (String) -> true. See `holds_licence()`.
 var licences: Dictionary = {}
@@ -85,8 +106,19 @@ func reset_new_game() -> void:
 	week = 0
 	barn_capacity = STARTING_BARN_CAPACITY
 	won_game = false
+	won_week = -1
+	_reset_frontier_record()
 	licences.clear()
 	_reset_leagues_won()
+
+
+## Called on arrival at a rung — a new game, a promotion, or a save load. The record answers
+## "how is THIS rung going", so it cannot survive the rung.
+func _reset_frontier_record() -> void:
+	frontier_since_week = week
+	frontier_cups = 0
+	frontier_rounds = 0
+	frontier_round_wins = 0
 
 
 ## ⚠️ THIS IS A REAL FIELD BECAUSE `set_meta()` SILENTLY REFUSED THE OLD ONE. `shop_ui.gd` stored
@@ -1146,7 +1178,35 @@ func enter_league_tournament(target_league_idx: int = -1, rival_count: int = -1,
 	var idx := league_index if target_league_idx < 0 else clampi(target_league_idx, 0, league_index)
 	var rounds: int = rival_count if rival_count > 0 else rival_count_for_league(idx)
 	var team_size := team_size_for_league(idx)
-	var player_team: Array = Roster.monsters.slice(0, mini(team_size, Roster.monsters.size()))
+	## ⚠️ A RETIREE CANNOT COMPETE — `roster.gd:126` SAYS SO AND UNTIL NOW ONLY TWO THIRDS OF IT WAS
+	## TRUE. Training (`week.gd:650`) and feeding (`week.gd:604`) both bail on `mi.retired`; this
+	## line sliced `Roster.monsters` from the front with no filter, so a stable holding NOTHING but
+	## retirees entered and fought a full cup (`_probe_terminal.gd --audit`, round 16: fielded=true).
+	## Signature failure #1 — authored, documented, and nothing called it — eleventh instance.
+	## ⚠️ AND IT IS `Roster.fielded_team()`, NOT A FILTER WRITTEN HERE. Four doors field a team
+	## (this one, the tactics screen, the sign-up screen twice) and four copies of `not m.retired`
+	## is how the hole opened in the first place. One rule, in the file that documents it.
+	var player_team: Array = Roster.fielded_team(team_size)
+	## Nobody left who can fight. Refuse rather than field an empty side: `BattleSim` would be
+	## handed a sideless match, and "you lost every round" would be a lie about a cup that was
+	## never enterable. The sign-up screen refuses first (`Roster.entry_block_reason`); this is the
+	## backstop for the headless paths that do not go through a screen.
+	## ⚠️ BUILT HERE RATHER THAN THROUGH `apply_tournament_outcome()`, WHICH WOULD BE THE TIDIER
+	## CALL AND WOULD BE WRONG TWICE: `placement_for(0, 0)` returns 1 (a refused cup reporting a
+	## FIRST PLACE and a 100% purse fraction), and the tail would bank the refusal in the frontier
+	## record as a cup fought and lost, poisoning the outclassed verdict with cups nobody entered.
+	if player_team.is_empty():
+		return {
+			"leagueIndex": idx, "league": league_at(idx).get("name", ""),
+			"wins": 0, "rivalCount": rounds,
+			"swept": false, "promoted": false, "gameWon": false, "advanced": false,
+			"winsNeeded": wins_needed_to_advance(idx, rounds),
+			"placement": 0, "placementFraction": 0.0,
+			"champion": champion_for(idx), "championBeaten": false, "firstTitle": false,
+			"teamSize": team_size, "matches": [],
+			"refused": true,
+			"refusedReason": "no monster in this stable may compete — every body has retired",
+		}
 
 	var use_seed := seed_ if seed_ >= 0 else (week * 97 + idx * 13 + rounds)
 	var rng := RandomNumberGenerator.new()
@@ -1207,6 +1267,16 @@ func apply_tournament_outcome(idx: int, wins: int, rival_count: int) -> Dictiona
 		"firstTitle": first_title,
 	}
 
+	## ── THE FRONTIER RECORD ────────────────────────────────────────────────────────────────────
+	## Only the FRONTIER counts. A cup farmed two rungs down says nothing about whether the rung
+	## you are stuck on is winnable, and folding it in is precisely how "outclassed" would come to
+	## mean "played a lot of cups".
+	if is_frontier and rival_count > 0:
+		frontier_cups += 1
+		frontier_rounds += rival_count
+		frontier_round_wins += wins
+	out["frontier"] = frontier_verdict()
+
 	## THE TITLE — the whole draw, nothing dropped. Marks the league cleared, so the champion
 	## remembers (`champion_fill_for`) and the result screen can say a title changed hands.
 	if swept:
@@ -1218,15 +1288,382 @@ func apply_tournament_outcome(idx: int, wins: int, rival_count: int) -> Dictiona
 	if advanced and is_frontier:
 		if is_final_league(idx):
 			won_game = true
+			## ⚠️ STAMPED HERE AND NOWHERE ELSE. The clock does not stop when the title lands, so a
+			## grade that read `week` later would keep sliding. This is the whole of the grade's
+			## new state — everything else it reports is derived from `leagues_won`, `league_index`
+			## and the authored pace-setter.
+			won_week = week
 			out["gameWon"] = true
 			game_won.emit()
 		else:
 			var from_name: String = current_league_name()
 			league_index += 1
+			_reset_frontier_record()
 			out["promoted"] = true
 			promoted.emit(from_name, current_league_name())
 
+	## The grade, live. Provisional while the game is unwon — which is the point: the pace is
+	## meant to be legible DURING the climb, not revealed on a win screen 400 weeks later.
+	out["grade"] = grade_result()
 	return out
+
+
+# =============================================================================
+# THE PACE-SETTER — a rival dynasty climbing the same ladder, on a clock
+# =============================================================================
+##
+## ⚠️ WHY THIS EXISTS, AND WHAT IT IS FORBIDDEN TO DO. `docs/CONVERSION_DIAGNOSIS.md` §1: a fight
+## advantage compounds through five hops (1.09x per-round win -> 4.03x on P(Apex sweep)) and then
+## collapses to 1.00x at `won_game`, because promotion is a repeated Bernoulli trial with unlimited
+## free retries. P(clear) = 1 for any p > 0, so ACCESS IS INVARIANT TO SKILL BY CONSTRUCTION and
+## only E[attempts] — weeks — can respond. Competence buys pace; pace was not scored.
+##
+## So the grade scores pace, and pace needs a STANDARD the player can see while it is happening.
+## A number on a win screen nobody reaches for 400 weeks changes nothing.
+##
+## ⚠️ IT IS A PACE-SETTER, NOT A DEADLINE, AND THE DIFFERENCE IS MEASURED. §3 of the same document
+## tested five ways of making time scarce and every one of them either deleted the naive player or
+## separated by zero: a hard 400-week horizon completes 1/16 for the naive arm, relegation
+## saturates BOTH arms at 16/16 (and makes the game easier), entry fees x8 completes 0/16.
+## **NOTHING IN THIS SECTION MAY END A CAREER, BLOCK A CUP, OR CHANGE A DIFFICULTY NUMBER.** It is
+## read-only: a schedule, a comparison, and a name. If a future change lets the Varra stable lock
+## the player out, that is option R17-4, and the measurement already rejected it.
+##
+## ⚠️ AND THE PACE IS CALIBRATED TO SIT BETWEEN THE TWO MEASURED PLAYERS, DELIBERATELY. Round 16,
+## n=16 seeds, 1000-week horizon: the naive policy reaches Tamers Apex at a median 299 weeks and
+## takes the title at 502; the competent one reaches it at 206 and wins at 354. The Varra stable
+## reaches Apex at 250 and takes it at 420 — later than a competent climber at BOTH checkpoints,
+## earlier than a naive one at both. That is what makes "ahead" and "behind" mean something rather
+## than being a formality either way, and it is why these two numbers move if the training system,
+## the ladder or the economy moves. Re-read them off `_probe_grade.tscn -- --grade`.
+const DYNASTY_TAMER := "Ilse Varra"
+const DYNASTY_HOUSE := "the Varra stable"
+const DYNASTY_APEX_ARRIVAL_WEEK := 250    ## the week they are expected to REACH Tamers Apex
+const DYNASTY_APEX_WEEK := 420            ## the week they are expected to TAKE it — the par
+## Rungs are not equal in time and a straight line would say they are. The exponent front-loads the
+## bottom of the ladder (Wood cleared inside a couple of months) and lets the top cost what the top
+## costs, which is the same shape a real climb has.
+const DYNASTY_PACE_EXP := 1.6
+
+
+## The week the Varra stable is expected to have CLEARED rung `idx` (i.e. be promoted out of it).
+## Clearing the final rung is taking the title, so the last cell is `DYNASTY_APEX_WEEK`.
+func dynasty_week_cleared(idx: int) -> int:
+	var last: int = maxi(1, leagues.size() - 1)
+	var i: int = clampi(idx, 0, last)
+	if i >= last:
+		return DYNASTY_APEX_WEEK
+	var t: float = float(i + 1) / float(last)
+	return int(round(float(DYNASTY_APEX_ARRIVAL_WEEK) * pow(t, DYNASTY_PACE_EXP)))
+
+
+## The week they are expected to ARRIVE at rung `idx` — i.e. to have cleared the one below it.
+func dynasty_week_arrived(idx: int) -> int:
+	return 0 if idx <= 0 else dynasty_week_cleared(idx - 1)
+
+
+## Which rung the Varra stable holds in week `w`. The single call a HUD needs.
+func dynasty_rung_at_week(w: int = -1) -> int:
+	var wk: int = week if w < 0 else w
+	var last: int = maxi(0, leagues.size() - 1)
+	var held := 0
+	for i in range(last + 1):
+		if wk >= dynasty_week_arrived(i):
+			held = i
+	return held
+
+
+## Has the pace-setter finished? Reported for flavour and for the grade's wording — it changes
+## NOTHING. The player may take the title in week 900 and the game will still hand it to them.
+func dynasty_has_won(w: int = -1) -> bool:
+	return (week if w < 0 else w) >= DYNASTY_APEX_WEEK
+
+
+## How many weeks ahead of the pace-setter the player stands RIGHT NOW. Positive = ahead.
+## Before the title: measured at the current rung — they arrived in `frontier_since_week`, the
+## Varra stable arrives in `dynasty_week_arrived(league_index)`.
+## After it: the only comparison left is the one that matters, week of title against par.
+func pace_margin_weeks() -> int:
+	if won_game:
+		return DYNASTY_APEX_WEEK - maxi(0, won_week)
+	return dynasty_week_arrived(league_index) - frontier_since_week
+
+
+## The standing, packaged for a screen. ⚠️ READ FROM THE SAME FUNCTIONS THE GRADE USES — a HUD
+## that computed its own version of "ahead" is round 13's scoreboard-that-lied waiting to happen.
+func dynasty_standing(w: int = -1) -> Dictionary:
+	var wk: int = week if w < 0 else w
+	var rung: int = dynasty_rung_at_week(wk)
+	var margin: int = pace_margin_weeks()
+	return {
+		"tamer": DYNASTY_TAMER,
+		"house": DYNASTY_HOUSE,
+		"rung": rung,
+		"league": league_at(rung).get("name", ""),
+		"hasWon": dynasty_has_won(wk),
+		"parWeek": DYNASTY_APEX_WEEK,
+		"marginWeeks": margin,
+		"marginSeasons": _seasons(margin),
+		"state": "ahead" if margin > 0 else ("level" if margin == 0 else "behind"),
+		"line": _dynasty_line(rung, margin, wk),
+	}
+
+
+func _dynasty_line(rung: int, margin: int, wk: int) -> String:
+	var where: String = str(league_at(rung).get("name", ""))
+	if dynasty_has_won(wk) and not won_game:
+		return "%s took the Dynast's title in week %d. You are still climbing." % [
+			DYNASTY_TAMER, DYNASTY_APEX_WEEK]
+	var seasons: int = int(abs(_seasons(margin)))
+	if margin > 0:
+		return "%s is at %s. You reached yours %s earlier." % [
+			DYNASTY_TAMER, where, _season_phrase(seasons, margin)]
+	if margin < 0:
+		return "%s is at %s. They were here %s before you." % [
+			DYNASTY_TAMER, where, _season_phrase(seasons, -margin)]
+	return "%s is at %s — level with you." % [DYNASTY_TAMER, where]
+
+
+func _season_phrase(seasons: int, wks: int) -> String:
+	if seasons <= 0:
+		return "%d week%s" % [wks, "" if wks == 1 else "s"]
+	return "%d season%s" % [seasons, "" if seasons == 1 else "s"]
+
+
+## Weeks -> whole seasons, truncated toward zero so a margin of -47 reads as 0 seasons behind
+## rather than -1. `week.gd` owns the calendar; this file must not carry a second 48.
+func _seasons(wks: int) -> int:
+	return int(float(wks) / float(WeekLib.WEEKS_PER_YEAR))
+
+
+# =============================================================================
+# THE GRADE — what `won_game` should have been
+# =============================================================================
+##
+## ⚠️ `won_game` STAYS, AND STAYS EXACTLY AS IT WAS. Every probe in the repo, the save format and
+## `_probe_career_arc.gd`'s loop condition read it; the grade is ADDITIONAL. This section adds no
+## difficulty, no cost and no gate — it reads state the career already tracks and says what the
+## player did with it.
+##
+## THE FOUR AXES, and every one of them is something the career ALREADY carried:
+##   * **the week** — `won_week`, the one stamp added, because the clock does not stop.
+##   * **seasons** — that week in `week.gd:WEEKS_PER_YEAR` units.
+##   * **swept vs scraped** — `leagues_won[i]` is "did you ever take THIS rung's title", and
+##     promotion only needs `wins_needed_to_advance()`. So a rung cleared with the champion still
+##     holding their belt is a rung SCRAPED, and the count of those has been sitting in the save
+##     file since v1 with nothing reading it.
+##   * **the pace-setter** — the section above.
+##
+## ⚠️ AND THE BAND WIDTH IS ONE SEASON BECAUSE THE MEASURED SEPARATION IS THREE. Naive median 502
+## weeks against competent 354 is a 148-week shift (paired p=0.0005, round 16) — 3.08 seasons. A
+## tier per season therefore lands the two policies three tiers apart at the median, which is what
+## "the grade must separate them on most seeds" needs, while staying legible: a player can hold
+## "one season ahead of the Varra stable" in their head, and cannot hold "score 1043".
+const GRADE_TIERS: Array = [
+	{"min": 3, "name": "IMMORTAL", "blurb": "Three seasons clear of the Varra stable. Nobody will match this."},
+	{"min": 2, "name": "UNDISPUTED", "blurb": "Two seasons clear. The record is yours by a distance."},
+	{"min": 1, "name": "CHAMPION", "blurb": "A season clear of the pace. A convincing climb."},
+	{"min": 0, "name": "CONTENDER", "blurb": "You took it first, and only just. It was a race."},
+	{"min": -1, "name": "JOURNEYMAN", "blurb": "A season late. You got there — after they did."},
+	{"min": -2, "name": "LATECOMER", "blurb": "Two seasons late. The title had already changed hands once."},
+	{"min": -99, "name": "FOOTNOTE", "blurb": "Three seasons late or worse. The record books name someone else."},
+]
+
+## Every rung cleared and its title taken. Points are worth the same at every rung on purpose —
+## a title is a title, and weighting them would quietly re-author the ladder's difficulty curve
+## into the score.
+const GRADE_POINTS_PER_TITLE := 50
+const GRADE_BASE_SCORE := 1000
+const GRADE_POINTS_PER_WEEK := 2    ## ...ahead of (or behind) the pace-setter's par
+
+
+func titles_taken() -> int:
+	var n := 0
+	for w in leagues_won:
+		if bool(w):
+			n += 1
+	return n
+
+
+## Rungs the ladder let you past without the champion's belt: cleared, not swept.
+func rungs_scraped() -> int:
+	var cleared: int = league_index + (1 if won_game else 0)
+	return maxi(0, cleared - titles_taken())
+
+
+func grade_tier_for(margin_seasons: int) -> Dictionary:
+	for t in GRADE_TIERS:
+		if margin_seasons >= int(t["min"]):
+			return t
+	return GRADE_TIERS[GRADE_TIERS.size() - 1]
+
+
+## THE TERMINAL RESULT, GRADED. A PURE FUNCTION of `won_game` / `won_week` / `week` /
+## `league_index` / `leagues_won` and the authored pace — so it can be recomputed at any moment,
+## tested without a career, and shown DURING the climb (`final` is false until the title lands).
+func grade_result() -> Dictionary:
+	var wk: int = won_week if won_game and won_week >= 0 else week
+	var margin: int = pace_margin_weeks()
+	var margin_seasons: int = _seasons(margin)
+	var titles: int = titles_taken()
+	var tier: Dictionary = grade_tier_for(margin_seasons)
+	var score: int = maxi(0, GRADE_BASE_SCORE + GRADE_POINTS_PER_WEEK * margin
+		+ GRADE_POINTS_PER_TITLE * titles)
+	return {
+		"final": won_game,
+		"week": wk,
+		"seasons": _seasons(wk),
+		"titles": titles,
+		"scraped": rungs_scraped(),
+		"rungsCleared": league_index + (1 if won_game else 0),
+		"marginWeeks": margin,
+		"marginSeasons": margin_seasons,
+		"tier": str(tier["name"]),
+		"tierIndex": GRADE_TIERS.find(tier),
+		"blurb": str(tier["blurb"]),
+		"score": score,
+		"dynasty": dynasty_standing(),
+		## ⚠️ ONE LINE, BUILT FROM THE SAME NUMBERS — never a second formatting of them. A screen
+		## that re-derives the wording is a screen that can disagree with the grade it is showing.
+		"line": "%s — %d titles, %d scraped, week %d (%d seasons), %s" % [
+			str(tier["name"]), titles, rungs_scraped(), wk, _seasons(wk),
+			("%+d weeks on the Varra stable" % margin)],
+	}
+
+
+# =============================================================================
+# THE OUTCLASSED VERDICT — naming the one state the game renders as bad luck
+# =============================================================================
+##
+## ⚠️ THE MEASUREMENT THIS ANSWERS. `docs/CONVERSION_DIAGNOSIS.md` §2c froze four "walled" careers
+## and re-entered 24 cups each at their frontier. THREE OF THE FOUR WERE NOT WALLED — they advanced
+## 4/24, 4/24 and 5/24 (p≈0.17-0.21: about five more cups). The fourth was real: 0/24 advances and
+## **4 round wins out of 120 (3.3%)** against a control two rungs down at 19/24. That roster was not
+## losing a lottery, it was outclassed — and the game said nothing, because it has no state for it.
+##
+## ⚠️ THE DISCRIMINATOR IS ROUNDS, NOT CUPS — and it is NOT the raw round rate either. THE RAW RATE
+## WAS THE FIRST VERSION AND MEASUREMENT KILLED IT INSIDE ONE ROUND. Thresholded at "under 20% of
+## rounds = outclassed", the one genuinely walled career in the census (EXPERT / seed 86400, stuck
+## at Platinum for 152 weeks over 37 cups) measured **45 round wins in 185 — 24.3%** in natural
+## play and was therefore reported as "climbing". It is not climbing: Platinum is a five-round draw
+## needing four wins, so 24.3% per round implies **1.3% per cup, about 74 cups — roughly 300 weeks —
+## per promotion.** The same 24.3% at a three-round Wood draw needing two implies 16% per cup, which
+## genuinely IS climbing. A rate threshold cannot tell those apart because THE RUNG'S SHAPE IS PART
+## OF THE ANSWER.
+## (The 3.3% figure in §2c came from the wall test's *frozen re-entry with an independent field per
+## trial*; the cups that career actually fought read 24.3%. Both are honest, they measure different
+## things, and only the second one is available to a live game.)
+##
+## So the verdict is read off the IMPLIED CHANCE OF CLEARING THE DRAW: a binomial on the measured
+## round rate against `wins_needed_to_advance()` at this rung's own depth. That is pure, it adapts
+## to depth and to the dropped-round allowance for free, and it is expressed in the only unit a
+## player cares about — how many more cups this would take.
+## ⚠️ AND IT IS DETECTION ONLY. Nothing here blocks entry, ends a career or changes a price. It
+## produces a state and a sentence; the screen belongs to the UI workstream.
+const OUTCLASSED_MIN_CUPS := 6        ## fewer than this at a rung is not evidence of anything
+const OUTCLASSED_MIN_ROUNDS := 18     ## ...and rounds, not cups, are the sample the rate rests on
+## Under a 5% chance per cup = 20+ cups, ~80 weeks, per promotion. That is a wall, not a queue.
+const OUTCLASSED_ADVANCE_CHANCE := 0.05
+## Above a 25% chance per cup, six failures is a 1-in-5 run of bad luck, not a verdict on a roster.
+const UNLUCKY_ADVANCE_CHANCE := 0.25
+
+
+func frontier_round_rate() -> float:
+	return 0.0 if frontier_rounds <= 0 else float(frontier_round_wins) / float(frontier_rounds)
+
+
+## P(win at least `wins_needed_to_advance()` of this rung's rounds) at the measured round rate.
+## ⚠️ INDEPENDENT ROUNDS IS AN APPROXIMATION AND A KNOWN ONE: a cup's rounds ramp from opener to
+## champion (`field_fill`), so the real distribution is not binomial. It is the right approximation
+## anyway — it is monotone in the thing being measured, it needs no per-round record, and the
+## verdict only ever asks which side of 5%/25% the answer falls on, not what it is to three places.
+func frontier_advance_chance() -> float:
+	var n: int = rival_count_for_league(league_index)
+	var need: int = wins_needed_to_advance(league_index, n)
+	var p: float = clampf(frontier_round_rate(), 0.0, 1.0)
+	var acc := 0.0
+	for k in range(need, n + 1):
+		var c := 1.0
+		for i in range(k):
+			c = c * float(n - i) / float(i + 1)
+		acc += c * pow(p, float(k)) * pow(1.0 - p, float(n - k))
+	return clampf(acc, 0.0, 1.0)
+
+
+## The state of the current rung, named. `state` is one of:
+##   "shorthanded"— the rung cannot be ENTERED at all for want of bodies. Not a difficulty state.
+##   "fresh"      — not enough cups at this rung to say anything. The honest default.
+##   "climbing"   — a real chance per cup. Keep entering; this rung falls.
+##   "unlucky"    — a good chance per cup that simply has not landed. Enter again.
+##   "outclassed" — under a 1-in-20 chance per cup. More cups will not fix it; the roster will.
+func frontier_verdict() -> Dictionary:
+	var rate: float = frontier_round_rate()
+	var chance: float = frontier_advance_chance()
+	var weeks_here: int = maxi(0, week - frontier_since_week)
+	var state := "fresh"
+	var line := ""
+	## ⚠️ CHECKED FIRST, BECAUSE THE TWO FAILURES LOOK IDENTICAL FROM THE OUTSIDE AND ARE NOT THE
+	## SAME PROBLEM. `docs/META_GAME_REVIEW.md` §5 item 1 and round 10: a stable spent 30% of its
+	## weeks (later 6%) unable to ENTER the frontier for want of a fifth body, farming the rung
+	## below while its round win rate sat at 65%. Measured again this round: 18.9% of naive weeks
+	## are short of bodies at the frontier. That career is not outclassed and it is not unlucky —
+	## it is an ECONOMY wall wearing difficulty's clothes, and the verdict must not call it either
+	## of the other two. It also explains why such a career reads "fresh" on rounds: it barely
+	## enters the rung, so it never accumulates the evidence the outclassed test needs.
+	var able: int = Roster.fieldable_count()
+	if able < min_team_to_enter(league_index):
+		return {
+			"state": "shorthanded", "league": current_league_name(), "leagueIndex": league_index,
+			"cups": frontier_cups, "rounds": frontier_rounds, "roundWins": frontier_round_wins,
+			"roundRate": rate, "advanceChance": chance, "cupsPerPromotion": 0.0,
+			"weeksAtRung": weeks_here,
+			"line": ("%s fields %d — you can field %d. This rung is not beating you; you cannot "
+				% [current_league_name(), team_size_for_league(league_index), able]
+				+ "enter it. Raise or buy a body."),
+		}
+	## Expected cups per promotion at the measured rate — the verdict in the player's own units.
+	var per_promotion: float = 0.0 if chance <= 0.0 else 1.0 / chance
+	if frontier_cups >= OUTCLASSED_MIN_CUPS and frontier_rounds >= OUTCLASSED_MIN_ROUNDS:
+		if chance < OUTCLASSED_ADVANCE_CHANCE:
+			state = "outclassed"
+			line = ("%s is beyond this stable as it stands — %d of %d rounds won (%.0f%%) over %d cups. "
+				% [current_league_name(), frontier_round_wins, frontier_rounds, rate * 100.0, frontier_cups]
+				+ "At that rate this draw takes about %s cups to win. Another entry will not turn "
+				% _cups_phrase(per_promotion)
+				+ "that over; a stronger roster will.")
+		elif chance < UNLUCKY_ADVANCE_CHANCE:
+			state = "climbing"
+			line = ("Holding your own at %s — %.0f%% of rounds won, about %s cups per promotion. "
+				% [current_league_name(), rate * 100.0, _cups_phrase(per_promotion)]
+				+ "Close, not there.")
+		else:
+			state = "unlucky"
+			line = ("You are winning %.0f%% of your rounds at %s — about %s cups per promotion — and "
+				% [rate * 100.0, current_league_name(), _cups_phrase(per_promotion)]
+				+ "it has not landed in %d. That is the draw, not the stable. Enter again."
+				% frontier_cups)
+	else:
+		line = "%d cup%s at %s so far." % [
+			frontier_cups, "" if frontier_cups == 1 else "s", current_league_name()]
+	return {
+		"state": state,
+		"league": current_league_name(),
+		"leagueIndex": league_index,
+		"cups": frontier_cups,
+		"rounds": frontier_rounds,
+		"roundWins": frontier_round_wins,
+		"roundRate": rate,
+		"advanceChance": chance,
+		"cupsPerPromotion": per_promotion,
+		"weeksAtRung": weeks_here,
+		"line": line,
+	}
+
+
+func _cups_phrase(per_promotion: float) -> String:
+	if per_promotion <= 0.0:
+		return "an unbounded number of"
+	return "%d" % int(round(per_promotion))
 
 
 # ── run economy / clock ──────────────────────────────────────────────────────

@@ -46,12 +46,17 @@ func _ready() -> void:
 		# screen's own standalone demo pair. `reset_for_battle()` mirrors `career.gd:
 		# enter_league_tournament()`'s per-match reset, since each cup round is an independent
 		# fight (HP/MP/cooldowns must not carry over from the previous round).
-		team_a = Roster.monsters.slice(0, mini(_cup.team_size, Roster.monsters.size()))
+		## ⚠️ `Roster.fielded_team()`, NOT `monsters.slice()` — a retiree cannot compete
+		## (`roster.gd:126`, and now `roster.gd:fieldable()` which is the one place that says so).
+		## Slicing the barn from the front used to put an aged-out body on the sheet, and because
+		## this screen slices FROM THE FRONT it did it preferentially: the oldest monsters sit
+		## earliest in the barn, so the retirees were the first bodies picked.
+		team_a = Roster.fielded_team(_cup.team_size)
 		for m in team_a:
 			m.reset_for_battle()
 		team_b = _cup.current_rival_team()
 	else:
-		team_a = Roster.monsters.slice(0, mini(TEAM_SIZE, Roster.monsters.size()))
+		team_a = Roster.fielded_team(TEAM_SIZE)
 		team_b = Roster.make_rival_team(team_a.size(), 0.3)
 	## ⚠️ THE CUP'S OWN ARCHETYPE WINS OVER THE SPECIES HASH. `gameplan_for()` derives a plan from
 	## the opposing species NAMES — fine for a standalone demo pair, wrong for a drawn cup round,
@@ -140,6 +145,19 @@ func _build_ui() -> void:
 	commit_btn.text = "Commit and fight"
 	commit_btn.pressed.connect(_on_commit)
 	bottom.add_child(commit_btn)
+
+	## ⚠️ THE FIELDING RULE HAS TO BE SAYABLE HERE TOO, NOT JUST AT SIGN-UP. `tournament_ui.gd`
+	## refuses entry when nobody can be fielded, so the ONLY ways to arrive here with an empty sheet
+	## are a save resumed mid-cup whose last body retired on the road, or this screen run standalone
+	## with an empty barn. Both used to reach "Commit and fight" and hand `BattleSim` a side with no
+	## units. A disabled button with no explanation is `UI_LAYOUT_RULES.md` rule 2's forbidden case,
+	## so it carries `Roster.entry_block_reason()` — the same sentence the sign-up screen shows,
+	## from the same function.
+	if team_a.is_empty():
+		commit_btn.disabled = true
+		commit_status_label.text = Roster.entry_block_reason(1)
+		commit_status_label.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
+		commit_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 
 # ── THE READ — what you are committing TO ─────────────────────────────────────────────────────

@@ -43,6 +43,16 @@ var t_samples := 0
 var t_frontier_ok := 0      # the frontier rung could be fielded IN FULL this week
 var t_farm_only := 0        # frontier not fieldable, some lower rung was
 var t_no_rung := 0          # no rung fieldable even short-handed — a week that cannot enter a cup
+## ⚠️ THIS COLUMN IS STRUCTURALLY ZERO AND IT IS NOT EVIDENCE ABOUT THE GAME. Round 17's brief
+## expected it to become non-zero once retirees stopped competing. It cannot: the parent autopilot
+## (`_probe_career_arc.gd:_manage_roster`, the "retirees first" block) preserves or releases every
+## retiree the same week it retires, so a barn with zero fieldable bodies is a state THIS INSTRUMENT
+## never allows to exist. Measured 0.0% of ~19,000 weeks before the fix (round 16) and 0.0% of
+## ~1,900 after (round 17, NAIVE n=6) — the fix cannot move a counter of a state the autopilot
+## prevents. **Do not "fix" this by making the autopilot neglect its retirees**: that manufactures
+## the state in order to observe it, which is signature failure #2. The retired-only stable is
+## asserted DIRECTLY and deterministically in `--audit` instead, which is stronger evidence than
+## waiting for a stochastic career to stumble into it.
 var t_no_body := 0          # zero non-retired monsters in the barn
 var t_fee_wall := 0         # a rung was fieldable but the entry fee was unaffordable
 var t_broke := 0            # gold < 100
@@ -206,18 +216,183 @@ func _audit_live() -> void:
 		if not inert:
 			_ok = false
 	_audit_retiree_competes()
+	_audit_fielding_predicate()
 	print("")
+
+
+## ⚠️ THE PREDICATE ITSELF, AND ITS CANARY. `roster.gd:fieldable()/fielded_team()/
+## entry_block_reason()` is the one function the four doors now call instead of agreeing with each
+## other four times (round 17). This asserts the FUNCTION, then asserts that it is actually
+## DISCRIMINATING — a `fieldable()` that returned everything, or that returned nothing, would pass a
+## naive "retirees excluded" check and be silently useless.
+##
+## LIVENESS CANARY: the same barn is read twice, once with the body racing and once retired, and the
+## two readings MUST differ in every one of the three outputs. If they do not, the predicate is inert
+## and the probe exits non-zero rather than printing a green line about a rule nobody enforces.
+func _audit_fielding_predicate() -> void:
+	_reset_career()
+	Roster.monsters.clear()
+	var racer = GameData.make_monster(Art.ROSTER[0], 0.5, Roster.rng)
+	var old = GameData.make_monster(Art.ROSTER[1], 0.5, Roster.rng)
+	if racer == null or old == null:
+		return
+	racer.id = Roster.next_slot_id()
+	old.id = Roster.next_slot_id()
+	racer.retired = false
+	old.retired = false
+	## ⚠️ THE RETIREE GOES FIRST IN THE BARN ON PURPOSE. Every door slices FROM THE FRONT and the
+	## oldest bodies sit earliest, so a front-slice is the arrangement that actually shipped the bug.
+	## A test that put the retiree last would pass on a `slice()` that filters nothing.
+	Roster.monsters.append(old)
+	Roster.monsters.append(racer)
+
+	var before := {
+		"able": Roster.fieldable_count(),
+		"team": Roster.fielded_team(1).size(),
+		"first": (Roster.fielded_team(1)[0] if not Roster.fielded_team(1).is_empty() else null),
+		"block": Roster.entry_block_reason(2),
+	}
+	old.retired = true
+	var after := {
+		"able": Roster.fieldable_count(),
+		"team": Roster.fielded_team(1).size(),
+		"first": (Roster.fielded_team(1)[0] if not Roster.fielded_team(1).is_empty() else null),
+		"block": Roster.entry_block_reason(2),
+	}
+
+	var excludes: bool = int(after["able"]) == 1 and after["first"] == racer
+	print("   %s Roster.fieldable() excludes the retiree: 2 in the barn -> %d able, front-slice picks %s" % [
+		"OK " if excludes else "FAIL", int(after["able"]),
+		"the racer" if after["first"] == racer else "the RETIREE"])
+	if not excludes:
+		_ok = false
+
+	## A retired-ONLY barn: the state that used to fight a full cup with nobody who can train.
+	racer.retired = true
+	var all_gone: String = Roster.entry_block_reason(1)
+	var empty_team: bool = Roster.fielded_team(5).is_empty()
+	print("   %s a RETIRED-ONLY stable fields %d bodies and is refused with a reason:" % [
+		"OK " if (empty_team and all_gone != "") else "FAIL", Roster.fielded_team(5).size()])
+	print("       \"%s\"" % all_gone)
+	if not (empty_team and all_gone != ""):
+		_ok = false
+
+	## THE CANARY — retiring a body must have MOVED all three outputs.
+	var moved: bool = int(before["able"]) != int(after["able"]) \
+		and before["first"] != after["first"] \
+		and str(before["block"]) != str(after["block"])
+	print("   %s canary: retiring one of two moved able %d->%d, front-slice, and the block reason" % [
+		"OK " if moved else "FAIL", int(before["able"]), int(after["able"])])
+	if not moved:
+		print("       -> the predicate did not respond to `retired`. Every OK above is meaningless.")
+		_ok = false
+	_audit_signup_door()
+	Roster.monsters.clear()
+
+
+## ⚠️ A PREDICATE CAN BE CORRECT AND THE DOOR CAN STILL IGNORE IT — which is signature failure #1
+## in its purest form, and the exact shape of the bug being fixed. So this instantiates the REAL
+## `ui/tournament_ui.gd` against two real barns and reads the entry button off the built tree, in
+## the spirit of signature failure #3: whatever the screen displays must be read from the thing it
+## describes, and whatever a probe asserts must be read from the screen, not from a copy of its
+## logic. It does not press anything — building the card is the whole assertion.
+func _audit_signup_door() -> void:
+	var racing_ok: bool = _signup_button_enabled(false)
+	var retired_ok: bool = not _signup_button_enabled(true)
+	print("   %s the SIGN-UP SCREEN itself: Wood entry is %s with one racing body, %s with one retired" % [
+		"OK " if (racing_ok and retired_ok) else "FAIL",
+		"ENABLED" if racing_ok else "disabled", "disabled" if retired_ok else "ENABLED"])
+	if not (racing_ok and retired_ok):
+		print("       -> `ui/tournament_ui.gd` is not reading `Roster.entry_block_reason()`.")
+		_ok = false
+	_audit_read_screen()
+
+
+## THE SECOND DOOR — "The Read" is what actually puts bodies on the sheet, and it is the one a
+## `--check-only` parse cannot verify (autoloads are not registered in that mode, so a bare check of
+## `tactics_ui.gd` reports a false "Identifier not found: Roster"). So it is exercised for real.
+##
+## ⚠️ IT ASSERTS THE TEAM, NOT THE SCREEN. `team_a` is the array handed to `BattleSim`; if a retiree
+## reaches it, the fix is cosmetic no matter what the card says.
+func _audit_read_screen() -> void:
+	Roster.monsters.clear()
+	var old = GameData.make_monster(Art.ROSTER[0], 0.5, Roster.rng)
+	var racer = GameData.make_monster(Art.ROSTER[1], 0.5, Roster.rng)
+	if old == null or racer == null:
+		return
+	old.id = Roster.next_slot_id(); old.retired = true       ## front of the barn, as an aged body is
+	racer.id = Roster.next_slot_id(); racer.retired = false
+	Roster.monsters.append(old)
+	Roster.monsters.append(racer)
+	var script_res = load("res://scripts/ui/tactics_ui.gd")
+	if script_res == null:
+		print("   FAIL `ui/tactics_ui.gd` does not compile")
+		_ok = false
+		return
+	var screen: Control = script_res.new()
+	add_child(screen)
+	var fielded: Array = screen.team_a
+	var clean: bool = fielded.size() == 1 and fielded[0] == racer
+	print("   %s THE READ fields %d of 2 (1 retired) and it is %s" % [
+		"OK " if clean else "FAIL", fielded.size(),
+		"the racer" if (fielded.size() == 1 and fielded[0] == racer) else "WRONG"])
+	if not clean:
+		print("       -> `ui/tactics_ui.gd` is slicing `Roster.monsters` instead of")
+		print("          `Roster.fielded_team()`. A retiree reached the battle sim.")
+		_ok = false
+	remove_child(screen)
+	screen.free()
+	Roster.monsters.clear()
+
+
+## Builds `tournament_ui` for a one-monster barn and returns whether its frontier Enter button is
+## live. ⚠️ Freed synchronously with `free()`, not `queue_free()` — this probe never yields to a
+## frame, so a queued node would still be in the tree for the next call and the second reading
+## would be taken off the first screen.
+func _signup_button_enabled(retired: bool) -> bool:
+	Roster.monsters.clear()
+	var mi = GameData.make_monster(Art.ROSTER[0], 0.5, Roster.rng)
+	if mi == null:
+		return false
+	mi.id = Roster.next_slot_id()
+	mi.retired = retired
+	Roster.monsters.append(mi)
+	Career.league_index = 0                     ## Wood: team size 1, so one body is a full team
+	var screen: Control = load("res://scripts/ui/tournament_ui.gd").new()
+	add_child(screen)
+	var live: bool = _has_live_enter_button(screen)
+	remove_child(screen)
+	screen.free()
+	return live
+
+
+func _has_live_enter_button(n: Node) -> bool:
+	if n is Button and str((n as Button).text).begins_with("Enter the") and not (n as Button).disabled:
+		return true
+	for c in n.get_children():
+		if _has_live_enter_button(c):
+			return true
+	return false
 
 
 ## ⚠️ THE RULE `roster.gd:126` STATES IS NOT THE RULE THE LADDER ENFORCES. That comment reads
 ## "a retiree cannot train, feed, or compete", and the first two are true (`week.gd:650` and
-## `week.gd:604` both bail on `mi.retired`). The third has no enforcement anywhere:
-## `career.gd:1149` slices `Roster.monsters` from the front with no filter, `tactics_ui.gd:49`
-## does the same, and `tournament_ui.gd` counts `Roster.monsters.size()` for "do you have a team".
-## This is the project's signature failure #1 — authored, documented, and nothing calls it — and
-## it matters HERE because it removes the last candidate for a lose condition: a stable whose
-## every body has aged out is not eliminated, it simply competes with monsters that can no longer
-## improve. Probed rather than asserted: a fielded body has `reset_for_battle()` called on it.
+## `week.gd:604` both bail on `mi.retired`). The third had no enforcement anywhere: four doors —
+## `career.gd:1149`, `tactics_ui.gd:49`, `tournament_ui.gd:122,173` — each sliced or counted
+## `Roster.monsters` unfiltered. This is the project's signature failure #1 and it matters HERE
+## because it removes the last candidate for a lose condition: a stable whose every body has aged
+## out is not eliminated, it simply competes with monsters that can no longer improve.
+##
+## ⚠️ ROUND 17 CLOSED ALL FOUR DOORS AND THIS FUNCTION IS NOW A TRIPWIRE, NOT A REPORT. The rule
+## lives in ONE place — `roster.gd:fieldable()/fielded_team()/entry_block_reason()` — and all four
+## call sites call it. This one drives `Career.enter_league_tournament()` DIRECTLY, bypassing both
+## screens, so it is the door a future refactor is most likely to reopen: a headless path has no
+## screen to look wrong. It FAILS the probe if a retiree is fielded again, rather than printing
+## `!!` and passing, which is what it did for the eleven rounds the hole was open.
+##
+## `_audit_fielding_predicate()` below asserts the predicate itself, its canary, and the real
+## `ui/tournament_ui.gd` tree — because a correct predicate that no door reads is exactly the
+## failure being fixed.
 func _audit_retiree_competes() -> void:
 	_reset_career()
 	var mi = GameData.make_monster(Art.ROSTER[0], 0.5, Roster.rng)
@@ -229,12 +404,21 @@ func _audit_retiree_competes() -> void:
 	Roster.monsters.append(mi)
 	var out: Dictionary = Career.enter_league_tournament(0, 3, 12345)
 	var fielded: bool = mi.hp != 1.0 and int(out.get("rivalCount", 0)) == 3
-	print("   %s a RETIRED-only stable still enters and fights a cup (fielded=%s, wins %d/%d)" % [
-		"!! " if fielded else "OK ", str(fielded), int(out.get("wins", 0)), int(out.get("rivalCount", 0))])
+	print("   %s the HEADLESS cup path fields a retiree: %s (a %d-round cup ran, wins %d)" % [
+		"!! " if fielded else "OK ", str(fielded),
+		int(out.get("rivalCount", 0)), int(out.get("wins", 0))])
 	if fielded:
-		print("       -> `roster.gd:126` says a retiree 'cannot compete'. Nothing enforces it.")
-		print("       -> so 'lost every body' is not a terminal state either: the stable keeps")
-		print("          entering with bodies that can no longer train. No guard, no message.")
+		print("       -> `career.gd` is slicing `Roster.monsters` instead of calling")
+		print("          `Roster.fielded_team()`. The rule is one function (roster.gd) and this is")
+		print("          the door that bypasses both screens.")
+		print("       -> CHECK FOR A DELIBERATE A/B SWITCH FIRST. This fired once during round 17")
+		print("          on `career.gd:_AB_RETIREE_OFF`, a measurement flag marked REMOVE BEFORE")
+		print("          INTEGRATION. If one is present and true, this failure is EXPECTED and the")
+		print("          flag is the finding. If not, it is a regression — fix it at the slice.")
+		_ok = false
+	else:
+		print("       -> `reset_for_battle()` never touched the retiree's sentinel HP, so no aged-out")
+		print("          body was put on the sheet. Closed round 17; this line is now a tripwire.")
 
 
 # =============================================================================

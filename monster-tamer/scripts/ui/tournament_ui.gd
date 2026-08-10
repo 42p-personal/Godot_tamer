@@ -119,9 +119,15 @@ func _refresh() -> void:
 	for c in _list.get_children():
 		c.queue_free()
 
-	var have: int = Roster.monsters.size()
-	_header.text = "%s league · week %d · %d gold · %d in the stable" % [
-		Career.current_league_name(), Career.week, Career.gold, have]
+	## ⚠️ COUNT WHO CAN FIGHT, NOT WHO IS IN THE BARN. `roster.gd:126` states that a retiree cannot
+	## compete and nothing enforced it: this header, the short-handed warning and the entry button
+	## all counted `Roster.monsters.size()`, so a stable of aged-out bodies read as a full team and
+	## entered a full cup. One predicate now — `Roster.fieldable_count()` — see roster.gd.
+	var have: int = Roster.fieldable_count()
+	var retired: int = Roster.retirees_in_barn().size()
+	_header.text = "%s league · week %d · %d gold · %d able to compete%s" % [
+		Career.current_league_name(), Career.week, Career.gold, have,
+		"  ·  %d retired" % retired if retired > 0 else ""]
 
 	for idx in range(Career.league_index, -1, -1):
 		_list.add_child(_cup_card(idx))
@@ -170,7 +176,7 @@ func _cup_card(idx: int) -> Control:
 	var marquee: bool = CupRun.is_marquee(idx)
 	var rounds: int = CupRun.rounds_for(idx)
 	var cap: int = int(Career.stat_cap_for_league(idx))
-	var have: int = Roster.monsters.size()
+	var have: int = Roster.fieldable_count()   ## ⚠️ fieldable, not present — see _refresh()
 	var fee: int = _fee_for(idx, marquee)
 	var weeks: int = CupRun.weeks_for_cup(idx, rounds)
 
@@ -197,7 +203,10 @@ func _cup_card(idx: int) -> Control:
 	# ⚠️ SHORT-HANDED ENTRY MUST BE BILLED, NOT DISCOVERED. Entering a body down is now allowed
 	# (`Career.SHORT_ENTRY_ALLOWANCE`) because being locked out was an invisible economy wall, but
 	# a penalty the player only meets in the arena is not a decision — it is an ambush.
-	if have < team_size:
+	## ⚠️ ONLY WHEN ENTRY IS ACTUALLY POSSIBLE. Below the minimum the card already carries
+	## `entry_block_reason()`, and "you will fight 0 v 5" underneath "every monster has retired" is
+	## two sentences competing to explain one state — the player reads the weaker one.
+	if have < team_size and have >= Career.min_team_to_enter(idx) and have > 0:
 		var short_line := UiTheme.body_text(
 			"You will fight %d v %d — a body down, and outnumbered every round. The draw does not shrink to match you."
 			% [mini(have, team_size), team_size], "primary")
@@ -290,12 +299,24 @@ func _cup_card(idx: int) -> Control:
 			"Already cleared — pays %d%% for punching down." % int(REWARD_BY_DROP[
 				clampi(Career.league_index - idx, 0, REWARD_BY_DROP.size() - 1)] * 100.0), "muted"))
 
+	## ⚠️ A LOCKED DOOR MUST SAY WHY, AND "you have 4" WHEN THE PLAYER CAN SEE FOUR MONSTERS IS A
+	## LIE. `UI_LAYOUT_RULES.md` rule 2 forbids a dead control with no explanation, and the retiree
+	## case is precisely the one where the old copy was actively misleading — the stable screen shows
+	## four bodies and this button would have said "you have 0". `Roster.entry_block_reason()` is the
+	## one function that names the cause and the move, shared with `tactics_ui.gd`.
+	var blocked: String = Roster.entry_block_reason(Career.min_team_to_enter(idx))
+	if blocked != "":
+		var why := UiTheme.body_text(blocked, "primary")
+		why.add_theme_color_override("font_color", UiTheme.CAUTION)
+		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(why)
+
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 38)
 	btn.focus_mode = Control.FOCUS_ALL
-	if have < Career.min_team_to_enter(idx):
+	if blocked != "":
 		btn.disabled = true
-		btn.text = "Need %d monsters — you have %d" % [Career.min_team_to_enter(idx), have]
+		btn.text = "Cannot enter — %d of %d can still compete" % [have, Roster.monsters.size()]
 	elif Career.gold < fee:
 		btn.disabled = true
 		btn.text = "Entry is %dg — you have %dg" % [fee, Career.gold]
@@ -424,6 +445,19 @@ func _show_result(out: Dictionary) -> void:
 		var w := UiTheme.heading("TAMERS APEX TAKEN — you have finished the Circuit.", 2)
 		w.add_theme_color_override("font_color", UiTheme.GOLD)
 		col.add_child(w)
+		## ⚠️ THE ROUTE TO THE ENDING, AND IT IS A BUTTON RATHER THAN A JUMP. Before round 17 the
+		## ship target of this project ended by setting a bool no screen read (`career.gd:1220`;
+		## `won_game` had zero readers in `scripts/ui/`). It ends on a screen now — but the cup
+		## panel this sits in is the account of the fight that won it, so navigating automatically
+		## would delete the thing the player is reading. `town_ui.gd`'s arrival check remains the
+		## fallback for a save loaded after the fact.
+		if ResourceLoader.exists("res://scenes/ending.tscn"):
+			var end_btn := Button.new()
+			end_btn.text = "See how you finished →"
+			end_btn.tooltip_text = "Your graded result: how fast you took the Circuit, and against whose pace."
+			end_btn.focus_mode = Control.FOCUS_ALL
+			end_btn.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/ending.tscn"))
+			col.add_child(end_btn)
 	elif bool(out.get("promoted", false)):
 		var p := UiTheme.heading("PROMOTED — %s to %s" % [before_league, Career.current_league_name()], 3)
 		p.add_theme_color_override("font_color", UiTheme.GOLD)
@@ -455,3 +489,5 @@ func _show_result(out: Dictionary) -> void:
 	# crash or a close would cost the player more than any other single action.
 	if has_node("/root/SaveGame"):
 		SaveGame.save_game()
+
+

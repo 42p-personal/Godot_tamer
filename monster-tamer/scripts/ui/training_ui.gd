@@ -28,12 +28,14 @@
 ## tick — the number on the button IS the number that will land.
 extends Control
 
+const Pace = preload("res://scripts/ui/ending_ui.gd")
 const UiTheme = preload("res://scripts/ui/theme.gd")
 const WeekLib = preload("res://scripts/week.gd")
 
 var stat_box: VBoxContainer
 var header_label: Label
 var ladder_label: Label
+var pace_label: Label
 var plan_label: Label
 
 
@@ -67,6 +69,15 @@ func _build_ui() -> void:
 	ladder_label = UiTheme.body_text("", "secondary")
 	ladder_label.add_theme_color_override("font_color", UiTheme.GOLD)
 	page.add_child(ladder_label)
+
+	## ⚠️ THE CLOCK, ON THE SCREEN WHERE THE WEEKS ARE SPENT. Round 17's whole thesis is that
+	## PACE is the score (docs/CONVERSION_DIAGNOSIS.md — completion is a saturated boolean and
+	## only weeks can respond to skill), and a score the player only meets on the win screen is
+	## decoration. Training is where a week is committed, so it is where the cost of a week has to
+	## be legible. Read live from `Career` through the ONE adapter (`ui/ending_ui.gd`); never
+	## re-derive a par curve here — two definitions of par is this project's signature failure.
+	pace_label = UiTheme.body_text("", "secondary")
+	page.add_child(pace_label)
 
 	plan_label = UiTheme.body_text("Nothing booked this week.", "primary")
 	plan_label.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
@@ -149,6 +160,7 @@ func _refresh() -> void:
 		header_label.text = "No monster selected — buy one at the Market first."
 		ladder_label.text = ""
 		plan_label.text = ""
+		_refresh_pace()   ## the clock does not stop because nothing is selected
 		return
 
 	header_label.text = "%s — %s · stamina %d/100 · happiness %d/10 · %s ceiling %d" % [
@@ -170,6 +182,7 @@ func _refresh() -> void:
 	elif nxt > 0.0:
 		ladder += "  Next league lifts the ceiling to %d." % int(round(nxt))
 	ladder_label.text = ladder
+	_refresh_pace()
 
 	_refresh_plan_label(m)
 
@@ -417,3 +430,19 @@ func _drill_card(m, d: Dictionary) -> Control:
 		col.add_child(w)
 
 	return panel
+
+
+## The pace line. `Pace.snapshot()` is empty when the career model is absent, and an ABSENT clock
+## must draw NOTHING rather than a reassuring guess — a screen that invents a standing is round
+## 13's scoreboard that announced the winner at frame 0.
+func _refresh_pace() -> void:
+	if pace_label == null:
+		return
+	var snap: Dictionary = Pace.snapshot()
+	if snap.is_empty():
+		pace_label.text = ""
+		pace_label.visible = false
+		return
+	pace_label.visible = true
+	pace_label.text = Pace.pace_line(snap)
+	pace_label.add_theme_color_override("font_color", Pace.pace_color(snap))

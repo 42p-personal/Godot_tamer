@@ -1,5 +1,44 @@
 # SHAPE DIAGNOSIS — the round-11 paradox, resolved
 
+> # ⚠️ STALENESS BANNER — READ BEFORE QUOTING ANY FIGURE BELOW (added round 17, 2026-08-10)
+>
+> **This document's headline win — "a specialist stopped being a trap: SPIKE 4/24 → 26/32,
+> paired p=0.0070 FOR" (INTEGRATOR ADDENDUM, "THE POLICY TABLE ON THE MERGED TREE") — DOES NOT
+> REPRODUCE, and it is STALE rather than wrong-at-the-time.**
+>
+> **The invalidating commit is `3b6da1b` "assignment ships, its stat caps do not"** — the commit
+> immediately after `f39163f`, at which this document was last written. It changed `_probe_shape.gd`
+> (+96 lines, including the new `s_nocommit` flag and the comment *"a SHAPED arm that never assigns
+> is measuring a player who does not exist"*) — i.e. **it changed the SPIKE arm's own definition** —
+> alongside `week.gd` (+172), `_probe_career_arc.gd`, `monster_instance.gd`, `roster.gd`,
+> `classify.gd` and `week_plan.gd`. Its own commit message records the direction:
+> *"a committed specialist won 13/16 careers under round 14 and 5/16 with the caps live"*.
+> **26/32 and the readings below are different arms on different trees.** Neither instrument lied.
+>
+> **Three independent readings now contradict the 26/32:**
+>
+> | reading | instrument | n | SPIKE WON |
+> |---|---|---|---|
+> | the claim | `_probe_shape.gd` @ `f39163f` | 32 | **26/32 (81%)** |
+> | round 16 lens 1 | `_probe_convert.gd` (subclasses `_probe_shape`) | 12 | **3/12 (25%)** |
+> | round 16 verification | shipped `_probe_shape.tscn --pol --only-arm SPIKE`, untouched | 8 | **3/8 (38%)** |
+> | **round 17 re-measure** | shipped `_probe_shape.tscn --pol --seeds 24 --only-arm SPIKE`, on HEAD | **24** | **7/24 (29%) [0.15–0.49]** |
+>
+> **The n=24 re-measurement REFUTES the claim and INVERTS the sign of its test: paired
+> FLAT→SPIKE is p = 0.0106 AGAINST (5 better / 18 worse), not p = 0.0070 FOR.** A specialist is
+> still a trap — it loses 17 careers in 24 and its modal stall is Gold. The honest version of what
+> round 14 bought is **4/24 → 7/24**, overlapping CIs, not a reversal.
+>
+> ⚠️ **AND THE CONTROL PROVES IT IS THE ARM, NOT THE TREE:** FLAT reads **21/24, median 478 wks,
+> spread 0.12, 3160g** — byte-identical to §1's round-14 reading on all four columns, three trees
+> later. **Full table, conditions and canary in §7 at the foot of this file. Read §7, not the
+> addendum.**
+>
+> ⚠️ **AND THIS IS THE SECOND TIME A STALE DOC HAS COST A ROUND** (round 14 inherited a wrong
+> Gold/`teamSize` claim from round 10 and it was repeated in a brief). §8 is a provenance sweep of
+> every other quoted figure in this file. **A number in a doc with no provenance is a trap for the
+> next round.**
+
 **Round 14 · 2026-08-09 · instrument `monster-tamer/scripts/_probe_shape.gd` + `scenes/_probe_shape.tscn`**
 
 ```
@@ -360,9 +399,15 @@ identical 28/32 (87.5%), CIs exactly coincident. §5's acceptance target — *FL
 APT/COMPETENT stay ≥ 18/24* — is **NOT MET**, and nothing in this round moved it.
 
 **What the round did buy, and it is not nothing:**
-1. **A specialist stopped being a trap.** SPIKE **4/24 (17%) → 26/32 (81%)**, and its paired sign
+1. ~~**A specialist stopped being a trap.** SPIKE **4/24 (17%) → 26/32 (81%)**, and its paired sign
    test flips from p=0.0000 AGAINST to p=0.0070 FOR. The build the game's own rivals are made of
-   is now a build a player can make.
+   is now a build a player can make.~~
+   ⚠️ **RETRACTED — STALE AS OF COMMIT `3b6da1b`, AND REFUTED ON HEAD AT n=24.** `3b6da1b` changed
+   the SPIKE arm's own definition, so 26/32 is not a reading of the arm that carries that name
+   today. Re-measured round 17 on the shipped instrument: **SPIKE 7/24 (29%), paired p = 0.0106
+   AGAINST** — the sign is inverted — while the FLAT control reproduces to the digit (21/24, 478
+   wks, spread 0.12, 3160g). Three earlier readings agree (3/12, 3/8). **Do not quote 26/32 and do
+   not quote p=0.0070.** The true gain from round 14's work is **4/24 → 7/24**. See §7.
 2. **Pace became statistically real.** FLAT→COMPETENT went from 16/8 p=0.15 to **26/6 p=0.0005**;
    median 462 → 322 weeks, **−30%**.
 3. **The on-ramp is untouched.** FLAT's completion rate is unchanged to the percentage point
@@ -372,3 +417,99 @@ APT/COMPETENT stay ≥ 18/24* — is **NOT MET**, and nothing in this round move
 **Wood** (×3) with 120g and 0.8 empty stalls, where they used to stall at Tamer Elite. A competent
 policy losing at the FIRST rung is an early-roster or death path, not a skill gap. Diagnose it
 before reading anything else into the COMPETENT arm's loss column.
+
+> ⚠️ **ROUND 17 NOTE ON THAT SYMPTOM: IT HAS NOT BEEN SEEN AGAIN, AND IT HAS NOT BEEN REFUTED
+> EITHER.** Round 16's census (`_probe_terminal --census --seeds 16`, all three policies, 48
+> careers) reports COMPETENT at **15/16** with its single non-win **WALLED at Platinum**, and no
+> Wood stall anywhere in the 48. That is a *failure to observe*, not a refutation — a symptom on
+> 3 of 32 seeds is entirely capable of landing 0 times in 16 — but nobody should carry "COMPETENT
+> loses at Wood" forward as a known state without re-running `--pol --seeds 32` on HEAD.
+
+---
+
+# §7. THE RE-MEASUREMENT — SPIKE on HEAD, n=24 (round 17, 2026-08-10)
+
+Run, verbatim, on HEAD, using the **shipped** instrument with nothing modified:
+
+```
+cd monster-tamer
+"P:/Godot_v4.7.1-stable_win64.exe" --headless --path . \
+    res://scenes/_probe_shape.tscn -- --pol --seeds 24 --only-arm SPIKE
+```
+
+```
+  arm         WON (95% CI)       med wks   med rung   spread   goldEnd   empty   capped wks
+  FLAT        21/24 [0.69-0.96]   478       10         0.12     3160      0.0     0
+  SPIKE        7/24 [0.15-0.49]   339        6         2.40      417      0.0     0
+
+  paired FLAT -> SPIKE : 5 better / 18 worse / 1 tied   sign-test p = 0.0106
+
+  ── what gated the careers that did NOT win ──
+  arm      lost  goldEnd  emptyStl  fee-refus  blockedWk  stall reason (modal)
+  FLAT       3     580      0.0       0.0        108.3     no promotion out of Platinum (x2)
+  SPIKE     17     357      0.1       0.0         63.4     no promotion out of Gold (x6)
+```
+
+## ⚠️ THE CLAIM IS REFUTED, AND THE SIGN OF THE TEST IS INVERTED
+
+| | the claim (addendum, `f39163f`) | HEAD, n=24, round 17 |
+|---|---|---|
+| SPIKE WON | **26/32 (81%)** | **7/24 (29%) [0.15–0.49]** |
+| paired sign test | **p = 0.0070 FOR** | **p = 0.0106 AGAINST** (5 better / 18 worse / 1 tied) |
+| modal stall | — | **no promotion out of Gold** ×6 |
+
+**"A specialist stopped being a trap" is false on HEAD.** It is still a trap: it loses 17 careers in
+24 and stalls two-thirds of the way up the ladder. The honest version of what round 14's work bought
+is **4/24 → 7/24** — a real improvement whose CIs overlap heavily, not a reversal.
+
+⚠️ **AND THE CONTROL ARM IS THE PROOF THAT THIS IS THE SPIKE ARM MOVING, NOT THE TREE.** FLAT reads
+**21/24, median 478 wks, spread 0.12, 3160g end** — *byte-identical to §1's round-14 reading on all
+four columns*, three trees and eleven commits later. A probe whose control is unchanged to the digit
+while its treatment moves 81% → 29% is reading a change in the treatment. That is exactly what
+`3b6da1b` did: it redefined the SPIKE arm.
+
+**Conditions of this run, stated so it can be compared:** HEAD at 2026-08-10; `--only-arm SPIKE`
+(FLAT is always run as the pair); the shipped `_probe_shape.gd`, unmodified; and
+`career.gd:_AB_RETIREE_OFF = true` — i.e. the OLD unfiltered fielding slice, the same behaviour
+round 14 and round 16 measured under, so the comparison is not confounded by round 17's retiree fix.
+Canary: SPIKE spread **2.40** against FLAT's **0.12**, so the two arms are genuinely different
+players.
+
+**Four independent readings now, and the claim is the outlier:**
+
+| n | instrument | SPIKE WON |
+|---|---|---|
+| 32 | `_probe_shape` @ `f39163f` — **the claim** | 26/32 (81%) |
+| 12 | `_probe_convert` (round 16) | 3/12 (25%) |
+| 8 | shipped `_probe_shape` (round 16) | 3/8 (38%) |
+| **24** | **shipped `_probe_shape` (round 17, HEAD)** | **7/24 (29%)** |
+
+⚠️ **ONE PROCEDURAL WARNING WORTH MORE THAN THE NUMBER.** The first attempt at this run produced a
+full table of zeros and a green `=== shape probe: OK ===` **because `career.gd` failed to parse
+mid-write by a concurrent workstream**, so the `Career` autoload was `Nil` and every arc errored
+into a default dictionary. The probe printed a policy table anyway. **A probe that reports a
+number when its autoloads did not load is signature failure #2 (an instrument that lies), and
+`_probe_shape.gd` currently has no guard against it.** Recommended for whoever owns it: assert
+`Career != null` and `GameData.leagues.size() == 11` before the first arc, and exit non-zero
+otherwise. Cheap, and it would have voided a 40-minute run in one second.
+
+---
+
+# §8. PROVENANCE SWEEP OF EVERYTHING ELSE IN THIS FILE (round 17)
+
+**Why:** the 26/32 above is the second stale figure to cost a round. Every remaining quotable
+number in this document is classified below. **Nothing here is re-measured unless the row says so.**
+
+| figure, and where | status | basis |
+|---|---|---|
+| **§5's acceptance target — "FLAT ≤ 12/24 while APT/COMPETENT stay ≥ 18/24"** | ⚠️ **THE TEST IS BROKEN AND MUST NOT BE INHERITED AGAIN.** It puts a CEILING on the naive arm and **no FLOOR**, so it is satisfied by FLAT = 0/24 — i.e. by deleting the on-ramp `CLAUDE.md` requires. It was inherited verbatim into a round-16 recommendation before anyone noticed | `CONVERSION_DIAGNOSIS.md` §R17-4, which measured what satisfying it costs: at a 400-week horizon FLAT completes **1/16**; at 350, **0/16**. **Any future separation target must carry a floor on the naive arm** |
+| **§1's FLAT 21/24 (87.5%)** and the addendum's **FLAT 28/32 (87.5%)** | **REPRODUCES, three trees later** | round 16 n=16: **14/16 = 87.5%**. Round 17 n=6: **6/6**. This is the most stable number in the document and it is the on-ramp constraint |
+| **§1's "competence buys PACE" −28% (478 → 343 wks)**; addendum's −30% (462 → 322) | **REPRODUCES in sign and size; absolute weeks have moved** | round 16 n=16: NAIVE **502** vs COMPETENT **352**, a 148-week / 30% shift, paired **p=0.0005** |
+| **§2.1's `--nine` table (22 / 53 / 60% at Gold/Masters/Apex)** | **already retracted in the addendum (B1), and correctly** | it fought `archetype = ""` — an unshaped, planless field **no cup ever draws**. Re-measured against the real field: top four rungs FLAT 30% / SHAPED 50%. **Do not tune against 22/53/60** |
+| **§3's attribution of shape's cost to `FOCUS_SLOPE`/`FOCUS_FLOOR`** | **already refuted inline, in the same round** | floor 0.55 → 0.75 moved the deficit only −31.9% → −30.3%; disabling focus cost entirely still left −28.8%. The cost was the per-stat **ceiling**, fixed by `SPIKE_HEADROOM 1.35` |
+| **§2.2's decomposition (8.58x / 5.50x)** | **RE-MEASURED ON HEAD (round 17 integration) — REPRODUCES EXACTLY** | `_probe_shape.tscn -- --gym --nine` on the round-17 merge prints `E -> B = 8.58x` and `the KIT-ONLY half ... E -> F = 5.50x`, at a stat total preserved to +0.00% at every rung. The overall arm ratio reads **1.39x** (74/184 vs 103/184). ⚠️ The remaining three figures (1.05x / 1.39x / **0.07x**) were not separately re-printed; the 0.07x mismatch figure is still cited by `roster.gd:_shape_to_class`'s comment as live reasoning and is still unchecked |
+| **§3's gym table (flat 4587 / apt +4.2% / spike −31.9%)** | **UNVERIFIED ON HEAD** | `week.gd` gained `SPIKE_HEADROOM` and `stat_ceiling()` after this was measured, which act directly on the spike row. `--gym` is ~5 seconds; there is no excuse for quoting it unre-run |
+| **§3's spread reference points (rival 0.475, COMPETENT 1.11–1.13)** | **UNVERIFIED ON HEAD** | not re-measured since round 14 |
+| **§4's loss table (FLAT 3 lost, 108.3 frontier-blocked weeks)** | **directionally reproduces at a different n** | round 16 n=12: FLAT lost 2/12 with **93.5** frontier-blocked weeks and 4,316g in hand. The *finding* — losers end solvent with a bodies problem, not a money or time problem — survives; the digits are a different sample |
+| **§4's "Time is not the gate: winners finish in 343–478 of 1000 weeks"** | **REPRODUCES, and round 16 sharpened it** | 0 of 48 careers reached the 1000-week horizon [0.00–0.074]. The horizon has never been load-bearing on any completion figure this repo has quoted |
+| **the INTEGRATOR ADDENDUM's B1 conclusion "top four rungs FLAT 30% / SHAPED 50%"** | **held by an independent instrument** | `_probe_ladder_slope.tscn --shape --seeds 64`, reproduced by the integrator. `career.gd` carries the table plus the BAN on adding a shape term to the difficulty price |

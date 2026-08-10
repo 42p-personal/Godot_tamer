@@ -93,6 +93,18 @@ func _setup() -> void:
 			idx = i
 			break
 	Career.league_index = idx
+	## ⚠️ THE CLOCK HAS TO BE ON THE CLOCK. Round 17 put a pace line on this screen
+	## (`ui/report_ui.gd:_banner`), and a capture taken at week 1 cannot show whether it says
+	## anything useful mid-career — a fresh career is exactly the state where "level" is the
+	## trivially correct answer. `-- --week 200` places the capture where the question is live.
+	var wk: int = 0
+	var argv: Array = OS.get_cmdline_user_args()
+	var wi: int = argv.find("--week")
+	if wi >= 0 and wi + 1 < argv.size():
+		wk = int(argv[wi + 1])
+	if wk > 0:
+		Career.week = wk
+		Career.frontier_since_week = maxi(0, wk - 40)
 	CupRun.start(idx, 3)
 	CupRun.current_round = 1
 	for i2 in range(5):

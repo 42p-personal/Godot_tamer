@@ -38,12 +38,9 @@ const MonsterInstanceScript = preload("res://scripts/monster_instance.gd")
 const SAVE_PATH := "user://save.json"
 
 ## 1 — stats only. 2 — the career state a player actually earns (barn, licences, freezer) plus
-## each monster's weekly-tick state. 3 — `assignedClass`, the one COMMITMENT that is not derived.
-## 4 — the terminal result stopped being a bool: `wonWeek` and the frontier record
-## (`career.gd:grade_result` / `frontier_verdict`).
-## A v1 file still loads: every later field falls back to the value a fresh monster/career would
-## have, which is exactly what v1 was doing implicitly.
-const SAVE_VERSION := 4
+## each monster's weekly-tick state. A v1 file still loads: every v2 field falls back to the value
+## a fresh monster/career would have, which is exactly what v1 was doing implicitly.
+const SAVE_VERSION := 3
 
 ## Licences ride along in `Career.licences` (a real Dictionary — `career.gd:holds_licence()`
 ## explains why it is not `set_meta`), so this format persists that dictionary wholesale rather
@@ -130,22 +127,6 @@ func _serialize_career() -> Dictionary:
 		"licences": Career.licences.duplicate(),
 		"leaguesWon": Career.leagues_won,
 		"wonGame": Career.won_game,
-		## ⚠️ v4 — THE TERMINAL RESULT IS A GRADE, SO THE WEEK IT LANDED HAS TO SURVIVE THE RELOAD.
-		## `Career.week` keeps ticking after the title (nothing stops the clock), so a save that
-		## stored only `wonGame` could never recover "you won in week 354" — and that number IS the
-		## result now (`career.gd:grade_result`). Absent in every v1..v3 file, which is exactly what
-		## the load-side fallback is for.
-		"wonWeek": Career.won_week,
-		## The frontier record behind the outclassed verdict. Four ints, saved for one reason: a
-		## reload that zeroed them would hand a stuck player a "fresh" verdict and make them fight
-		## another six cups before the game would say anything. State the CLOCK touches has to
-		## survive the clock — the same rule this file already applies to age and stamina.
-		"frontier": {
-			"sinceWeek": Career.frontier_since_week,
-			"cups": Career.frontier_cups,
-			"rounds": Career.frontier_rounds,
-			"roundWins": Career.frontier_round_wins,
-		},
 		"selectedIndex": Roster.selected_index,
 	}
 
@@ -160,28 +141,6 @@ func _deserialize_career(d: Dictionary) -> void:
 	Career.week = maxi(0, int(d.get("week", 0)))
 	Career.barn_capacity = maxi(Career.STARTING_BARN_CAPACITY, int(d.get("barnCapacity", Career.STARTING_BARN_CAPACITY)))
 	Career.won_game = bool(d.get("wonGame", false))
-	## ⚠️ THE MIGRATION, AND IT IS ONE LINE BECAUSE IT IS A FALLBACK READ, NOT A SCRIPT. A v1..v3
-	## file has no `wonWeek`. If it recorded a WON career, the only week that file knows about is
-	## `week` itself, so that is what the grade is computed from — the honest reconstruction, and
-	## never worse than the -1 (`unknown`) it would otherwise carry. An unwon career reads -1,
-	## which is exactly what a fresh career carries.
-	Career.won_week = int(d.get("wonWeek", Career.week if Career.won_game else -1))
-
-	## The frontier record. Absent (v1..v3) = "this rung starts counting now": `sinceWeek` falls
-	## back to the loaded week and the three counters to zero, so an old save reads as `fresh`
-	## rather than as an outclassed career nobody measured. It costs the player six cups of
-	## re-evidence and it cannot produce a false verdict, which is the right way round.
-	var fr = d.get("frontier", {})
-	if fr is Dictionary:
-		Career.frontier_since_week = maxi(0, int(fr.get("sinceWeek", Career.week)))
-		Career.frontier_cups = maxi(0, int(fr.get("cups", 0)))
-		Career.frontier_rounds = maxi(0, int(fr.get("rounds", 0)))
-		Career.frontier_round_wins = maxi(0, int(fr.get("roundWins", 0)))
-	else:
-		Career.frontier_since_week = Career.week
-		Career.frontier_cups = 0
-		Career.frontier_rounds = 0
-		Career.frontier_round_wins = 0
 
 	var licences = d.get("licences", {})
 	Career.licences = (licences as Dictionary).duplicate() if licences is Dictionary else {}

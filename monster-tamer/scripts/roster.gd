@@ -175,6 +175,66 @@ func retirees_in_barn() -> Array:
 	return monsters.filter(func(m): return m.retired)
 
 
+# ── WHO CAN ACTUALLY FIGHT — the third clause of the rule stated at line 126 ──────────────────
+#
+# ⚠️ THE RULE IS ONE FUNCTION NOW, BECAUSE FOUR AGREEMENTS ARE HOW THE HOLE OPENED.
+# `preserve()` above documents "a retiree cannot train, feed, or compete". Two of those three were
+# enforced (`week.gd:650` bails on training, `week.gd:604` on feeding) and the third was enforced
+# NOWHERE: `career.gd:1149`, `ui/tactics_ui.gd:49` and `ui/tournament_ui.gd:122,173` each sliced or
+# counted `monsters` unfiltered, so a stable holding nothing but retirees entered and fought a full
+# cup (measured: `_probe_terminal.gd --audit`, round 16, `fielded=true`). That is this project's
+# signature failure #1 — authored, documented, and nothing calls it — for the eleventh time, and it
+# is the reason the rule now lives HERE, next to the comment that states it, rather than as four
+# separate copies of `not m.retired` that will drift apart again.
+#
+# ⚠️ AND IT IS NOT A HOUSEKEEPING FIX. A retiree that still fights removes the last candidate for a
+# losing condition from the game: "every body I own has aged out" is currently not a setback, not a
+# message, and not a state — the stable simply keeps entering with monsters that can no longer
+# improve. See `docs/CONVERSION_DIAGNOSIS.md` §2.
+
+## The barn monsters that may still be fielded. Order is preserved, so a caller taking the first N
+## takes the same N it always did minus the retirees — no reshuffle, no surprise substitution.
+func fieldable() -> Array:
+	return monsters.filter(func(m): return not m.retired)
+
+
+func fieldable_count() -> int:
+	return fieldable().size()
+
+
+## The team a cup actually puts on the sheet: the first `size` fieldable bodies. ⚠️ EVERY DOOR THAT
+## FIELDS A TEAM MUST CALL THIS, not `monsters.slice()`. It may legitimately return FEWER than
+## `size` (short-handed entry is allowed — `career.gd:SHORT_ENTRY_ALLOWANCE`) and may return an
+## empty array, which is exactly the case `entry_block_reason()` refuses at the sign-up screen.
+func fielded_team(size: int) -> Array:
+	var able: Array = fieldable()
+	return able.slice(0, mini(maxi(0, size), able.size()))
+
+
+## Why this stable may not enter a cup that needs `min_needed` bodies — "" when it may.
+##
+## ⚠️ IT RETURNS PROSE, NOT A BOOL, BECAUSE OF `docs/UI_LAYOUT_RULES.md` RULE 2: never a dead
+## control with no explanation. A player whose whole stable has retired and who is handed a greyed
+## "Need 4 monsters — you have 4" button has been told a lie AND given no way to act on it. The
+## sentence has to name the cause (they retired), the rule (a retiree cannot compete) and the move
+## (enshrine, then raise or buy), or the screen is a wall.
+func entry_block_reason(min_needed: int) -> String:
+	var able: int = fieldable_count()
+	if able >= min_needed and able > 0:
+		return ""
+	var retired: int = retirees_in_barn().size()
+	if monsters.is_empty():
+		return "Your stable is empty. Buy a monster at the Market before entering a cup."
+	if able == 0:
+		return ("Every monster in your stable has retired. A retiree cannot train, feed or compete — "
+			+ "enshrine %s in the Lab and raise or buy a successor." % ("them" if retired > 1 else "it"))
+	if retired > 0:
+		return ("Only %d of your %d can still compete — %d %s retired, and a retiree cannot fight. "
+			% [able, monsters.size(), retired, "have" if retired > 1 else "has"]
+			+ "This cup needs %d." % min_needed)
+	return "This cup needs %d monsters — you have %d." % [min_needed, able]
+
+
 ## Empties the stable entirely. This is the "real" starting state for a genuine New Career
 ## (docs/CORE_LOOP_PORT.md §1 — `town.ts:newGame()` gives the player `stable: []`, never a
 ## pre-made team) — called from title_ui.gd's New Career handler alongside

@@ -30,6 +30,9 @@
 extends Control
 
 const UiTheme = preload("res://scripts/ui/theme.gd")
+## The pace model and the ending screen are the same file on purpose — one definition of par, read
+## by the hub, the battle report and the ending alike. See `scripts/ui/ending_ui.gd`'s header.
+const Pace = preload("res://scripts/ui/ending_ui.gd")
 
 const GRID_COLUMNS := 4
 
@@ -58,6 +61,15 @@ var loc_buttons: Array = []  # PanelContainer per location, LOCATIONS order
 
 func _ready() -> void:
 	self.theme = UiTheme.base_theme()
+	# ⚠️ THE ONLY ROUTE TO THE ENDING THAT THIS FILE OWNS. `Career.won_game` was set at
+	# `career.gd:1220` and read by no screen in the project (`grep won_game scripts/ui/` returned
+	# nothing before round 17). The town is the hub every screen returns to, so routing from here
+	# means the ending is reachable without editing a file this stream does not own.
+	# INTEGRATOR: the better route is one line in `tournament_ui.gd` — see the handover notes; this
+	# check then becomes the belt-and-braces path for a save loaded after the fact.
+	if _should_show_ending():
+		call_deferred("_go_to_ending")
+		return
 	var identity: Dictionary = Art.team_identity(0)
 	badge = identity["badge"]
 	accent = UiTheme.team_border_color(0)
@@ -124,6 +136,19 @@ func _build_ui() -> void:
 	header.add_child(title_btn)
 
 	vbox.add_child(HSeparator.new())
+
+	# ── THE CLOCK, MADE PRESENT ────────────────────────────────────────────────────────────────
+	# The round-17 acceptance bar. A grade revealed after 400 weeks converts nothing; the player
+	# has to be able to answer "am I doing well?" without opening a menu, on the screen they pass
+	# through most. So the pace strip sits above the doors, on every visit, always.
+	var pace_strip := _pace_strip()
+	if pace_strip != null:
+		vbox.add_child(pace_strip)
+
+	# ── the one genuine failure mode in the game, named ────────────────────────────────────────
+	var oc := _outclassed_banner()
+	if oc != null:
+		vbox.add_child(oc)
 
 	# ── the opening decision: an empty stable is the CORRECT new-game state, so say so ─────────
 	var stable_empty: bool = not has_node("/root/Roster") or Roster.monsters.is_empty()
@@ -211,6 +236,224 @@ func _refresh_header_text() -> void:
 		week = Career.week
 	var stable_size := Roster.monsters.size() if has_node("/root/Roster") else 0
 	header_label.text = "%s league  ·  %d gold  ·  week %d  ·  %d in the stable" % [league_name, gold, week, stable_size]
+
+
+## ⚠️ ROUND 17'S WHOLE POINT LIVES IN THIS FUNCTION, NOT IN THE ENDING SCREEN.
+## `docs/CONVERSION_DIAGNOSIS.md` §5 R17-1 states the risk in its own recommendation: *"it is a
+## framing change. If the player never feels the clock, it converts nothing — a scoreboard is not
+## a stake."* A grade on a screen visited once cannot be the answer. This strip is the answer: the
+## week, the rung, and where the Dynast's own climb had reached by this same week — on the hub, on
+## every visit, next to the doors the player is about to choose between.
+##
+## Every value is read from `Career` through `Pace.snapshot()` at build time. Nothing is cached
+## and nothing is recomputed here (the round-13 scoreboard announced a winner at frame 0 and
+## disagreed with the frame in 100% of frames; the round-15 stable screen promised ceilings the
+## tick never applied — both were screens holding their own copy of a fact).
+func _pace_strip() -> Control:
+	var snap: Dictionary = Pace.snapshot()
+	if snap.is_empty():
+		return null
+
+	var panel := PanelContainer.new()
+	var col_accent: Color = Pace.pace_color(snap)
+	var sb := UiTheme.panel_style("raised", col_accent)
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(v)
+
+	var line := UiTheme.body_text(Pace.pace_line(snap), "primary")
+	line.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
+	line.add_theme_color_override("font_color", col_accent)
+	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(line)
+
+	v.add_child(_ladder_track(int(snap["leagueIndex"]), int(snap["week"])))
+
+	var foot := UiTheme.body_text(
+		"Any stable finishes the Circuit eventually. The record is what's contested — the ending grades how fast you took it.",
+		"muted")
+	foot.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	foot.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(foot)
+	return panel
+
+
+const LEAGUE_ABBREV := {
+	"Wood": "Wood", "Copper": "Cop", "Tin": "Tin", "Bronze": "Brz", "Iron": "Iron",
+	"Silver": "Silv", "Gold": "Gold", "Platinum": "Plat", "Masters": "Mast",
+	"Tamer Elite": "Elite", "Tamers Apex": "Apex",
+}
+
+
+## Two rows of rungs: where YOU are, and where the Dynast's climb had reached by this same week.
+## The Dynast's rung is READ FROM THE PAR CURVE at the CURRENT week — it moves as the weeks pass,
+## which is what makes this a race rather than a label.
+func _ladder_track(player_idx: int, week: int) -> Control:
+	var leagues: Array = Career.leagues if has_node("/root/Career") else []
+	var n: int = leagues.size()
+	# ⚠️ ASKED, NOT DERIVED. `Career.dynasty_rung_at_week()` is the same function the grade and the
+	# standing line use, so the bar cannot say the pace-setter is somewhere the sentence above it
+	# disagrees with. An earlier draft of this loop recomputed it from the par curve and was one
+	# off-by-one away from exactly that.
+	var dynast_idx: int = Pace.par_rung_at_week(week)
+
+	var grid := GridContainer.new()
+	grid.columns = maxi(1, n)
+	grid.add_theme_constant_override("h_separation", 3)
+	grid.add_theme_constant_override("v_separation", 3)
+
+	# row 1 — names
+	for i in range(n):
+		var nm: String = str((leagues[i] as Dictionary).get("name", "?"))
+		var l := Label.new()
+		l.text = str(LEAGUE_ABBREV.get(nm, nm))
+		l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		l.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY if i == player_idx else UiTheme.TEXT_MUTED)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.custom_minimum_size = Vector2(58, 0)
+		l.tooltip_text = "%s — the pace-setter arrives in week %d." % [nm, Pace.par_week_for(i)]
+		grid.add_child(l)
+
+	# row 2 — YOU
+	for i in range(n):
+		grid.add_child(_rung_cell(i <= player_idx, i == player_idx, UiTheme.GOLD))
+	# row 3 — the Dynast at this same week
+	for i in range(n):
+		grid.add_child(_rung_cell(i <= dynast_idx, i == dynast_idx, UiTheme.TEXT_SECONDARY))
+
+	# Row LABELS rather than a legend underneath — the two bars are the whole comparison, and a
+	# legend a few pixels below is exactly the kind of thing a player never connects to the bar.
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 3)
+	rows.add_child(_track_row_label("", UiTheme.TEXT_MUTED))
+	rows.add_child(_track_row_label("you", UiTheme.GOLD))
+	rows.add_child(_track_row_label(_pace_setter_short(), UiTheme.TEXT_SECONDARY))
+
+	var wrap := HBoxContainer.new()
+	wrap.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	wrap.add_child(rows)
+	wrap.add_child(grid)
+	return wrap
+
+
+## The pace-setter's surname, off `Career`'s own authored name — never a second literal.
+func _pace_setter_short() -> String:
+	var snap: Dictionary = Pace.snapshot()
+	var tamer: String = str((snap.get("dynasty", {}) as Dictionary).get("tamer", ""))
+	if tamer == "":
+		return "par"
+	var parts: PackedStringArray = tamer.split(" ")
+	return parts[parts.size() - 1]
+
+
+func _track_row_label(text: String, tint: Color) -> Control:
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	l.add_theme_color_override("font_color", tint)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l.custom_minimum_size = Vector2(56, 14)
+	return l
+
+
+func _rung_cell(filled: bool, is_head: bool, tint: Color) -> Control:
+	var p := PanelContainer.new()
+	p.custom_minimum_size = Vector2(58, 14)
+	var sb := StyleBoxFlat.new()
+	if filled:
+		sb.bg_color = Color(tint.r, tint.g, tint.b, 1.0 if is_head else 0.62)
+	else:
+		sb.bg_color = Color(UiTheme.BORDER_FAINT.r, UiTheme.BORDER_FAINT.g, UiTheme.BORDER_FAINT.b, 1.0)
+	if is_head:
+		sb.border_color = UiTheme.TEXT_PRIMARY
+		sb.set_border_width_all(1)
+	sb.set_corner_radius_all(2)
+	p.add_theme_stylebox_override("panel", sb)
+	return p
+
+
+## ⚠️ THE VERDICT IS REACHED ELSEWHERE AND ONLY NAMED HERE. `Pace.frontier_verdict()` passes
+## through `Career.frontier_verdict()`, which judges on the ROUND rate off a record the career
+## keeps. This screen decides nothing: it renders the state and shows Career's own sentence
+## verbatim. A screen cannot tell "outclassed" from "unlucky" — that distinction IS the finding
+## (`docs/CONVERSION_DIAGNOSIS.md` §2c: three of four "walls" were rates, the fourth was real at
+## 4 round wins in 120) — and guessing it here would make this banner the lie it exists to prevent.
+##
+## Two states are shown and two are not. **outclassed** is the one genuine failure mode in the
+## game and it gets the loudest treatment the theme has, plus the three things that actually fix
+## it. **unlucky** is shown because it is the OPPOSITE advice and a player who cannot tell them
+## apart is exactly the player §2c describes. "climbing" and "fresh" stay silent — a hub that
+## comments on every ordinary week is a hub nobody reads.
+func _outclassed_banner() -> Control:
+	var s: Dictionary = Pace.frontier_verdict()
+	if s.is_empty():
+		return null
+	var state: String = str(s.get("state", "fresh"))
+	if state != "outclassed" and state != "unlucky":
+		return null
+
+	var bad: bool = state == "outclassed"
+	var accent: Color = UiTheme.DANGER if bad else UiTheme.CAUTION
+
+	var panel := PanelContainer.new()
+	var sb := UiTheme.panel_style("raised", accent)
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	panel.add_child(row)
+
+	var icon := Label.new()
+	icon.text = "⚑" if bad else "🎲"
+	icon.add_theme_font_size_override("font_size", UiTheme.SIZE_HEADING)
+	icon.add_theme_color_override("font_color", accent)
+	row.add_child(icon)
+
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	row.add_child(col)
+
+	var league: String = str(s.get("league", ""))
+	var head := UiTheme.body_text(
+		("This stable is OUTCLASSED at %s." % league) if bad else ("You are unlucky at %s, not outmatched." % league),
+		"primary")
+	head.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
+	head.add_theme_color_override("font_color", accent)
+	col.add_child(head)
+
+	# Career's own sentence, verbatim — it already carries the rounds, the wins and the rate.
+	var ev := UiTheme.body_text(str(s.get("line", "")), "primary")
+	ev.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(ev)
+
+	var advice: String = (
+		"The roster is the problem, not the dice. Three ways out: TRAIN the bodies you have toward this rung's ceiling, RECRUIT at the Market for the stats you are short of, or BREED for a bloodline with the potential to carry them further."
+		if bad else
+		"Nothing here needs fixing. Enter the next cup — this rung falls to the roster you already have.")
+	var fix := UiTheme.body_text(advice, "secondary")
+	fix.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(fix)
+	return panel
+
+
+func _should_show_ending() -> bool:
+	if not has_node("/root/Career"):
+		return false
+	if not bool(Career.won_game):
+		return false
+	# Shown once per session, then the player is free to keep running the stable. `ending_ui.gd`
+	# sets this the moment it opens.
+	return not Career.has_meta("ending_seen")
+
+
+func _go_to_ending() -> void:
+	get_tree().change_scene_to_file("res://scenes/ending.tscn")
 
 
 ## The opening decision the player hasn't made yet. An empty stable used to be a bug in this

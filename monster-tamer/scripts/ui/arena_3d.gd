@@ -731,8 +731,15 @@ func _resolve_teams() -> void:
 		team_b = committed_team_b
 	else:
 		var roster := get_node_or_null("/root/Roster")
-		if from_career and roster != null and not roster.monsters.is_empty():
-			team_a = roster.monsters.slice(0, mini(size, roster.monsters.size()))
+		## ⚠️ THE FIFTH DOOR. Round 17 closed four sites that fielded a team by slicing the barn
+		## (career.gd, tactics_ui x2, tournament_ui) onto one predicate; this fallback was the one
+		## nobody listed, and a fallback that disagrees with the rule is how the rule breaks again.
+		## `Roster.fielded_team()` — never `monsters.slice()`. A barn with NOTHING fieldable falls
+		## through to the synthetic demo teams below rather than to a sideless sim: this screen has
+		## no way to refuse, so it must not be handed an empty side.
+		var fieldable: Array = (roster.fielded_team(size) if roster != null else [])
+		if from_career and roster != null and not fieldable.is_empty():
+			team_a = fieldable
 			team_b = roster.make_rival_team(team_a.size(), 0.3)
 		else:
 			for i in range(size):

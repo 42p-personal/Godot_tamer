@@ -41,6 +41,10 @@ extends Control
 const BattleSimScript = preload("res://scripts/battle_sim.gd")
 const TacticsScript = preload("res://scripts/tactics.gd")
 const Sp = preload("res://scripts/spatial.gd")
+## ⚠️ ONE PACE ADAPTER, NOT THREE. `career.gd` owns par, the grade and the frontier verdict;
+## `scripts/ui/ending_ui.gd` is the single adapter that reads them, and this screen and
+## `town_ui.gd` both call into it rather than keeping a second table that agrees until it doesn't.
+const Pace = preload("res://scripts/ui/ending_ui.gd")
 
 var _result: Dictionary = {}
 var _team_a: Array = []
@@ -683,7 +687,11 @@ func _build_shell() -> void:
 ## this scene is opened with no tactics screen having run first — normally that dict is populated
 ## by tactics_ui.gd before the fight.
 func _run_demo_battle() -> void:
-	var team_a: Array = Roster.monsters.slice(0, mini(5, Roster.monsters.size()))
+	## One predicate for "who fights" (roster.gd:fielded_team). Demo path, same reasoning as
+	## battle_ui.gd: no fifth copy of `not m.retired`.
+	var team_a: Array = Roster.fielded_team(5)
+	if team_a.is_empty():
+		team_a = Roster.monsters.slice(0, mini(5, Roster.monsters.size()))
 	var team_b: Array = Roster.make_rival_team(team_a.size(), 0.3)
 
 	var plan_a := {"targetPriority": "casters"}
@@ -863,6 +871,21 @@ func _banner() -> Control:
 	sub.text = "%.1fs — %d vs %d standing" % [float(_result.get("duration", 0.0)), int(_result.get("survivorsA", 0)), int(_result.get("survivorsB", 0))]
 	sub.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
 	box.add_child(sub)
+
+	# ⚠️ THE CLOCK, ON THE SCREEN THE PLAYER SEES MOST. Round 16 measured a fight advantage
+	# compounding to 4.03x and dying against a boolean; round 17's answer is to score PACE instead
+	# of adding difficulty (docs/CONVERSION_DIAGNOSIS.md §2d — there are only ~6 points of headroom
+	# above a competent player, so any harder gate must work by deleting the naive one). That only
+	# converts anything if the clock is FELT during the climb, so it is stated after every fight,
+	# not saved for a screen visited once. Read live from `Career` via `Pace.snapshot()`.
+	var snap: Dictionary = Pace.snapshot()
+	if not snap.is_empty():
+		var pace_lbl := Label.new()
+		pace_lbl.text = Pace.pace_line(snap)
+		pace_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pace_lbl.add_theme_font_size_override("font_size", 14)
+		pace_lbl.add_theme_color_override("font_color", Pace.pace_color(snap))
+		box.add_child(pace_lbl)
 	return box
 
 

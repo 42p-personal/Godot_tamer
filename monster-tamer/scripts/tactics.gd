@@ -162,6 +162,29 @@ const POSITIONAL_INTENT_INFO := [
 # no longer arbitrary: `aoe_coverage()` gates area damage on the DEFENDER's formation and
 # `aura_coverage()` gates team buffs/heals on the CASTER's own, so "tight" and "loose" are a real
 # two-sided trade and each archetype picks the side its win condition needs.
+# ⚠️ `counterRoster` IS THE `counter` PROSE IN MACHINE FORM, AND IT LIVES HERE SO THERE IS ONE COPY.
+# `roster.gd:counter_gap()` reads it to answer "what kind of roster does this rung's champion need,
+# and does the stable own any of it". It arrived in round 19 as a second table inside `roster.gd`;
+# a second copy of a truth is this project's most-repeated failure and it was moved on sight.
+#
+# ⚠️⚠️ AND THE NUMBERS IN IT ARE STALE, WHICH IS WHY NO SCREEN PRINTS THEM ANY MORE.
+# `_probe_archetypes.gd:_counter_matrix()` at HEAD (2026-08-11) reports a DIFFERENT winning kind in
+# FOUR of these six rows:
+#
+#     row            authored here          measured at HEAD
+#     vs rushdown    zone      +24          bulwark   +16   (zone now +5)
+#     vs bulwark     focusfire +20          focusfire +29   ✓ kind agrees
+#     vs attrition   focusfire +13          focusfire +13   ✓ agrees exactly
+#     vs focusfire   control   +27          control   +19   ✓ kind agrees
+#     vs control     bulwark   +13          attrition +25   (bulwark now -0)
+#     vs zone        rushdown  +25          control    +9   (rushdown now +7)
+#
+# The same drift is in the zone prose's "six wins in twenty-four" — today's run says nine.
+# ⚠️ DO NOT "FIX" THESE BY COPYING TODAY'S RUN IN. `MATRIX_TRIALS = 12`, so a cell's win rate
+# carries a standard error near 14 points and the gap between the top two answers in four of these
+# rows is smaller than that. Both tables are under-powered, not one wrong and one right. The rung's
+# ARCHETYPE and the SHAPE of each answer are what the screens are allowed to state; the point
+# figures are not, until someone re-measures at 48+ trials. See round 20's list.
 const GAMEPLANS := {
 	"rushdown": {
 		"name": "Rushdown", "icon": "🔥",
@@ -169,6 +192,7 @@ const GAMEPLANS := {
 		"read": "Comes straight down the middle and hits first. Nothing clever, and nothing held back.",
 		## MEASURED ANSWER: an area/ZONE roster, +24 residual points (`_probe_archetypes.tscn`).
 		"counter": "They come as one block with no healer and no wall. AREA damage is what punishes that — a zone roster measures +24 points better against them than its own record predicts. Out-tanking the opening is NOT the answer; a wall roster measures +3.",
+		"counterRoster": {"kind": "zone", "residual": 24},
 		"winCon": "Kill something in the first few exchanges and snowball the numbers advantage.",
 		"signature": "front-loaded damage — the highest damage-per-second of any archetype, and the shortest fights",
 		"classes": ["Warrior", "Skirmisher", "Captain", "Warrior", "Rogue"],
@@ -180,6 +204,7 @@ const GAMEPLANS := {
 		"read": "Will not break. Brings guards and wards and expects you to run out of patience.",
 		## MEASURED ANSWER: a BURST/focus-fire roster, +20 residual points.
 		"counter": "Guard is FLAT reduction per hit, so chip damage is worth nothing against them: you need few big blows, not many small ones. A burst roster measures +20 points better here than its own record predicts.",
+		"counterRoster": {"kind": "focusfire", "residual": 20},
 		"winCon": "Keep one carry alive behind a wall until it out-damages everything you have left.",
 		"signature": "protective buffs — ward/guard mods applied on its own side, and the lowest damage taken per landed hit",
 		## ⚠️ SLOT 4 IS A CAPTAIN, NOT A SHAMAN, AND THAT WAS MEASURED. With a Shaman here the
@@ -201,6 +226,7 @@ const GAMEPLANS := {
 		## separates that from an answer. It is still the right call here, by a smaller margin
 		## than the straight comparison claimed.
 		"counter": "Healing is throughput and only wins a long fight. Kill one of them faster than the mender can refill it — a burst roster measures +13 points better here than its own record predicts.",
+		"counterRoster": {"kind": "focusfire", "residual": 13},
 		"winCon": "Out-heal the damage you can sustain and outlive the clock.",
 		"signature": "healing — real HP restored to its own side, and the longest fights on the ladder",
 		"classes": ["Mystic", "Stalker", "Sage", "Shaman", "Stalker"],
@@ -212,6 +238,7 @@ const GAMEPLANS := {
 		"read": "Focuses one target down and moves on. Your softest body dies first.",
 		## MEASURED ANSWER: a CONTROL roster, +27 residual points — the strongest counter on the board.
 		"counter": "They man-mark your LOWEST-CON monster and delete it in under three seconds. Taking their turns away is what breaks that: a control roster measures +27 points better against them than its own record predicts, the largest counter effect in the game. Spreading durability so there is no soft body to pick is the roster-building version of the same answer.",
+		"counterRoster": {"kind": "control", "residual": 27},
 		"winCon": "Mark one monster and delete it before it acts twice.",
 		"signature": "concentration — the largest share of its damage landing on one enemy, and the fastest first kill",
 		"classes": ["Rogue", "Skirmisher", "Ranger", "Rogue", "Swashbuckler"],
@@ -223,6 +250,7 @@ const GAMEPLANS := {
 		"read": "Controls. You will be stunned, silenced and blinded on purpose, and your supports go first.",
 		## MEASURED ANSWER: a WALL/bulwark roster, +13 residual points.
 		"counter": "Control lands through the CC-resist meter, which saturates with CON — a high-CON line shrugs off the second stun and cleanses the first. A wall roster measures +13 points better against them than its own record predicts.",
+		"counterRoster": {"kind": "bulwark", "residual": 13},
 		"winCon": "Take enough turns away that the fight is five-on-three whether or not anything has died.",
 		"signature": "status application — far more landed statuses than any other archetype, hard control included",
 		## ⚠️ NO SAGE HERE, AND THE POOL IS THE REASON. Sage draws Mender/Siphon/Hexer and carries
@@ -244,6 +272,7 @@ const GAMEPLANS := {
 		## Formation LOOSE: 8/24 -> 14/24 player wins on identical teams and seeds, sign 6:0.
 		## A rushdown roster: +25 residual points.
 		"counter": "Area damage is gated by YOUR formation, not theirs: order LOOSE and roughly half your side falls out of the blanket — worth six wins in twenty-four on identical teams. The price is your own buffs and heals thinning out too. On the roster side, closing fast measures +25 points.",
+		"counterRoster": {"kind": "rushdown", "residual": 25},
 		"winCon": "Blanket the whole team in area damage and never trade one-for-one.",
 		"signature": "breadth — area casts that touch every living enemy, and the flattest damage spread of any archetype",
 		"classes": ["Herald", "Evoker", "Orator", "Evoker", "Ranger"],

@@ -139,15 +139,21 @@ static func build_read(plan_a: Dictionary, orders_a: Dictionary, team_a: Array, 
 		var marks: Array = _read_target_monsters(tp, plan_a, team_b)
 		if not marks.is_empty():
 			var names := _read_names(marks)
+			# ⚠️ "%s FALLS" WAS SINGULAR AND `casters` ALWAYS RESOLVES TO TWO BODIES
+			# (`_read_target_monsters` returns `mini(2, …)` for it on purpose), so every graded
+			# capture of the commonest target order read "Regalor and Pyrodrake falls before their
+			# front line". A claim the player confirms before the fight and is graded against has
+			# to be a sentence.
+			var plural: bool = marks.size() > 1
 			var claim := ""
 			match tp:
 				"manmark": claim = "We hunt %s. It falls, and it falls first." % names
-				"casters": claim = "We go through their casters — %s falls before their front line." % names
+				"casters": claim = "We go through their casters — %s %s before their front line." % [names, "fall" if plural else "falls"]
 				"tanks": claim = "We break %s, the biggest body they have." % names
 			out.append({
 				"id": "target", "axis": "targetPriority", "order": _read_order_name(TacticsScript.TARGET_PRIORITY_INFO, tp),
 				"claim": claim,
-				"test": "measured as the share of your damage that lands on %s, and whether it falls" % names,
+				"test": "measured as the share of your damage that lands on %s, and whether %s" % [names, "they fall" if plural else "it falls"],
 				"marks": marks,
 				"gradeable": not UNWIRED_ORDERS.has(tp),
 				"why_ungradeable": str(UNWIRED_ORDERS.get(tp, "")),
@@ -390,6 +396,8 @@ static func _grade_target(g: Dictionary, dmg: Dictionary, deaths: Dictionary, id
 			first_t = float((deaths[uid] as Dictionary)["t"])
 			first_enemy_death_id = int(uid)
 	var mark_ids: Array = []
+	var fell_names: Array = []
+	var stood_names: Array = []
 	for m in marks:
 		var uid2: int = int(idx.get(m, -1))
 		if uid2 < 0:
@@ -398,6 +406,9 @@ static func _grade_target(g: Dictionary, dmg: Dictionary, deaths: Dictionary, id
 		on_marks += float(to_total.get(uid2, 0.0))
 		if not deaths.has(uid2):
 			all_dead = false
+			stood_names.append(str(m.species_name))
+		else:
+			fell_names.append(str(m.species_name))
 	if mark_ids.is_empty() or a_total <= 0.0:
 		g["verdict"] = "ungraded"
 		g["evidence"] = "your team landed no damage at all, so there is no share to measure"
@@ -409,15 +420,46 @@ static func _grade_target(g: Dictionary, dmg: Dictionary, deaths: Dictionary, id
 	var concentrated: bool = share >= fair * 1.4
 	var fell_first: bool = first_enemy_death_id in mark_ids
 
-	var bits := "%.0f%% of your damage went into %s (an even spread would be %.0f%%)" % [share * 100.0, _read_names(marks), fair * 100.0]
-	if all_dead:
-		bits += "; it fell%s" % (" first" if fell_first else " — but not first")
+	# ⚠️ "IT" WAS A LIE THE MOMENT THE ORDER NAMED TWO BODIES, AND `casters` ALWAYS DOES.
+	# `_read_target_monsters` returns TWO for "hunt the casters", so a fight where one caster fell
+	# and the other lived printed "…went into Titanus and Bristleye; it was still standing at the
+	# end" — the screen denying a kill the player actually got, on the one claim it exists to
+	# adjudicate. Seen in the round-19 graded capture. Each mark is now accounted for by name.
+	# ⚠️ WHEN THE MARKS ARE THE WHOLE ENEMY TEAM THE CONCENTRATION TEST CARRIES NO INFORMATION, AND
+	# PRINTING IT ANYWAY IS THE SCREEN LYING BY ARITHMETIC. `_read_target_monsters` returns two
+	# bodies for "hunt the casters"; at the small team sizes the ladder OPENS on (Wood/Copper/Tin/
+	# Bronze field 1–3) those two can be the entire other side, and then `share` and `fair` are both
+	# 100% by construction — `concentrated` (share >= fair * 1.4) cannot be true no matter how the
+	# fight went. The round-19 graded capture of `12_report` printed "100% of your damage went into
+	# Capling and Regalor (an even spread would be 100%)" and then WHAT TO CHANGE told the player to
+	# change that order on the strength of it.
+	#
+	# The FOCUS half of the claim is genuinely unaskable here, so the screen says so and grades on
+	# the half that is still real: did they fall. Which is what "fall before their front line"
+	# meant anyway — there is no front line to fall before when the marks ARE the line.
+	var whole_team: bool = mark_ids.size() >= enemy_n
+	var bits := ""
+	if whole_team:
+		bits = "they were the whole other side, so there was no spread to measure — graded on whether they fell"
 	else:
-		bits += "; it was still standing at the end"
+		bits = "%.0f%% of your damage went into %s (an even spread would be %.0f%%)" % [share * 100.0, _read_names(marks), fair * 100.0]
+	if all_dead:
+		if mark_ids.size() == 1:
+			bits += "; it fell%s" % (" first" if fell_first else " — but not first")
+		else:
+			bits += "; both fell%s" % (", one of them first" if fell_first else " — but neither first")
+	elif fell_names.is_empty():
+		bits += "; %s still standing at the end" % ("it was" if mark_ids.size() == 1 else "they were both")
+	else:
+		bits += "; %s fell%s, %s still standing at the end" % [
+			", ".join(fell_names), (" first" if fell_first else ""), ", ".join(stood_names)]
 	g["evidence"] = bits
-	if all_dead and (concentrated or fell_first):
+	# With no spread to measure, `concentrated` is not merely false — it is meaningless, so it must
+	# not be allowed to drag a fight where every mark died down from `held` to `partly`.
+	var conc: bool = concentrated and not whole_team
+	if all_dead and (conc or fell_first or whole_team):
 		g["verdict"] = "held"
-	elif all_dead or concentrated:
+	elif all_dead or conc:
 		g["verdict"] = "partly"
 	else:
 		g["verdict"] = "broke"
@@ -465,6 +507,13 @@ static func _grade_shape(g: Dictionary, frames: Array, deaths: Dictionary, n_a: 
 	# TIGHT — did anyone of ours die alone?
 	var alone: Array = []
 	var worst := 0.0
+	# ⚠️ "NEAREST ALLY 0 UNITS AWAY" WAS PRINTED FOR A BODY WITH NO LIVING ALLY AT ALL, and the
+	# round-19 sweep hit it in three fights of six. `nearest` is INF when every teammate is already
+	# dead; the old line folded that into `worst` as 0.0 and rendered "died alone — nearest ally 0
+	# units away, support range is 14" — simultaneously claiming isolation and contact. Counted
+	# separately, and said in words, because "the last one standing" and "cut off from a live line"
+	# are different lessons and only one of them is a formation problem.
+	var last_alive := 0
 	for uid in deaths:
 		if int(uid) >= n_a:
 			continue
@@ -485,23 +534,35 @@ static func _grade_shape(g: Dictionary, frames: Array, deaths: Dictionary, n_a: 
 		var nearest := INF
 		for p in allies:
 			nearest = minf(nearest, me_pos.distance_to(p))
-		if nearest > SUPPORT_RADIUS:
+		if nearest == INF:
+			last_alive += 1
+		elif nearest > SUPPORT_RADIUS:
 			alone.append(uid)
-			worst = maxf(worst, nearest if nearest < INF else 0.0)
+			worst = maxf(worst, nearest)
 	var fallen: int = 0
 	for uid3 in deaths:
 		if int(uid3) < n_a:
 			fallen += 1
+	# The last body standing has no line left to hold, so it cannot have broken one. Stated, not
+	# silently dropped — it is why a count of losses and a count of isolations need not agree.
+	var tail := ""
+	if last_alive == 1:
+		tail = "; the last of yours had no line left to hold"
+	elif last_alive > 1:
+		tail = "; the last %d of yours had no line left to hold" % last_alive
+	var judged_n: int = fallen - last_alive
 	if fallen == 0:
 		g["verdict"] = "held"
 		g["evidence"] = "nobody of yours fell at all"
 	elif alone.is_empty():
 		g["verdict"] = "held"
-		g["evidence"] = "%d of yours fell, every one of them with an ally inside %.0f units" % [fallen, SUPPORT_RADIUS]
+		g["evidence"] = ("%d of your %d losses fell with an ally inside %.0f units%s" % [
+			judged_n, fallen, SUPPORT_RADIUS, tail]) if judged_n > 0 \
+			else "every one of yours that fell was the last of yours alive — there was no line left to hold"
 	else:
-		g["verdict"] = "broke" if alone.size() * 2 > fallen else "partly"
-		g["evidence"] = "%d of your %d losses died alone — nearest ally %.0f units away, support range is %.0f" % [
-			alone.size(), fallen, worst, SUPPORT_RADIUS]
+		g["verdict"] = "broke" if alone.size() * 2 > maxi(judged_n, 1) else "partly"
+		g["evidence"] = "%d of your %d losses died cut off — nearest living ally %.0f units away, support range is %.0f%s" % [
+			alone.size(), fallen, worst, SUPPORT_RADIUS, tail]
 
 
 ## The enemy ids the OPENING frame puts furthest along the deploy axis — "their back line" as the
@@ -605,8 +666,25 @@ static func read_verdict(graded: Array, winner: String, team_a: Array, team_b: A
 		if won:
 			return {"headline": "YOU WON WITHOUT THE READ.", "tone": "mixed",
 				"sub": "%s. You took this on raw strength, not on the plan — the same orders against a team your own size will not hold." % score}
+		# ⚠️ "EVERY CLAIM YOU COMMITTED TO FAILED" WAS FALSE WHENEVER ANY CLAIM GRADED *PARTLY*,
+		# AND THE ROUND-19 SWEEP HIT IT IN FIVE FIGHTS OF SIX. This branch tests only `held == 0`
+		# and then asserts total failure — so a fight where two of three claims landed most of the
+		# way (74% of damage onto the two marked casters against a fair share of 40%, one of them
+		# falling first) printed "Every claim you committed to failed". That is the screen lying
+		# about the thing it describes, on the single sentence the observe half exists to deliver.
+		#
+		# ⚠️ AND THE ADVICE WAS WORSE THAN THE COUNT. "the orders are the thing to change, not the
+		# roster" was hard-coded into the loss case, while the same sweep had the rival roster
+		# carrying between 19% and 94% MORE trained stat. Telling an outclassed player to rewrite
+		# orders that were substantially right is the "wrong or vague grade is worse than no grade"
+		# failure `FUN_ADDITIONS.md` §1 names, and it is exactly how a teachable loss becomes a
+		# grievance. The roster comparison now decides which half of the game gets named.
+		if partly > 0:
+			return {"headline": "THE READ ALMOST HELD, AND ALMOST WAS NOT ENOUGH.", "tone": "bad",
+				"sub": "%s — but %d of %d landed most of the way. Read the evidence under each: you are closer than the score looks. %s" % [
+					score, partly, judged, _strength_line(team_a, team_b, false)]}
 		return {"headline": "THE READ BROKE, AND IT COST YOU.", "tone": "bad",
-			"sub": "%s. Every claim you committed to failed; the orders are the thing to change, not the roster." % score}
+			"sub": "%s. Every claim you committed to failed. %s" % [score, _strength_line(team_a, team_b, false)]}
 	return {"headline": "PART OF THE READ HELD." if won else "PART OF THE READ HELD, AND IT WAS NOT ENOUGH.",
 		"tone": "mixed", "sub": "%s." % score}
 
@@ -615,17 +693,23 @@ static func read_verdict(graded: Array, winner: String, team_a: Array, team_b: A
 ## exactly the thing the ladder's `field_fill` dial moves and the one number a player can act on
 ## by training. Quoted only in the right-and-lost case, where "was it me or was it them" is the
 ## actual question and an unanswered one turns a teachable loss into a grievance.
-static func _strength_line(team_a: Array, team_b: Array) -> String:
+## ⚠️ `read_held` EXISTS BECAUSE THIS LINE USED TO BE QUOTED IN ONE CONTEXT AND IS NOW QUOTED IN
+## THREE. Its old wording ("so the orders held and something else lost it") was written for the
+## right-and-lost case and is simply false when the read did NOT hold — the same sentence has to
+## stop asserting the grade it is being appended to.
+static func _strength_line(team_a: Array, team_b: Array, read_held: bool = true) -> String:
 	var pa := roster_power(team_a)
 	var pb := roster_power(team_b)
 	if pa <= 0.0:
-		return "The tactics were not the problem."
+		return ""
 	var pct: float = (pb / pa - 1.0) * 100.0
 	if pct >= 8.0:
-		return "Their roster carries %.0f%% more trained stat than yours — this was a stable problem, not a tactics problem. Go and train." % pct
+		return "Their roster carries %.0f%% more trained stat than yours — this was a stable problem before it was a tactics problem. Go and train." % pct
 	if pct <= -8.0:
-		return "And you were the STRONGER side by %.0f%%, so the orders held and something else lost it — read the turning point below." % absf(pct)
-	return "The two rosters are within %.0f%% of each other, so the plan was not the difference. Read the turning point below." % absf(pct)
+		if read_held:
+			return "And you were the STRONGER side by %.0f%%, so the orders held and something else lost it — read the turning point below." % absf(pct)
+		return "And you were the STRONGER side by %.0f%% on trained stat, so this one is on the orders — read the turning point below." % absf(pct)
+	return "The two rosters are within %.0f%% of each other, so the bodies were not the difference. Read the turning point below." % absf(pct)
 
 
 ## ⚠️ PUBLIC BECAUSE `tactics_ui.gd` QUOTES THE SAME NUMBER BEFORE THE FIGHT. The report tells a
@@ -668,8 +752,14 @@ func _ready() -> void:
 
 
 func _build_shell() -> void:
+	# ⚠️ THE HOUSE THEME, NOT A SIXTH GREY. Round 19: this screen carried 55 off-scale labels and
+	# 55 off-token colours — more than any other screen in the project — against a theme that
+	# already publishes the scale and the palette (`UI_LAYOUT_RULES` R7). Every size below now
+	# comes from `UiTheme.SIZE_*` and every text colour from `UiTheme.TOKEN_TEXT_COLOURS`.
+	self.theme = UiTheme.base_theme()
+
 	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.08, 0.1)
+	bg.color = UiTheme.SURFACE
 	bg.anchor_right = 1; bg.anchor_bottom = 1
 	add_child(bg)
 
@@ -686,13 +776,15 @@ func _build_shell() -> void:
 
 	var margin := MarginContainer.new()
 	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	for side in ["margin_left", "margin_top", "margin_right", "margin_bottom"]:
-		margin.add_theme_constant_override(side, 24)
+		margin.add_theme_constant_override(side, UiTheme.SPACE_XL)
 	scroll.add_child(margin)
 
 	_content = VBoxContainer.new()
-	_content.add_theme_constant_override("separation", 14)
+	_content.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	margin.add_child(_content)
 
 	# The pinned rail, a SIBLING of the scroll — built once in the shell, so `_rebuild()` clearing
@@ -782,21 +874,33 @@ func _rebuild() -> void:
 	# heading size and in the tone colour — still the second thing on the screen, still above every
 	# number, and it degrades to a quiet line instead of a shout when it cannot answer.
 	# See `_verdict_block()`.
-	_content.add_child(_verdict_block(applies))
+	var graded := _graded_claims(applies)
+	_content.add_child(_verdict_block(applies, graded))
 
 	var narrative := _narrative(analysis, dec, id_of, roster)
 	if narrative != "":
-		_content.add_child(_line(narrative, 14, Color(0.85, 0.85, 0.9)))
+		_content.add_child(_line(narrative, UiTheme.SIZE_BODY, UiTheme.TEXT_PRIMARY))
 
 	var big_hit: Dictionary = analysis.get("biggest_hit", {})
 	if int(big_hit.get("dmg", -1)) >= 0:
 		var crit_tag := " (CRIT)" if big_hit.get("crit", false) else ""
 		_content.add_child(_line(
 			"Biggest hit: %s's %s on %s for %d%s" % [big_hit["attacker"], big_hit["move"], big_hit["target"], int(big_hit["dmg"]), crit_tag],
-			15, Color(1.0, 0.8, 0.4)))
+			UiTheme.SIZE_BODY, UiTheme.CAUTION))
 
 	_content.add_child(HSeparator.new())
-	_content.add_child(_teams_row(analysis, id_of, dec, applies))
+	var teams := _teams_row(analysis, id_of, dec, applies)
+	teams.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_content.add_child(teams)
+
+	# ⚠️ THE VOID GETS THE ONE THING THE SCREEN OWED AND NEVER SAID. Round 18 measured ~200px of
+	# dead black under the two team columns on a small roster; round 19's answer is NOT another
+	# table (a damage table is what you build when you cannot say what happened —
+	# `META_UI_DIRECTION.md` §1) but the sentence the whole loop is for: what to change before the
+	# next fight, and whether it is the ORDERS or the STABLE. Both halves are already computed —
+	# the graded claims and `roster_power()` — and both were previously reachable only in the one
+	# right-and-lost branch of `read_verdict()`. See `_next_step_block()`.
+	_content.add_child(_next_step_block(graded))
 	# ⚠️ NO EXIT BUTTON HERE ANY MORE — it is pinned in `_build_shell()`'s rail, outside the scroll.
 	# Leaving a duplicate at the foot of the content would be two controls doing one job, and the
 	# scrolled one is the one the player cannot see.
@@ -807,33 +911,57 @@ func _rebuild() -> void:
 ## Reads the claims the player actually confirmed (stored on `Tactics.committed.read` at commit
 ## time, so the words graded here are byte-identical to the words they said yes to), grades them
 ## against this fight, and states both bookends as one piece.
-func _verdict_block(tactics_apply: bool) -> Control:
+## ⚠️ GRADED ONCE PER REBUILD, READ TWICE. The verdict block and the closing "what to change"
+## block must never disagree, and the only way to guarantee that is for there to be ONE grading.
+## Two callers each running `grade_read()` would agree today and drift the first time either
+## screen region grew a special case — the exact shape of the market-vs-stable ceiling
+## contradiction round 18 found (400 on one screen, 540 on another, both "true").
+func _graded_claims(tactics_apply: bool) -> Array:
+	var committed: Dictionary = TacticsScript.committed if tactics_apply else {}
+	var stored: Dictionary = committed.get("read", {})
+	var claims: Array = stored.get("claims", [])
+	if claims.is_empty() and tactics_apply:
+		# A committed plan with no stored read (an older save, or a screen that committed before
+		# this block existed) — rebuild the same claims from the same orders rather than showing
+		# nothing. Same function, so the wording is identical either way.
+		claims = build_read(committed.get("planA", {}), committed.get("ordersA", {}), _team_a, _team_b)
+	return grade_read(claims, _result, _team_a, _team_b)
+
+
+func _verdict_block(tactics_apply: bool, graded: Array) -> Control:
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
+	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 
 	# ── 1. WHAT HAPPENED. The one fact that is always knowable. ──────────────────────────────
 	var winner: String = _result.get("winner", "draw")
 	var result_text := "DRAW"
-	var result_col := Color(0.7, 0.7, 0.72)
+	# ⚠️ WON/LOST IS A STATUS, NOT A LIVERY. The result line used to be painted in the TEAM colour,
+	# which meant the single loudest word on the screen changed hue with whichever of `art.gd`'s
+	# eight liveries the player happened to be wearing — a rival in green could print DEFEAT in
+	# green. The badge glyph still carries team identity (never colour alone); the ink now carries
+	# the RESULT, from the theme's own threat vocabulary.
+	var result_col := UiTheme.TEXT_SECONDARY
 	if winner == "A":
-		var id_a: Dictionary = Art.team_identity(0)
-		result_text = "%s VICTORY" % id_a["badge"]
-		result_col = id_a["colour"]
+		result_text = "%s VICTORY" % (Art.team_identity(0))["badge"]
+		result_col = UiTheme.SAFE
 	elif winner == "B":
-		var id_b: Dictionary = Art.team_identity(1)
-		result_text = "%s DEFEAT" % id_b["badge"]
-		result_col = id_b["colour"]
+		result_text = "%s DEFEAT" % (Art.team_identity(1))["badge"]
+		result_col = UiTheme.DANGER
 
 	var result_lbl := Label.new()
 	result_lbl.text = result_text
-	result_lbl.add_theme_font_size_override("font_size", 40)
+	# ⚠️ KEPT LOUD, TAKEN FROM THE SCALE. Round 18 judged "leading with VICTORY at display size" an
+	# improvement and it stays the largest thing on the screen — but 40px was a number off the
+	# keyboard, not a register. SIZE_DISPLAY is the same register the title screen's wordmark uses.
+	result_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_DISPLAY)
 	result_lbl.add_theme_color_override("font_color", result_col)
 	box.add_child(result_lbl)
 
 	var sub := Label.new()
 	sub.text = "%.1fs — %d vs %d standing" % [float(_result.get("duration", 0.0)),
 		int(_result.get("survivorsA", 0)), int(_result.get("survivorsB", 0))]
-	sub.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
+	sub.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
+	sub.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	box.add_child(sub)
 
 	# ⚠️ THE CLOCK, ON THE SCREEN THE PLAYER SEES MOST. Round 16 measured a fight advantage
@@ -847,7 +975,7 @@ func _verdict_block(tactics_apply: bool) -> Control:
 		var pace_lbl := Label.new()
 		pace_lbl.text = Pace.pace_line(snap)
 		pace_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pace_lbl.add_theme_font_size_override("font_size", 14)
+		pace_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 		pace_lbl.add_theme_color_override("font_color", Pace.pace_color(snap))
 		box.add_child(pace_lbl)
 
@@ -857,23 +985,12 @@ func _verdict_block(tactics_apply: bool) -> Control:
 	var committed: Dictionary = TacticsScript.committed if tactics_apply else {}
 	var stored: Dictionary = committed.get("read", {})
 	var plan_a: Dictionary = committed.get("planA", {})
-	var claims: Array = stored.get("claims", [])
-	if claims.is_empty() and tactics_apply:
-		# A committed plan with no stored read (an older save, or a screen that committed before
-		# this block existed) — rebuild the same claims from the same orders rather than showing
-		# nothing. Same function, so the wording is identical either way.
-		claims = build_read(plan_a, committed.get("ordersA", {}), _team_a, _team_b)
-	var graded: Array = grade_read(claims, _result, _team_a, _team_b)
 	var verdict: Dictionary = read_verdict(graded, str(_result.get("winner", "draw")), _team_a, _team_b)
 
-	var tone_colour := {
-		"good": Color(0.5, 0.9, 0.55), "warn": Color(0.95, 0.75, 0.35),
-		"mixed": Color(0.8, 0.8, 0.85), "bad": Color(0.95, 0.5, 0.45), "flat": Color(0.6, 0.6, 0.65),
-	}
 	var eyebrow := Label.new()
 	eyebrow.text = "THE READ"
-	eyebrow.add_theme_font_size_override("font_size", 12)
-	eyebrow.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
+	eyebrow.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	eyebrow.add_theme_color_override("font_color", UiTheme.GOLD)
 	box.add_child(eyebrow)
 
 	# ⚠️ SIZED BY TONE, AND THAT IS THE FIX RATHER THAN A NEW SENTENCE. `docs/META_UI_DIRECTION.md`
@@ -886,21 +1003,34 @@ func _verdict_block(tactics_apply: bool) -> Control:
 	var headline := Label.new()
 	headline.text = str(verdict.get("headline", ""))
 	headline.autowrap_mode = TextServer.AUTOWRAP_WORD
-	headline.add_theme_font_size_override("font_size", 15 if flat else 22)
-	headline.add_theme_color_override("font_color", tone_colour.get(str(verdict.get("tone", "flat")), Color(0.8, 0.8, 0.85)))
+	headline.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY if flat else UiTheme.SIZE_HEADING)
+	headline.add_theme_color_override("font_color", _tone_colour(str(verdict.get("tone", "flat"))))
 	box.add_child(headline)
 
-	box.add_child(_line(str(verdict.get("sub", "")), 14, Color(0.78, 0.78, 0.83)))
+	box.add_child(_line(str(verdict.get("sub", "")), UiTheme.SIZE_BODY, UiTheme.TEXT_SECONDARY))
 
 	var gp_id: String = str(stored.get("gameplan", ""))
 	if gp_id != "":
 		var cl := counter_line(gp_id, plan_a)
 		if cl != "":
-			box.add_child(_line(cl, 12, Color(0.7, 0.75, 0.72)))
+			box.add_child(_line(cl, UiTheme.SIZE_CAPTION, UiTheme.TEXT_MUTED))
 
 	for c in graded:
 		box.add_child(_claim_row(c))
 	return box
+
+
+## The five tones the verdict and the claim rows share, mapped onto the published palette rather
+## than onto five hand-mixed near-duplicates. ⚠️ NOTHING HERE IS COLOUR-ALONE — every caller pairs
+## the hue with a glyph and a word (`UX_LEGIBILITY.md` §10), which is what makes it safe to reuse
+## the threat gradient here at all.
+static func _tone_colour(tone: String) -> Color:
+	match tone:
+		"good": return UiTheme.SAFE
+		"warn": return UiTheme.CAUTION
+		"bad": return UiTheme.DANGER
+		"mixed": return UiTheme.TEXT_PRIMARY
+		_: return UiTheme.TEXT_MUTED
 
 
 ## One claim, exactly as it was stated before the fight, with its mark and the number that
@@ -911,22 +1041,109 @@ func _claim_row(c: Dictionary) -> Control:
 	row.add_theme_constant_override("separation", 0)
 	var mark := "·"
 	var word := ""
-	var col := Color(0.6, 0.6, 0.65)
+	var col := UiTheme.TEXT_MUTED
 	match str(c.get("verdict", "")):
-		"held": mark = "✓"; word = "HELD"; col = Color(0.5, 0.9, 0.55)
-		"partly": mark = "~"; word = "PARTLY"; col = Color(0.9, 0.8, 0.4)
-		"broke": mark = "✗"; word = "BROKE"; col = Color(0.95, 0.5, 0.45)
-		_: mark = "·"; word = "NOT GRADED"; col = Color(0.6, 0.6, 0.65)
-	row.add_child(_line("%s  %s  — %s" % [mark, str(c.get("claim", "")), word], 14, col))
+		"held": mark = "✓"; word = "HELD"; col = UiTheme.SAFE
+		"partly": mark = "~"; word = "PARTLY"; col = UiTheme.CAUTION
+		"broke": mark = "✗"; word = "BROKE"; col = UiTheme.DANGER
+		_: mark = "·"; word = "NOT GRADED"; col = UiTheme.TEXT_MUTED
+	# ⚠️ THE CLAIM IS THE PAYOFF LINE AND IT WAS SET BELOW THE ACCESSIBILITY FLOOR. It rendered at
+	# 14px with its evidence at 11px — the sentence the whole observe half exists to deliver, in
+	# the smallest type on the screen. Claim at SIZE_BODY, evidence at SIZE_CAPTION (the smallest
+	# the theme ever hands out), and neither below it.
+	row.add_child(_line("%s  %s  — %s" % [mark, str(c.get("claim", "")), word], UiTheme.SIZE_BODY, col))
 	var order_text: String = str(c.get("order", ""))
 	var evidence: String = str(c.get("evidence", ""))
-	row.add_child(_line("      from your order “%s” · %s" % [order_text, evidence], 11, Color(0.62, 0.62, 0.68)))
+	row.add_child(_line("      from your order “%s” · %s" % [order_text, evidence],
+		UiTheme.SIZE_CAPTION, UiTheme.TEXT_MUTED))
 	return row
+
+
+# ── WHAT TO CHANGE ────────────────────────────────────────────────────────────────────────────
+
+## THE CLOSING BLOCK — one instruction, and which half of the game it belongs to.
+##
+## ⚠️ IT DERIVES NO NEW FACT. Everything it says is already on the screen: the claims' own
+## verdicts and order names (from `grade_read`, graded ONCE in `_rebuild` and passed in), and
+## `roster_power()`, which `tactics_ui.gd` already quotes before the fight. This is a restatement,
+## deliberately — `UX_LEGIBILITY.md` §8/§12 cap the narrative at two or three hand-authored
+## detectors and this adds none. What it adds is a PLACE: the ~200px of dead black round 18
+## measured under the team columns, and the fact that "was it my orders or my stable" was
+## previously answered only inside the single right-and-lost branch of `read_verdict()`.
+##
+## ⚠️ AND IT MUST NOT INVENT AN INSTRUCTION IT CANNOT SUPPORT. Where nothing was graded, it says
+## so and points at the screen that fixes it, rather than manufacturing advice from a blank.
+func _next_step_block(graded: Array) -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default", UiTheme.BORDER))
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+
+	var head := UiTheme.heading("WHAT TO CHANGE", 2)
+	col.add_child(head)
+
+	var broke: Array = []
+	var judged := 0
+	for c in graded:
+		match str((c as Dictionary).get("verdict", "")):
+			"held", "partly": judged += 1
+			"broke":
+				judged += 1
+				broke.append(c)
+
+	if judged == 0:
+		col.add_child(_line(
+			"Nothing this fight could be graded against, so there is no instruction to give. Set a target priority, a shape or a temperament on The Read screen and this block becomes an answer.",
+			UiTheme.SIZE_BODY, UiTheme.TEXT_SECONDARY))
+		return panel
+
+	# ── THE ORDERS HALF. The first broken claim, named with the exact order it came from — the
+	# same icon + name the tactics screen showed (`UX_LEGIBILITY.md` §1 rule 1).
+	if not broke.is_empty():
+		var b: Dictionary = broke[0]
+		# Em-dash, not a full stop: the evidence strings are lower-case fragments written for the
+		# claim rows above ("it fell at 18.9s"), and a full stop in front of one reads as a broken
+		# sentence rather than a clause.
+		col.add_child(_line("Your orders: “%s” did not hold — %s." % [
+			str(b.get("order", "?")), str(b.get("evidence", ""))],
+			UiTheme.SIZE_BODY, UiTheme.CAUTION))
+		if broke.size() > 1:
+			col.add_child(_line("%d other claims broke too — change ONE of them and fight the same league again, or you will not know which one moved it." % (broke.size() - 1),
+				UiTheme.SIZE_CAPTION, UiTheme.TEXT_MUTED))
+	else:
+		col.add_child(_line("Your orders: every claim you committed held. Keep this plan against this archetype.",
+			UiTheme.SIZE_BODY, UiTheme.SAFE))
+
+	# ── THE STABLE HALF. The same trained-stat comparison `tactics_ui.gd` shows before the fight,
+	# so the two bookends of a fight use ONE measurement (`UX_LEGIBILITY.md` §1 rule 1). It was
+	# previously reachable only when the read held AND the player lost; the question "was it me or
+	# was it them" is live after every result.
+	var pa := roster_power(_team_a)
+	var pb := roster_power(_team_b)
+	if pa > 0.0:
+		var pct: float = (pb / pa - 1.0) * 100.0
+		var stable_col := UiTheme.TEXT_SECONDARY
+		var stable_text := "Your stable: the two rosters are within %.0f%% of each other on trained stat, so the bodies were not the difference." % absf(pct)
+		if pct >= 8.0:
+			stable_col = UiTheme.CAUTION
+			stable_text = "Your stable: theirs carries %.0f%% more trained stat than yours. No order closes that gap — go and train." % pct
+		elif pct <= -8.0:
+			# ⚠️ "SO ANYTHING THAT WENT WRONG WENT WRONG IN THE ORDERS" WAS PRINTED UNDER A CLEAN
+			# SWEEP, where nothing went wrong at all — seen in the round-19 win capture. The
+			# stronger-side reading means two different things depending on whether the plan held,
+			# and one sentence cannot carry both.
+			stable_col = UiTheme.SAFE
+			stable_text = ("Your stable: yours is the STRONGER side by %.0f%% on trained stat — this was a fight you were meant to win, so it does not yet prove the plan." % absf(pct)) if broke.is_empty() \
+				else "Your stable: yours is the STRONGER side by %.0f%% on trained stat, so what went wrong went wrong in the orders, not in the bodies." % absf(pct)
+		col.add_child(_line(stable_text, UiTheme.SIZE_BODY, stable_col))
+	return panel
 
 
 func _teams_row(analysis: Dictionary, id_of: Dictionary, dec: Dictionary, tactics_apply: bool) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 24)
+	row.add_theme_constant_override("separation", UiTheme.SPACE_XL)
 	row.add_child(_team_col("YOUR TEAM", _team_a, analysis, Art.team_identity(0), true, id_of, dec, tactics_apply))
 	row.add_child(_team_col("RIVAL TEAM", _team_b, analysis, Art.team_identity(1), false, id_of, dec, tactics_apply))
 	return row
@@ -938,12 +1155,14 @@ func _team_col(label_text: String, team: Array, analysis: Dictionary, identity: 
 		is_team_a: bool, id_of: Dictionary, dec: Dictionary, tactics_apply: bool) -> Control:
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	col.add_theme_constant_override("separation", 6)
+	col.add_theme_constant_override("separation", UiTheme.SPACE_SM)
 
-	var tint: Color = identity["colour"]
-	var header := Label.new()
-	header.text = "%s  %s" % [identity["badge"], label_text]
-	header.add_theme_color_override("font_color", tint)
+	# ⚠️ THE TEAM COLOUR IS A BORDER, NOT INK. `art.gd`'s eight liveries are not text tokens and
+	# `ensure_contrast()` exists precisely because some of them (iron grey, 2.60:1) cannot be read
+	# as text on a panel. The badge glyph carries identity, the border carries the livery, and the
+	# heading is the house GOLD like every other section header in the game.
+	var tint: Color = UiTheme.team_border_color(0 if is_team_a else 1)
+	var header := UiTheme.heading("%s  %s" % [identity["badge"], label_text], 2)
 	col.add_child(header)
 
 	var per_unit: Dictionary = analysis.get("per_unit", {})
@@ -959,24 +1178,20 @@ func _team_col(label_text: String, team: Array, analysis: Dictionary, identity: 
 func _unit_report_row(m, uid: int, unit_stats: Dictionary, tint: Color, is_team_a: bool,
 		decision_events: Array, rich: bool, tactics_apply: bool) -> Control:
 	var panel := PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.13, 0.13, 0.17)
-	sb.border_color = tint
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(3)
-	sb.content_margin_left = 8; sb.content_margin_right = 8
-	sb.content_margin_top = 6; sb.content_margin_bottom = 6
-	panel.add_theme_stylebox_override("panel", sb)
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default", tint))
 
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 4)
+	outer.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	panel.add_child(outer)
 
 	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 10)
+	hbox.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	outer.add_child(hbox)
 
-	hbox.add_child(_portrait(m.species_id, m.species_name, Vector2(40, 40), tint))
+	# ⚠️ THE SHARED COMPONENT, NOT THE FIFTH COPY. `theme.gd` §8 names five independent `_portrait`
+	# implementations across scripts/ui/ with three signatures; this file carried one of them. It
+	# is deleted below — behaviour (placeholder initials at the same footprint) is identical.
+	hbox.add_child(UiTheme.portrait(m.species_id, m.species_name, Vector2(40, 40), tint))
 
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -985,15 +1200,16 @@ func _unit_report_row(m, uid: int, unit_stats: Dictionary, tint: Color, is_team_
 	var survived: bool = unit_stats.get("survived", true)
 	var name_lbl := Label.new()
 	name_lbl.text = "%s%s" % [m.species_name, ("" if survived else "  (fallen)")]
-	name_lbl.add_theme_color_override("font_color", Color(0.9, 0.9, 0.93) if survived else Color(0.55, 0.5, 0.5))
+	name_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
+	name_lbl.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY if survived else UiTheme.TEXT_MUTED)
 	info.add_child(name_lbl)
 
 	var dmg_lbl := Label.new()
 	var collision_tag := "  ⚠ shared with a same-species ally — tally split, see note below" if unit_stats.get("collision", false) else ""
 	dmg_lbl.text = "dealt %d · took %d%s" % [int(unit_stats.get("dealt", 0)), int(unit_stats.get("taken", 0)), collision_tag]
 	dmg_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	dmg_lbl.add_theme_font_size_override("font_size", 12)
-	dmg_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.7) if collision_tag == "" else Color(0.85, 0.65, 0.4))
+	dmg_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	dmg_lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY if collision_tag == "" else UiTheme.CAUTION)
 	info.add_child(dmg_lbl)
 
 	# ⚠️ THE ORDERS COME OUT OF THE DISCLOSURE. `docs/META_UI_DIRECTION.md` §2 slack-point 4: "the
@@ -1008,8 +1224,8 @@ func _unit_report_row(m, uid: int, unit_stats: Dictionary, tint: Color, is_team_
 		var told_lbl := Label.new()
 		told_lbl.text = told
 		told_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-		told_lbl.add_theme_font_size_override("font_size", 12)
-		told_lbl.add_theme_color_override("font_color", Color(0.82, 0.78, 0.62) if is_team_a else Color(0.78, 0.7, 0.68))
+		told_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		told_lbl.add_theme_color_override("font_color", UiTheme.GOLD if is_team_a else UiTheme.TEXT_SECONDARY)
 		info.add_child(told_lbl)
 
 	# Critical-event teaser — shown even collapsed, per UX_LEGIBILITY.md §7 item 2: the one line
@@ -1019,19 +1235,19 @@ func _unit_report_row(m, uid: int, unit_stats: Dictionary, tint: Color, is_team_
 		var teaser_lbl := Label.new()
 		teaser_lbl.text = teaser
 		teaser_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-		teaser_lbl.add_theme_font_size_override("font_size", 11)
-		teaser_lbl.add_theme_color_override("font_color", Color(0.9, 0.6, 0.55))
+		teaser_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		teaser_lbl.add_theme_color_override("font_color", UiTheme.CAUTION)
 		outer.add_child(teaser_lbl)
 
 	var details := VBoxContainer.new()
-	details.add_theme_constant_override("separation", 6)
+	details.add_theme_constant_override("separation", UiTheme.SPACE_SM)
 	details.visible = false
 
 	var toggle := Button.new()
 	toggle.text = "▸ Orders & decision log"
 	toggle.flat = true
 	toggle.focus_mode = Control.FOCUS_ALL
-	toggle.add_theme_font_size_override("font_size", 11)
+	toggle.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	toggle.pressed.connect(func():
 		details.visible = not details.visible
 		toggle.text = "▾ Orders & decision log" if details.visible else "▸ Orders & decision log"
@@ -1106,7 +1322,7 @@ func _orders_summary_lines(m, is_team_a: bool, tactics_apply: bool) -> Array:
 				any_order = true
 				break
 		if not any_order:
-			return [_summary_line("No standing orders yet — every monster is following its own nature.", Color(0.6, 0.6, 0.65))]
+			return [_summary_line("No standing orders yet — every monster is following its own nature.", UiTheme.TEXT_MUTED)]
 
 	var out: Array = []
 	for r in rows:
@@ -1118,7 +1334,7 @@ func _orders_summary_lines(m, is_team_a: bool, tactics_apply: bool) -> Array:
 		var name: String = info.get("name", "?")
 		out.append(_summary_line(
 			"%s: %s %s %s" % [axis_name, icon, name, suffix],
-			Color(0.8, 0.8, 0.85) if source == "order" else Color(0.6, 0.6, 0.65)))
+			UiTheme.TEXT_PRIMARY if source == "order" else UiTheme.TEXT_MUTED))
 	return out
 
 
@@ -1174,7 +1390,7 @@ func _summary_line(text: String, color: Color) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD
-	l.add_theme_font_size_override("font_size", 12)
+	l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	l.add_theme_color_override("font_color", color)
 	return l
 
@@ -1185,11 +1401,11 @@ func _summary_line(text: String, color: Color) -> Label:
 ## real `attribution` field (see _decision_events_by_id) or are a derived approximation.
 func _decision_log_block(events: Array, rich: bool) -> Control:
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 3)
+	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	var header := Label.new()
 	header.text = "Decision log"
-	header.add_theme_font_size_override("font_size", 12)
-	header.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
+	header.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	header.add_theme_color_override("font_color", UiTheme.GOLD)
 	box.add_child(header)
 
 	if events.is_empty():
@@ -1198,8 +1414,8 @@ func _decision_log_block(events: Array, rich: bool) -> Control:
 			"No intent data in this build yet — the tree AI (scripts/ai/monster_tree.gd) hasn't " + \
 			"shipped, so there is nothing beyond the Orders Summary above to log here."
 		empty_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-		empty_lbl.add_theme_font_size_override("font_size", 11)
-		empty_lbl.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
+		empty_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		empty_lbl.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
 		box.add_child(empty_lbl)
 		return box
 
@@ -1207,8 +1423,8 @@ func _decision_log_block(events: Array, rich: bool) -> Control:
 		var caveat := Label.new()
 		caveat.text = "⚠ No ORDER / ITS NATURE / REACTED tag yet: the AI computes one on every decision, but the blackboard's log stores only the branch and the reason. Showing those."
 		caveat.autowrap_mode = TextServer.AUTOWRAP_WORD
-		caveat.add_theme_font_size_override("font_size", 10)
-		caveat.add_theme_color_override("font_color", Color(0.6, 0.55, 0.4))
+		caveat.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		caveat.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
 		box.add_child(caveat)
 
 	var critical: Array = events.filter(func(e): return e.get("importance", "standard") == "critical")
@@ -1216,9 +1432,9 @@ func _decision_log_block(events: Array, rich: bool) -> Control:
 	var minor: Array = events.filter(func(e): return e.get("importance", "standard") == "minor")
 
 	for e in critical:
-		box.add_child(_decision_line(e, Color(0.95, 0.55, 0.5)))
+		box.add_child(_decision_line(e, UiTheme.CAUTION))
 	for e in standard:
-		box.add_child(_decision_line(e, Color(0.8, 0.8, 0.85)))
+		box.add_child(_decision_line(e, UiTheme.TEXT_PRIMARY))
 
 	if not minor.is_empty():
 		var minor_box := VBoxContainer.new()
@@ -1227,7 +1443,7 @@ func _decision_log_block(events: Array, rich: bool) -> Control:
 		toggle.text = "+%d more" % minor.size()
 		toggle.flat = true
 		toggle.focus_mode = Control.FOCUS_ALL
-		toggle.add_theme_font_size_override("font_size", 10)
+		toggle.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 		toggle.pressed.connect(func():
 			minor_box.visible = not minor_box.visible
 			toggle.text = "Hide" if minor_box.visible else "+%d more" % minor.size()
@@ -1235,7 +1451,7 @@ func _decision_log_block(events: Array, rich: bool) -> Control:
 		box.add_child(toggle)
 		box.add_child(minor_box)
 		for e in minor:
-			minor_box.add_child(_decision_line(e, Color(0.55, 0.55, 0.6)))
+			minor_box.add_child(_decision_line(e, UiTheme.TEXT_MUTED))
 
 	return box
 
@@ -1259,7 +1475,7 @@ func _decision_line(e: Dictionary, color: Color) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD
-	l.add_theme_font_size_override("font_size", 11)
+	l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	l.add_theme_color_override("font_color", color)
 	return l
 
@@ -1512,8 +1728,16 @@ func _decision_events_by_id(battle_log: Array, frames: Array, result: Dictionary
 			if key != prev_key and (intent != "" or reason != ""):
 				if not by_id.has(uid2):
 					by_id[uid2] = []
+				# ⚠️ THIS PATH WAS PRINTING RAW SIM IDS AND THE TREE PATH ABOVE WAS NOT.
+				# Round 13 found the report speaking in "bulling through a03 to a02" and fixed it —
+				# in `_humanise`, applied to the tree-log branch only. The frame-diff FALLBACK
+				# branch, three screens down the same function, kept writing `intent`/`reason`
+				# verbatim. So the bug was fixed on the path that has richer data and left on the
+				# path that runs when that data is missing, which is the copy a player is more
+				# likely to hit. Same re-keying, same function, no fact invented.
 				by_id[uid2].append({
-					"t": t, "label": intent, "reason": reason,
+					"t": t, "label": _humanise(intent, roster, n_a),
+					"reason": _humanise(reason, roster, n_a),
 					"attribution": "", "importance": "standard", "kind": "derived",
 				})
 			prev[uid2] = key
@@ -1610,33 +1834,9 @@ func _reason_at_death(dec: Dictionary, id_of: Dictionary, roster: Array, victim_
 	return ""
 
 
-func _portrait(species_id: String, species_name: String, portrait_size: Vector2, tint: Color) -> Control:
-	var tex := Art.creature_texture(species_id)
-	if tex != null:
-		var t := TextureRect.new()
-		t.texture = tex
-		t.custom_minimum_size = portrait_size
-		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		return t
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = portrait_size
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(tint.r, tint.g, tint.b, 0.18)
-	sb.border_color = tint
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(4)
-	panel.add_theme_stylebox_override("panel", sb)
-	var lbl := Label.new()
-	lbl.text = species_name.substr(0, 2).to_upper()
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	lbl.add_theme_color_override("font_color", tint)
-	lbl.add_theme_font_size_override("font_size", int(portrait_size.y * 0.4))
-	panel.add_child(lbl)
-	return panel
+## ⚠️ `_portrait()` IS GONE — it was the third of five independent copies `theme.gd` §8 names, and
+## the only one whose placeholder font size (`portrait_size.y * 0.4`) could land BELOW the 14px
+## accessibility floor as the footprint shrank. Call `UiTheme.portrait()`; it clamps.
 
 
 func _line(text: String, font_size: int, color: Color) -> Label:

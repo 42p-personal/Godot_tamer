@@ -20,6 +20,19 @@ extends VBoxContainer
 const Sp = preload("res://scripts/spatial.gd")
 const TacticsScript = preload("res://scripts/tactics.gd")
 const FormationsScript = preload("res://scripts/formations.gd")
+## ⚠️ ROUND 19: THIS FILE WAS 100% OF THE PROJECT'S REMAINING BELOW-FLOOR TYPE. After round 18 and
+## the round-19 restyle of market/tactics/report, `_probe_house.gd` counted 16 off-scale labels in
+## the whole game — 14 of them here (9px chip names, 10px legend and hint, 11px x3, 12px x2), which
+## is `META_UI_DIRECTION` C6's "the legend is ~8px, below the accessibility floor". The board is
+## instanced INSIDE the tactics screen, so those fourteen were scored against `11_tactics` and read
+## as the tactics screen's debt when they were never its file. Every LABEL below now takes a
+## `UiTheme` size and a token colour.
+##
+## ⚠️ THE `draw_string` CALLS ARE A DIFFERENT PROBLEM AND ARE DELIBERATELY LEFT. They paint into a
+## canvas, not the label tree, so no probe scores them and none of them is a Label a screen reader
+## or a font-scale setting can reach. Sizing them off tokens would look tidy and would fix nothing
+## measurable; the real fix is that the chips stop being drawn text, and that is board surgery.
+const UiTheme = preload("res://scripts/ui/theme.gd")
 
 signal changed
 
@@ -199,8 +212,9 @@ func _compute_aura_flags() -> void:
 func _build_header_row() -> void:
 	var header := Label.new()
 	header.text = "Formation — free placement, your half only"
-	header.add_theme_font_size_override("font_size", 12)
-	header.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
+	header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	header.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	header.add_theme_color_override("font_color", UiTheme.GOLD)
 	add_child(header)
 
 	var row := HBoxContainer.new()
@@ -240,8 +254,9 @@ func _build_header_row() -> void:
 func _build_gallery_row() -> void:
 	var lbl := Label.new()
 	lbl.text = "Saved formations (Tab to browse, Enter to load)"
-	lbl.add_theme_font_size_override("font_size", 11)
-	lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.68))
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	add_child(lbl)
 
 	var scroll := ScrollContainer.new()
@@ -283,7 +298,8 @@ func _make_gallery_entry(f: Dictionary) -> Control:
 
 	var name_lbl := Label.new()
 	name_lbl.text = f.get("name", "?")
-	name_lbl.add_theme_font_size_override("font_size", 9)
+	name_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	name_lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(name_lbl)
@@ -320,8 +336,9 @@ func _build_board_area() -> void:
 func _build_tray_row() -> void:
 	var lbl := Label.new()
 	lbl.text = "Roster — Enter/Space to deploy, then Tab to it and use arrow keys"
-	lbl.add_theme_font_size_override("font_size", 11)
-	lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.68))
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	add_child(lbl)
 	_tray_box = HBoxContainer.new()
 	_tray_box.add_theme_constant_override("separation", 4)
@@ -331,27 +348,34 @@ func _build_tray_row() -> void:
 func _build_readout_row() -> void:
 	_readout_label = Label.new()
 	_readout_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_readout_label.add_theme_font_size_override("font_size", 12)
-	_readout_label.add_theme_color_override("font_color", Color(0.85, 0.8, 0.6))
+	_readout_label.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	_readout_label.add_theme_color_override("font_color", UiTheme.GOLD)
 	add_child(_readout_label)
 
 	_summary_label = Label.new()
 	_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_summary_label.add_theme_font_size_override("font_size", 11)
-	_summary_label.add_theme_color_override("font_color", Color(0.6, 0.75, 0.65))
+	_summary_label.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	_summary_label.add_theme_color_override("font_color", UiTheme.SAFE)
 	add_child(_summary_label)
 
 	var hint := Label.new()
 	hint.text = "Where you drop a chip is where that monster starts the fight — its station. Positional intent (the 5-icon strip) sets how it fights around that station."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD
-	hint.add_theme_font_size_override("font_size", 10)
-	hint.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
+	hint.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	hint.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
 	add_child(hint)
 
 
 func _build_legend_row() -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
+	# ⚠️ `HFlowContainer`, NOT `HBoxContainer`, AND THE CAPTURE IS WHY. Raising these four entries
+	# off 10px onto the 14px accessibility floor widened a non-wrapping row by ~40%; an HBox reports
+	# that as its minimum width, the board reported it upward, and the tactics screen's THIRD column
+	# (the scouted rival) was pushed off the right edge of the viewport. Nothing failed — the house
+	# probe went green on the type in the same run — and it was only visible by looking at
+	# `11_tactics.png`. A legend is the one row in this widget that can wrap for free.
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 14)
+	row.add_theme_constant_override("v_separation", 2)
 	add_child(row)
 	for entry in [
 		["⛨ dashed gold ring", "your aura reach"],
@@ -361,8 +385,8 @@ func _build_legend_row() -> void:
 	]:
 		var l := Label.new()
 		l.text = "%s — %s" % [entry[0], entry[1]]
-		l.add_theme_font_size_override("font_size", 10)
-		l.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
+		l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		l.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
 		row.add_child(l)
 
 	var motion_toggle := CheckButton.new()

@@ -42,7 +42,7 @@ const SCREENS := [
 		"post": "_pick_pair"},
 	{"n": "10_tournament", "scene": "res://scenes/tournament.tscn", "setup": ""},
 	{"n": "11_tactics",    "scene": "res://scenes/tactics.tscn",    "setup": ""},
-	{"n": "12_report",     "scene": "res://scenes/report.tscn",     "setup": ""},
+	{"n": "12_report",     "scene": "res://scenes/report.tscn",     "setup": "_setup_report"},
 	{"n": "13_ending",     "scene": "res://scenes/ending.tscn",     "setup": "_setup_ending"},
 ]
 
@@ -59,19 +59,36 @@ const WINDOW := Vector2i(1152, 648)
 var _view_h: int = 1080
 var _rows: Array = []
 
+## ⚠️ THE CANARY. A blank PNG that nobody notices is how a round reports success on nothing — and
+## this harness has TWO standing ways to produce one: run it `--headless` (the dummy renderer hands
+## back an empty image) or capture before the screen has laid itself out. Both save a file, both
+## print "captures: ...", and both look exactly like a good run in the log. So a uniform frame is
+## now a FAILURE, not an output: `_blank` names every capture that carried no picture and the probe
+## exits non-zero if the list is not empty.
+var _blank: Array = []
+
 
 func _ready() -> void:
 	DisplayServer.window_set_size(WINDOW)
 	await get_tree().process_frame
 	_view_h = int(get_viewport().get_visible_rect().size.y)
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
+	_reset_out_dir()
 
 	_setup_midcareer()
+	# ⚠️ PRINTED BEFORE THE WALK, NOT AFTER IT. `_setup_ending()` promotes the career to the last
+	# league and sets `won_game`; a fixture block printed at the end would describe a state only the
+	# thirteenth screen ever saw and would be read as the state all thirteen were captured in.
+	_print_fixture()
 
 	for s in SCREENS:
 		var setup: String = str(s["setup"])
 		if setup != "":
-			call(setup)
+			# ⚠️ `await call(...)` AND NOT `call(...)`. Every hook was synchronous until round 19
+			# added `_setup_report`, which has to run a real fight over many frames; a plain
+			# `call()` would start the coroutine, return immediately, and capture the screen
+			# mid-fight. Awaiting a NON-coroutine return is legal in GDScript and the synchronous
+			# hooks are unaffected, so this is one line rather than a second dispatch path.
+			await call(setup)
 		await _capture(str(s["scene"]), str(s["n"]), str(s.get("post", "")))
 
 	print("")
@@ -85,7 +102,31 @@ func _ready() -> void:
 			r["content_h"], "CLIPS" if r["clips"] else "-"])
 	print("")
 	print("captures: %s" % ProjectSettings.globalize_path(OUT_DIR))
+	if not _blank.is_empty():
+		printerr("*** BLANK CAPTURES (%d): %s" % [_blank.size(), ", ".join(_blank)])
+		printerr("*** A uniform frame is not a capture. Run WITH A WINDOW, never --headless.")
+		get_tree().quit(1)
+		return
+	print("liveness: all %d captures carry a picture." % _shots)
 	get_tree().quit(0)
+
+
+## ⚠️ STALE PNGs FROM AN EARLIER RUN ARE A LIE THIS HARNESS USED TO TELL. The scroll-dependent
+## shots (`*_end`, `*_mid33`) are only written when the screen is tall enough that run, so a screen
+## that got shorter left its old `_end` behind — and the run of 2026-08-11 18:01 shipped a
+## `10_tournament_end.png` and a `07_shop_end.png` timestamped 17 hours earlier, sitting in the
+## same directory as the fresh ones with nothing to tell them apart. Whoever reads that directory
+## reads two different builds as one. The directory is emptied first so every file in it is from
+## the run that just printed.
+func _reset_out_dir() -> void:
+	var abs := ProjectSettings.globalize_path(OUT_DIR)
+	DirAccess.make_dir_recursive_absolute(abs)
+	var d := DirAccess.open(OUT_DIR)
+	if d == null:
+		return
+	for f in d.get_files():
+		if f.ends_with(".png") or f.ends_with(".txt"):
+			d.remove(f)
 
 
 ## ── THE FIXTURE ───────────────────────────────────────────────────────────────────────────────
@@ -163,6 +204,62 @@ func _setup_lab() -> void:
 		Roster.preserve(Roster.monsters[2])
 
 
+## ⚠️ THE REPORT'S HEADLINE CAPTURE USED TO BE OF A FIGHT THAT COULD NOT BE GRADED, AND IT COST A
+## WHOLE ROUND. With no pending result, `report_ui.gd` runs a frameless demo battle, `grade_read()`
+## correctly refuses to grade without a frame stream, and the biggest type on the screen reads
+## "THE READ COULD NOT BE GRADED". Every capture of this screen in the repo said that. Round 18's
+## direction doc had to caveat it; round 19's brief promoted it to "the graded path has never been
+## seen" — a defect that did not exist, written from an artefact of THIS FILE.
+##
+## A capture harness that only ever drives a screen into its degenerate state is not neutral: it
+## manufactures findings. Same lesson as `_setup_lab()` above, on a different screen.
+##
+## So: run a REAL fight through `arena3d.tscn` — the only path that emits the frame stream
+## `grade_read()` needs — commit a read first, and hand the resolved result to the screen exactly
+## as the game does. If it does not resolve inside the budget the walk continues on the demo path
+## and SAYS SO, because a harness that silently substitutes a different fixture is the thing this
+## note exists to stop.
+func _setup_report() -> void:
+	var TacticsScript = load("res://scripts/tactics.gd")
+	var ReportScript = load("res://scripts/ui/report_ui.gd")
+	var team_a: Array = Roster.fieldable().slice(0, Career.team_size_for_league(Career.league_index))
+	if team_a.size() < 2:
+		printerr("_setup_report: fewer than 2 fieldable bodies — falling back to the demo battle")
+		return
+	var team_b: Array = Roster.make_rival_team(team_a.size(), 0.9, 1.0,
+		TacticsScript.archetype_for_league(Career.league_index))
+
+	var plan: Dictionary = {"targetPriority": "casters", "formation": "tight"}
+	var orders: Dictionary = {}
+	for i in range(team_a.size()):
+		orders[team_a[i]] = {"temperament": "cautious" if i == 0 else "balanced"}
+	var gp: String = TacticsScript.gameplan_for(team_b.map(func(m): return m.species_name))
+	var claims: Array = ReportScript.build_read(plan, orders, team_a, team_b)
+	for m in team_a + team_b:
+		m.reset_for_battle()
+	TacticsScript.commit(plan, TacticsScript.team_plan_for_gameplan(gp, team_a), orders,
+		TacticsScript.orders_for_gameplan(gp, team_b), {}, {}, team_a, team_b)
+	TacticsScript.committed["read"] = {"claims": claims, "gameplan": gp}
+
+	var arena = load("res://scenes/arena3d.tscn").instantiate()
+	add_child(arena)
+	var res: Dictionary = {}
+	for _i in 8000:
+		await get_tree().process_frame
+		var r: Dictionary = arena.get("result")
+		if not r.is_empty():
+			res = r
+			break
+	arena.queue_free()
+	await get_tree().process_frame
+	if res.is_empty():
+		printerr("_setup_report: the arena never resolved — 12_report falls back to the demo battle")
+		return
+	ReportScript.hand_off(res, team_a, team_b)
+	print("  12_report: driven by a REAL fight (winner %s, %d frames) — the graded path"
+		% [str(res.get("winner", "?")), int((res.get("frames", []) as Array).size())])
+
+
 func _setup_ending() -> void:
 	Career.league_index = Career.leagues.size() - 1
 	for i in range(Career.leagues_won.size()):
@@ -204,8 +301,7 @@ func _capture(scene_path: String, name: String, post: String = "") -> void:
 	for _i in 14:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
-	var img: Image = get_viewport().get_texture().get_image()
-	img.save_png(OUT_DIR + name + ".png")
+	_shoot(name)
 	_rows.append(_inventory(node, name))
 
 	# ⚠️ THE FOLD IS WHERE THE ARGUMENT IS. A screen whose content is three viewports tall is not
@@ -221,17 +317,115 @@ func _capture(scene_path: String, name: String, post: String = "") -> void:
 			for _i in 4:
 				await get_tree().process_frame
 			await RenderingServer.frame_post_draw
-			get_viewport().get_texture().get_image().save_png(
-				OUT_DIR + "%s_mid%d.png" % [name, int(frac * 100)])
+			_shoot("%s_mid%d" % [name, int(frac * 100)])
 	if sc != null and sc.get_v_scroll_bar().max_value > sc.size.y + 8:
 		sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)
 		for _i in 4:
 			await get_tree().process_frame
 		await RenderingServer.frame_post_draw
-		get_viewport().get_texture().get_image().save_png(OUT_DIR + name + "_end.png")
+		_shoot(name + "_end")
 
 	node.queue_free()
 	await get_tree().process_frame
+
+
+## Grab the viewport, CHECK IT IS NOT BLANK, then save it.
+##
+## ⚠️ THE TEST IS "DOES THIS FRAME CONTAIN A PICTURE", NOT "IS IT PURE BLACK". A headless run
+## returns a uniform image that is not necessarily black, and a screen captured one frame too early
+## returns the flat SURFACE fill — which is a perfectly plausible dark colour, not an obvious
+## error. So the canary samples a coarse grid and asks how many DISTINCT colours it found: a real
+## screen of this project has text, panels, bars and portraits and clears the floor by an order of
+## magnitude, while any single-fill frame scores exactly 1.
+const CANARY_GRID := 48        # samples per axis
+const CANARY_MIN_COLOURS := 8  # a real screen measures in the hundreds; 8 is a floor, not a target
+
+var _shots: int = 0
+
+
+func _shoot(name: String) -> void:
+	var img: Image = get_viewport().get_texture().get_image()
+	var colours := {}
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	for gx in CANARY_GRID:
+		for gy in CANARY_GRID:
+			var px: int = int(float(gx) / CANARY_GRID * w)
+			var py: int = int(float(gy) / CANARY_GRID * h)
+			colours[img.get_pixel(px, py).to_rgba32()] = true
+	if colours.size() < CANARY_MIN_COLOURS:
+		_blank.append("%s (%d distinct colours in %d samples)"
+			% [name, colours.size(), CANARY_GRID * CANARY_GRID])
+	img.save_png(OUT_DIR + name + ".png")
+	_shots += 1
+
+
+## ⚠️ THE FIXTURE HAS TO BE READABLE FROM THE OUTPUT, not reconstructed from this file. Two rounds
+## running, a brief was written about a screen whose state nobody had checked — the empty Breeding
+## Ranch (one preserved parent, so no pairing could exist) and the −119 DEX rest week (five
+## monsters sharing one empty id). Both were the harness, not the game, and both would have been
+## obvious from a printed fixture block next to the captures.
+## ⚠️ AND IT IS WRITTEN NEXT TO THE PICTURES, NOT ONLY TO THE LOG. The log belongs to whoever ran
+## the probe; the directory is what the NEXT round reads, usually weeks later and without the log.
+## `00_FIXTURE.txt` travels with the captures so the career they show cannot be guessed wrong.
+var _fixture_lines: Array = []
+
+
+func _fx(line: String) -> void:
+	_fixture_lines.append(line)
+	print(line)
+
+
+func _print_fixture() -> void:
+	_print_fixture_body()
+	var f := FileAccess.open(OUT_DIR + "00_FIXTURE.txt", FileAccess.WRITE)
+	if f != null:
+		f.store_string("\n".join(_fixture_lines) + "\n")
+		f.close()
+
+
+func _print_fixture_body() -> void:
+	_fx("=== FIXTURE (what these captures are of) ===")
+	_fx("career: %s league (index %d) · week %d · %d gold · barn %d · leagues won %d"
+		% [str(Career.leagues[Career.league_index].get("name", "?")), Career.league_index,
+			Career.week, Career.gold, Career.barn_capacity, _won_count()])
+	_fx("roster: %d monsters" % Roster.monsters.size())
+	var ids := {}
+	for m in Roster.monsters:
+		var plan: Dictionary = WeekPlan.plan_for(m.id)
+		_fx("  %-8s %-10s age %.1fy · stamina %.0f · heart %d · %s · plan '%s'"
+			% [m.id, m.species_id, m.age_weeks / 48.0, m.stamina, m.happiness,
+				"retired" if m.retired else "active", str(plan.get("activity", "rest"))])
+		# ⚠️ THE FIXTURE BIT ONCE ALREADY AND COST TWENTY MINUTES CHASING A BUG THAT WAS NOT IN THE
+		# GAME. `GameData.make_monster()` returns `id == ""`; five monsters sharing it collapsed
+		# `WeekPlan.advance()`'s per-monster `before` dict to a single entry and the feeding screen
+		# reported each monster's week diffed against a different monster's stats. Assert, do not
+		# remember.
+		if str(m.id) == "" or ids.has(m.id):
+			printerr("*** FIXTURE BUG: duplicate or empty monster id '%s' — every roster path must "
+				% str(m.id) + "assign Roster.next_slot_id(). See roster.gd:109.")
+			_blank.append("fixture: duplicate monster id '%s'" % str(m.id))
+		ids[m.id] = true
+	_fx("breeding stock at this point: %d" % Roster.breeding_stock().size())
+	# ⚠️ Poll FIRST. The tutorial fast-forwards past any step already satisfied, and it does that on
+	# its own 10Hz tick — so a step id read before the first poll reports 'buy' on a fixture with
+	# five monsters in the barn, and the captures then show a different step than the block above
+	# them claims. A fixture line that disagrees with its own captures is worse than no line.
+	Tutorial.poll()
+	_fx("tutorial: step '%s' (active %s)" % [Tutorial.current_id(), str(Tutorial.is_active())])
+	_fx("per-screen mutations applied later in the walk (each is CUMULATIVE from here):")
+	for s in SCREENS:
+		if str(s["setup"]) != "" or str(s.get("post", "")) != "":
+			_fx("  %-14s %s %s" % [s["n"], s["setup"], s.get("post", "")])
+	_fx("")
+
+
+func _won_count() -> int:
+	var n := 0
+	for w in Career.leagues_won:
+		if w:
+			n += 1
+	return n
 
 
 func _tallest_scroll(n: Node) -> ScrollContainer:

@@ -349,8 +349,14 @@ func _season_strip(parent: VBoxContainer) -> void:
 		cell.add_child(col)
 		col.add_child(_ladder_cell_label("%d" % (m + 1),
 			UiTheme.GOLD if is_now else UiTheme.TEXT_MUTED, UiTheme.SIZE_CAPTION))
+		# ⚠️ `UiTheme.BORDER` WAS THE INK HERE AND IT IS A BORDER TOKEN, NOT A TEXT ONE. #33333D on
+		# #1E1E26 is roughly 1.2:1 — the empty-month dot was invisible rather than quiet, and it was
+		# thirteen of the twenty remaining off-token colours in the whole game (one per month of the
+		# season). `TEXT_MUTED` is the dimmest ink `theme.gd` publishes and it carries a measured
+		# 5.10:1, so the row now reads as thirteen months with one starred rather than as one star
+		# floating in nothing.
 		col.add_child(_ladder_cell_label("★" if not events.is_empty() else "·",
-			UiTheme.CAUTION if not events.is_empty() else UiTheme.BORDER, UiTheme.SIZE_CAPTION))
+			UiTheme.CAUTION if not events.is_empty() else UiTheme.TEXT_MUTED, UiTheme.SIZE_CAPTION))
 
 	# ⚠️ SAY WHAT IS OPEN AND WHAT IS NOT, AND NEVER PRETEND A LOCKED THING IS COMING. The marquee
 	# leagues start at Silver; a Wood-to-Iron player has no marquee at all, and copy that implies

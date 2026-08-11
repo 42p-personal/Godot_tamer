@@ -235,6 +235,289 @@ func entry_block_reason(min_needed: int) -> String:
 	return "This cup needs %d monsters — you have %d." % [min_needed, able]
 
 
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+# WHAT THE STABLE LACKS — the one place any screen may ask "what am I missing?"
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ THIS LIVES HERE FOR THE SAME REASON `market_price()` DOES, AND THE REASON IS ON RECORD THREE
+# TIMES. Round 18 found the MARKET calling a monster's ceiling 400 while the STABLE called the same
+# ceiling 540 — one rule, two screens, two answers, and both defensible. A "what does my roster
+# need" answer computed on the Market screen would be a fourth copy waiting to happen: the Town hub
+# wants it for its prompt line, the Tournament sign-up wants it beside `entry_block_reason()`, and
+# the Lab wants it before it lets a body out of competition. ONE function; every screen asks it.
+#
+# ── WHAT "LACKS" MEANS, AND WHY IT IS THESE FOUR ─────────────────────────────────────────────
+# The brief for this work said to GREP BEFORE INVENTING A METRIC, and grepping is what produced
+# the list. Every one of the four is read from something the game already computes; not one of
+# them is a new number authored for a UI:
+#
+#   1. BODIES     `Career.team_size_for_league()` (data.json:teamSizeByLeague) vs `fieldable()`.
+#                 The hardest fact on the list — the sheet has N slots and a retiree cannot fill
+#                 one. This is `entry_block_reason()`'s arithmetic, asked one league early.
+#   2. THE KIND   `Tactics.archetype_for_league()` says which of six kinds of team holds this
+#                 rung, and `Tactics.counter_for()` carries a MEASURED answer to it
+#                 (`_probe_archetypes.gd:_counter_matrix()`, residuals +13..+27). That answer is a
+#                 KIND OF ROSTER, and a kind of roster is a set of CLASSES — which is a thing this
+#                 stable either has or does not.
+#   3. THE ROLE   `Classify.role_of_class()` splits the eighteen classes damage/support. A stable
+#                 of five damage picks has no wall and no mender, whatever its stat totals say.
+#   4. THE CLOCK  `week.gd:stage_info()` — how many fieldable bodies can still TRAIN. A stable of
+#                 Elders is fully staffed and going nowhere, and this is the one gap the Market is
+#                 uniquely placed to answer, because a Prospect is literally years of clock.
+#
+# ⚠️ WHAT THIS DELIBERATELY IS NOT: A RECOMMENDATION ENGINE. It names the GAP and stops. Nothing
+# here scores a candidate, ranks offers, or says "buy this one" — CLAUDE.md's bar is that a
+# decision made with earned knowledge is the point, and a screen that thinks for the player fails
+# the same test as a training week that is an obvious click. `gap_classes()` below exists so a
+# screen can state the FACT that a body's class is one of the missing ones; it does not order the
+# stall, and a week where nothing on the stall answers anything is a legitimate outcome.
+#
+# ⚠️ AND IT IS ADVICE ABOUT A ROSTER, NOT A PREDICTION ABOUT A FIGHT. The residuals in
+# `Tactics.GAMEPLANS[*].counter` were measured over FIVE-BODY rosters of a kind, not over one
+# recruit, and `_probe_archetypes.gd` is explicit that a strong roster is not the same thing as a
+# counter. Any surface quoting them must say what was measured; see `counter_gap()`'s `detail`.
+
+## ⚠️ THE TABLE THAT USED TO LIVE HERE NOW LIVES ON `Tactics.GAMEPLANS[gid].counterRoster`, beside
+## the `counter` prose it was a machine-readable copy of. Round 19 shipped it in this file with its
+## own note asking for the move; a second copy of a truth is this project's most-repeated failure,
+## so it was moved in the same round rather than left to drift for one. `counter_gap()` reads it.
+
+
+## The stable's composition, as counts — no judgement, just the readout. Any screen that wants to
+## PRINT what the stable is (rather than what it lacks) reads this, so the two can never disagree.
+## Keys: able (int) · retired (int) · damage (int) · support (int) · classes (Dictionary
+## class -> count) · trainable (int, bodies whose stage still trains) · elders (int).
+##
+## `exclude` answers the counterfactual the Market's release column has to ask — *what would this
+## stable be WITHOUT this body?* — without mutating the roster to find out.
+func stable_shape(exclude = null) -> Dictionary:
+	var out := {
+		"able": 0, "retired": retirees_in_barn().size(), "damage": 0, "support": 0,
+		"classes": {}, "trainable": 0, "elders": 0,
+	}
+	for m in fieldable():
+		if exclude != null and m == exclude:
+			continue
+		out["able"] = int(out["able"]) + 1
+		var cls := str(m.class_name_)
+		out["classes"][cls] = int(out["classes"].get(cls, 0)) + 1
+		# ⚠️ `Classify.role_of_class` counts a TANK AS SUPPORT and says so in its own ⚠️ — it is a
+		# composition label, not a spatial one. Read it rather than re-deriving, or this file
+		# becomes the second copy of a table that already has a note explaining itself.
+		if Classify.role_of_class(cls) == "support":
+			out["support"] = int(out["support"]) + 1
+		else:
+			out["damage"] = int(out["damage"]) + 1
+		var info: Dictionary = WeekLib.stage_info(m.age_weeks, m.lifespan_years)
+		if float(info.get("trainMult", 0.0)) > 0.0:
+			out["trainable"] = int(out["trainable"]) + 1
+		if str(info.get("stage", "")) == "Elder":
+			out["elders"] = int(out["elders"]) + 1
+	return out
+
+
+## WHAT THIS STABLE LACKS, ranked worst-first. Array[Dictionary]; EMPTY is a legitimate and
+## meaningful answer — "nothing this screen can name" is information, and a screen that
+## manufactures a gap to fill a panel is lying.
+##
+## Each entry:
+##   "kind"     String  — "bodies" | "counter" | "role" | "clock", stable ids for a caller to key off
+##   "headline" String  — the gap, in one clause
+##   "detail"   String  — where the number came from and what it costs
+##   "classes"  Array   — class names that would answer it; [] where no class answers it (the
+##                        clock gap is answered by AGE, not by a class)
+##   "severity" int     — 2 blocks something today · 1 will bite at the next step
+##
+## `league_idx` defaults to the league the career is standing in. Pass one to ask the question
+## about a rung the player has not reached yet. `exclude` asks it about the stable MINUS one body —
+## see `gaps_opened_by_releasing()`.
+func stable_gaps(league_idx: int = -1, exclude = null) -> Array:
+	if not has_node("/root/Career"):
+		return []
+	var idx: int = league_idx if league_idx >= 0 else Career.league_index
+	var shape: Dictionary = stable_shape(exclude)
+	var able: int = int(shape["able"])
+	var out: Array = []
+
+	# 1. BODIES — the sheet has slots and a retiree cannot fill one.
+	var need: int = Career.team_size_for_league(idx)
+	if able < need:
+		var retired: int = int(shape["retired"])
+		out.append({
+			"kind": "bodies", "severity": 2,
+			"headline": "%d more %s that can compete" % [need - able, "body" if need - able == 1 else "bodies"],
+			"detail": ("%s fields %d and you have %d that can still compete%s."
+				% [Career.league_at(idx).get("name", "This league"), need, able,
+					" — %d of your %d has retired" % [retired, monsters.size()] if retired > 0 else ""]),
+			"classes": [],
+		})
+	else:
+		# The NEXT rung's step, if there is one. The team grows at Copper, Bronze, Silver and
+		# Platinum (`data.json:teamSizeByLeague`) and each of those steps has to be answered with a
+		# body raised or bought BEFORE it arrives — which is the whole reason this is on the Market.
+		var next_idx: int = idx + 1
+		if next_idx < Career.leagues.size():
+			var next_need: int = Career.team_size_for_league(next_idx)
+			if next_need > able:
+				out.append({
+					"kind": "bodies", "severity": 1,
+					"headline": "%d more %s before %s" % [next_need - able,
+						"body" if next_need - able == 1 else "bodies",
+						Career.league_at(next_idx).get("name", "the next rung")],
+					"detail": ("%s fields %d. You field %d today, and a body bought at the step is a body "
+						+ "that has not trained for it.") % [
+							Career.league_at(next_idx).get("name", "The next rung"), next_need, able],
+					"classes": [],
+				})
+
+	# 2. THE KIND — what holds this rung, and the measured answer to it.
+	var counter: Dictionary = counter_gap(idx, shape)
+	if not counter.is_empty():
+		out.append(counter)
+
+	# 3. THE ROLE — a side that is all one thing.
+	if able > 0:
+		if int(shape["support"]) == 0:
+			out.append({
+				"kind": "role", "severity": 1,
+				"headline": "no support body at all",
+				"detail": ("All %d of your bodies are damage picks. Nothing in the stable wards, guards, "
+					+ "heals or takes a turn away — every fight is a race you have to win outright.") % able,
+				"classes": _classes_with_role("support"),
+			})
+		elif int(shape["damage"]) == 0:
+			out.append({
+				"kind": "role", "severity": 1,
+				"headline": "nobody to actually kill with",
+				"detail": ("All %d of your bodies are support picks. A fight nobody can close is a fight "
+					+ "the clock decides.") % able,
+				"classes": _classes_with_role("damage"),
+			})
+
+	# 4. THE CLOCK — staffed, and going nowhere.
+	#
+	# ⚠️ THIS COMPARED `trainable` AGAINST THE TEAM SIZE AND THE FIRST CAPTURE CAUGHT IT: a stable
+	# of two bodies at Bronze reported "2 of 2 can still train" AS A GAP, because 2 < 3. It was
+	# re-reporting the BODIES gap in the clock's words — two rows for one fact, and the second of
+	# them a flat contradiction of its own headline. The clock question is about the bodies you
+	# HAVE, never about the ones you are missing; those are gap 1's business.
+	var trainable: int = int(shape["trainable"])
+	if able > 0 and trainable < able:
+		out.append({
+			"kind": "clock", "severity": 1 if trainable > 0 else 2,
+			"headline": "only %d of your %d can still train" % [trainable, able],
+			"detail": ("A Retiree trains at ×0.00 and an Elder at ×0.80 (week.gd:stage_info). %s "
+				+ "A Prospect on the stall is years of clock; a Veteran is not.") % _clock_clause(shape),
+			"classes": [],
+		})
+
+	out.sort_custom(func(a, b): return int(a["severity"]) > int(b["severity"]))
+	return out
+
+
+## Which way the clock gap bit — Elders still training badly, or bodies that have aged out entirely.
+func _clock_clause(shape: Dictionary) -> String:
+	var elders: int = int(shape["elders"])
+	if elders > 0:
+		return "%d %s already %s." % [elders, "is" if elders == 1 else "are",
+			"an Elder" if elders == 1 else "Elders"]
+	return "The bodies that cannot train have aged out."
+
+
+## The rung's champion, the kind of team it is, and the classes the MEASURED answer is built from
+## that this stable owns none of. Returns {} when the stable already fields part of the answer —
+## "you have two of the five classes a control roster is built from" is not a gap, it is a start.
+func counter_gap(idx: int, shape: Dictionary) -> Dictionary:
+	var theirs: String = TacticsScript.archetype_for_league(idx)
+	var answer: Dictionary = TacticsScript.GAMEPLANS.get(theirs, {}).get("counterRoster", {})
+	if answer.is_empty():
+		return {}
+	var answer_kind: String = str(answer["kind"])
+	var want: Array = []
+	for c in TacticsScript.archetype_classes(answer_kind, 5):
+		if not want.has(c):
+			want.append(c)
+	var missing: Array = want.filter(func(c): return not shape["classes"].has(c))
+	if missing.is_empty() or missing.size() < want.size():
+		return {}
+	var their_name: String = str(TacticsScript.GAMEPLANS.get(theirs, {}).get("name", theirs))
+	var our_name: String = str(TacticsScript.GAMEPLANS.get(answer_kind, {}).get("name", answer_kind))
+	return {
+		"kind": "counter", "severity": 1,
+		"headline": "nothing that answers a %s team" % their_name.to_lower(),
+		# ⚠️ SAY WHAT WAS MEASURED, NOT WHAT IT PROMISES. The residual was taken over five-body
+		# rosters of a kind (`_probe_archetypes.gd:_counter_matrix`), so it is a statement about a
+		# ROSTER SHAPE and not about one recruit — quoting it as "buy this and win" would be the
+		# screen lying about the thing it describes.
+		#
+		# ⚠️ AND THE POINT FIGURE IS NO LONGER PRINTED, DELIBERATELY. Round 19's first version read
+		# "a rushdown side answers it by +25 points beyond its own record". `_probe_archetypes` at
+		# HEAD puts rushdown-vs-zone at +7 and names CONTROL as the answer — four of the six rows
+		# disagree with the authored table, and at `MATRIX_TRIALS = 12` the standard error on a cell
+		# is near 14 points, so neither number can carry a screen. The KIND is the authored design
+		# read (the same one the tournament and tactics screens print in prose); the arithmetic that
+		# follows it — which classes the stable owns — is read from the roster and is exact.
+		# See the ⚠️ over `Tactics.GAMEPLANS`. Round 20 re-measures at 48+ trials; until then no
+		# screen states a residual.
+		"detail": ("%s holds this rung, and a %s roster is the authored answer to it — your stable "
+			+ "owns none of the classes one is built from: %s.") % [
+				their_name, our_name.to_lower(),
+				", ".join(PackedStringArray(want))],
+		"classes": want,
+	}
+
+
+## Every class whose composition role is `role` — read from `Classify`, never listed here.
+func _classes_with_role(role: String) -> Array:
+	var out: Array = []
+	for c in GameData.classes:
+		var n := str(c.get("name", ""))
+		if n != "" and Classify.role_of_class(n) == role:
+			out.append(n)
+	return out
+
+
+## THE GAPS THAT WOULD OPEN IF THIS BODY LEFT — the counterfactual, as gap headlines.
+##
+## ⚠️ THIS FUNCTION EXISTS BECAUSE THE FIRST VERSION OF THE MARKET'S RELEASE WARNING WAS DEAD CODE,
+## AND IT WAS DEAD FOR A REASON WORTH WRITING DOWN. It asked `gap_classes()` — "is this body's
+## class one the gap list named?" — which can NEVER be true of a body you already own: every gap
+## above only fires on classes the stable owns NONE of. Authored, typed, rendered, and unreachable
+## by construction: this project's signature failure #2, arriving in the same round that quotes it.
+## The honest question is not "is this class missing" but "would it BE missing without this body",
+## and that needs the counterfactual rather than a lookup.
+##
+## Dropping the only body that can still compete, the only support pick, or the last of the classes
+## that answer the champion is the most expensive mistake this screen can be used to make.
+func gaps_opened_by_releasing(mi) -> Array:
+	if mi == null or not has_node("/root/Career"):
+		return []
+	var now := {}
+	for g in stable_gaps():
+		now[str(g["kind"]) + "|" + str(g["headline"])] = true
+	var out: Array = []
+	for g in stable_gaps(-1, mi):
+		if not now.has(str(g["kind"]) + "|" + str(g["headline"])):
+			out.append(str(g["headline"]))
+	return out
+
+
+## Which named gaps a candidate's CURRENT class would fill — a FACT about the body, never a score.
+## Returns the gap headlines, so a card can say "fills: no support body at all" in the same words
+## the gap panel used. Empty for a body that answers nothing on the list, which is the common case
+## and must render as nothing rather than as a reassurance.
+func gap_classes(mi, gaps: Array) -> Array:
+	if mi == null:
+		return []
+	var cls := str(mi.class_name_)
+	var out: Array = []
+	for g in gaps:
+		var want: Array = g.get("classes", [])
+		if want.has(cls):
+			out.append(str(g["headline"]))
+	return out
+
+
 ## Empties the stable entirely. This is the "real" starting state for a genuine New Career
 ## (docs/CORE_LOOP_PORT.md §1 — `town.ts:newGame()` gives the player `stable: []`, never a
 ## pre-made team) — called from title_ui.gd's New Career handler alongside

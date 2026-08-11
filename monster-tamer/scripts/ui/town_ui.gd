@@ -33,6 +33,10 @@ const UiTheme = preload("res://scripts/ui/theme.gd")
 ## The pace model and the ending screen are the same file on purpose — one definition of par, read
 ## by the hub, the battle report and the ending alike. See `scripts/ui/ending_ui.gd`'s header.
 const Pace = preload("res://scripts/ui/ending_ui.gd")
+## The tick's own life-stage rule. ⚠️ READ, NEVER RESTATED — round 15 shipped a stable screen
+## promising ceilings the tick did not apply, and the fix is always the same one: ask the function
+## that decides rather than writing a second copy of what it decides.
+const WeekLib = preload("res://scripts/week.gd")
 
 const GRID_COLUMNS := 4
 
@@ -47,7 +51,15 @@ const LOCATIONS := [
 	{"icon": "🏗️", "title": "Ranch Shop", "desc": "licences and barn upgrades", "real": true, "scene": "res://scenes/shop.tscn"},
 	{"icon": "🧪", "title": "Lab", "desc": "cryo storage for the bloodline", "real": true, "scene": "res://scenes/lab.tscn"},
 	{"icon": "🐎", "title": "Breeding Ranch", "desc": "raise the next generation", "real": true, "scene": "res://scenes/breeding.tscn"},
-	{"icon": "🏛", "title": "Hall of Fame", "desc": "retired champions, honoured", "real": false},
+	# ⚠️ THIS DOOR SAID `"real": false` — "not yet built" — WHILE THE FEATURE WAS SHIPPED, and it is
+	# `CLAUDE.md`'s named signature failure with the sign flipped. `lab_ui.gd`'s own header states
+	# *"IT IS ALSO THE HALL OF FAME, DELIBERATELY, AND NOT A TROPHY CASE"*: a retired champion is
+	# preserved (its stats, potential and heirloom stay available to every future foal, enshrined
+	# FREE because it can never race again) or released. That IS the hall of fame, and it is a
+	# standing decision rather than a display case. So the door opens on the Lab rather than a
+	# second screen showing the same list — a trophy room next to it would be the duplicate, not
+	# the feature. Renamed with it so the destination is not a surprise.
+	{"icon": "🏛", "title": "Hall of Fame", "desc": "champions enshrined — at the Lab", "real": true, "scene": "res://scenes/lab.tscn"},
 ]
 
 const LOCKED_TOOLTIP := "Not yet built in Godot — the logic still lives in the TypeScript build (docs/META_GAME_DISPOSITION.md §5). Shown so the town reads whole; wired up once it's ported."
@@ -155,18 +167,39 @@ func _build_ui() -> void:
 	if stable_empty:
 		vbox.add_child(_empty_stable_banner())
 
-	# ── location grid — the only region whose content can grow, so it's the scrollable one ─────
-	var grid_scroll := ScrollContainer.new()
-	grid_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	grid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	vbox.add_child(grid_scroll)
+	# ── the body — doors on the left, the stable's own state on the right ──────────────────────
+	# ⚠️ THE BOTTOM 52% OF THIS SCREEN WAS EMPTY BLACK (measured from `02_town.png`, round 18's
+	# before-capture): seven cards, then void. The hub of a management game showed nothing whatever
+	# about the stable it manages — a door menu with a good banner on top. Everything added below
+	# is READ FROM THE LIVE OBJECTS at build time (`Roster.monsters`, `WeekPlan.plan_for`,
+	# `WeekLib.stage_info`, `WeekPlan.rent_for`), never cached and never a second copy of a rule.
+	var body_scroll := ScrollContainer.new()
+	body_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vbox.add_child(body_scroll)
+
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body_scroll.add_child(body)
+
+	var split := HBoxContainer.new()
+	split.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(split)
+
+	var doors_col := VBoxContainer.new()
+	doors_col.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	doors_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	doors_col.size_flags_stretch_ratio = 2.0
+	split.add_child(doors_col)
 
 	var grid := GridContainer.new()
 	grid.columns = GRID_COLUMNS
 	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_MD)
 	grid.add_theme_constant_override("v_separation", UiTheme.SPACE_MD)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid_scroll.add_child(grid)
+	doors_col.add_child(grid)
 
 	loc_buttons.clear()
 	for loc in LOCATIONS:
@@ -175,6 +208,18 @@ func _build_ui() -> void:
 		grid.add_child(card)
 		loc_buttons.append(card)
 	_wire_grid_focus(GRID_COLUMNS)
+
+	var agenda_col := VBoxContainer.new()
+	agenda_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	agenda_col.size_flags_stretch_ratio = 1.0
+	split.add_child(agenda_col)
+	agenda_col.add_child(_agenda_panel())
+
+	# ⚠️ FULL WIDTH, NOT BESIDE THE DOORS. Five condition cards sharing two thirds of the page got
+	# ~148px each and every line inside them wrapped — read off this round's own after-capture. The
+	# strip is a ROW of comparable bodies and its whole value is that they can be read across, so it
+	# gets the width and the doors keep the top.
+	body.add_child(_stable_strip())
 
 	vbox.add_child(HSeparator.new())
 
@@ -497,6 +542,346 @@ func _empty_stable_banner() -> Control:
 	row.add_child(go_btn)
 
 	return panel
+
+
+## ── THE STABLE, ON THE HUB ────────────────────────────────────────────────────────────────────
+## ⚠️ THE LIFE ARC IS THE DRAMA AND IT WAS INVISIBLE. Monster Rancher's whole engine is that your
+## best monster is dying: it is born, peaks, declines and retires and you feel all four. Every
+## field needed to say so already exists on `MonsterInstance` (`age_weeks`, `lifespan_years`,
+## `stamina`, `happiness`) and `week.gd:stage_info` already grades it — and before this round the
+## only screen in the entire game that showed age was the ENDING screen, after the player had
+## stopped playing. This strip is the cheapest possible correction: the roster, as bodies, with
+## the four numbers that decide whether this week's gold goes into them.
+##
+## ⚠️ IT DESCRIBES, IT DOES NOT DECIDE. Stage and training multiplier come from `WeekLib`; plan
+## state comes from `WeekPlan.plan_for()` — the same dictionary `advance()` will actually spend.
+func _stable_strip() -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+
+	var monsters: Array = Roster.monsters if has_node("/root/Roster") else []
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	col.add_child(head)
+	var h := UiTheme.heading("The stable this week", 3)
+	h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(h)
+	var frozen: Array = Roster.frozen if has_node("/root/Roster") else []
+	if not frozen.is_empty():
+		head.add_child(_nowrap(UiTheme.body_text("%d preserved · %dg/week" % [
+			frozen.size(), WeekPlan.rent_for(frozen)], "muted")))
+
+	if monsters.is_empty():
+		col.add_child(UiTheme.body_text("No bodies yet.", "muted"))
+		return panel
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	col.add_child(row)
+	for mi in monsters:
+		row.add_child(_condition_card(mi))
+	return panel
+
+
+## ⚠️ `UiTheme.body_text` TURNS WORD-WRAP ON, WHICH IS WRONG INSIDE ANY HORIZONTAL ROW. A wrapping
+## label reports a minimum width of one character, so it collapses to a vertical strip of single
+## words and takes its neighbours' space with it. It happened three times in this round across
+## three files (here, `shop_ui.gd`'s tables, `lab_ui.gd`'s ledger tiles) and EVERY MECHANICAL CHECK
+## PASSED ON ALL THREE FRAMES — the probe counts controls, not legibility. Only reading the capture
+## caught it. Wrap off for anything that lives in a row or a grid cell.
+func _nowrap(l: Label) -> Label:
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	return l
+
+
+func _condition_card(mi) -> Control:
+	var info: Dictionary = WeekLib.stage_info(mi.age_weeks, mi.lifespan_years)
+	var stage: String = str(info["stage"])
+	# The stage is the story, so it carries the card's colour — and the WORD is always present
+	# beside it (docs/ACCESSIBILITY.md: never encode meaning in hue alone).
+	var tint: Color = UiTheme.TEXT_SECONDARY
+	match stage:
+		# ⚠️ NOT `FOCUS`. That cyan is the keyboard-focus ring and theme.gd's own comment says it is
+		# "never reused for anything else" — the moment a life stage and a mood bar also draw in it,
+		# a focus ring stops being identifiable as one. STATUS_BUFF is the teal the palette keeps
+		# deliberately clear of it, and the stage WORD is always beside the colour anyway.
+		"Baby": tint = UiTheme.STATUS_BUFF
+		"Teen": tint = UiTheme.SAFE
+		"Fully Grown": tint = UiTheme.GOLD
+		"Elder": tint = UiTheme.CAUTION
+		"Retiree": tint = UiTheme.DANGER
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(200, 0)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", tint))
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	panel.add_child(col)
+
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	col.add_child(top)
+	top.add_child(_portrait(mi.species_id, mi.species_name, Vector2(52, 52)))
+
+	var name_col := VBoxContainer.new()
+	name_col.add_theme_constant_override("separation", 0)
+	name_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(name_col)
+	var nm := UiTheme.body_text(mi.species_name, "primary")
+	nm.autowrap_mode = TextServer.AUTOWRAP_OFF
+	nm.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
+	name_col.add_child(nm)
+	name_col.add_child(_nowrap(UiTheme.body_text(mi.class_name_, "muted")))
+
+	# ⚠️ THE AGE, IN THE UNITS THE PLAYER THINKS IN. `x.x of y.y yrs` is the whole life arc in one
+	# string, and the training multiplier beside the stage is WHY it matters this week rather than
+	# some week later — an Elder at ×0.80 is losing value every week it is not spent.
+	var years: float = float(mi.age_weeks) / float(WeekLib.WEEKS_PER_YEAR)
+	var st := _nowrap(UiTheme.body_text("%s  %.1f/%.1fy  train ×%.2f" % [
+		stage, years, mi.lifespan_years, float(info["trainMult"])], "secondary"))
+	st.add_theme_color_override("font_color", tint)
+	col.add_child(st)
+
+	# The two stats this body actually has — the one-line answer to "what is it FOR", and the thing
+	# the class name only gestures at.
+	col.add_child(_nowrap(UiTheme.body_text(_top_stats_line(mi), "secondary")))
+
+	# ⚠️ AUTHORED AND UNREACHED, FIXED HERE. Every monster carries a `favourite_food` and a
+	# `hated_food` (`game_data.gd:_pick_food_prefs`) and `docs/META_UI_DIRECTION.md` §2 slack-point 2
+	# records that NO screen in the game showed either — so the food step has been a chore with a
+	# hidden right answer since it was built. Naming the preference here costs one line and turns
+	# it into a small real choice.
+	if str(mi.favourite_food) != "":
+		col.add_child(_nowrap(UiTheme.body_text("♥ %s" % _food_name(str(mi.favourite_food)), "muted")))
+
+	col.add_child(UiTheme.stat_bar("stam", mi.stamina, WeekLib.MAX_STAMINA,
+		UiTheme.SAFE if mi.stamina > 50.0 else (UiTheme.CAUTION if mi.stamina > 30.0 else UiTheme.DANGER), 34))
+	col.add_child(UiTheme.stat_bar("mood", float(mi.happiness), float(WeekLib.MAX_HAPPINESS), UiTheme.STATUS_BUFF, 34))
+
+	# The plan, in the words the Stable screen uses for it. `chosen` distinguishes "the player
+	# rested it" from "the player has not looked at it" — see `week_plan.gd:set_activity`'s ⚠️.
+	var plan_line := "—"
+	var plan_tier := "muted"
+	if mi.retired:
+		plan_line = "retired — decide at the Lab"
+		plan_tier = "primary"
+	elif has_node("/root/WeekPlan"):
+		var p: Dictionary = WeekPlan.plan_for(mi.id)
+		var act: String = str(p.get("activity", "rest"))
+		if not bool(p.get("chosen", false)):
+			plan_line = "◇ no plan booked"
+			plan_tier = "primary"
+		elif act == "rest":
+			plan_line = "● resting"
+		else:
+			plan_line = "● %s" % str(WeekLib.drill_by_id(act).get("name", act))
+	var pl := _nowrap(UiTheme.body_text(plan_line, plan_tier))
+	if plan_tier == "primary" and not mi.retired:
+		pl.add_theme_color_override("font_color", UiTheme.CAUTION)
+	elif mi.retired:
+		pl.add_theme_color_override("font_color", UiTheme.DANGER)
+	col.add_child(pl)
+	return panel
+
+
+## The two highest stats, named and valued. Read straight off `mi.stats` — six floats, no table.
+func _top_stats_line(mi) -> String:
+	var pairs: Array = []
+	for s in mi.stats.keys():
+		pairs.append([str(s), float(mi.stats[s])])
+	pairs.sort_custom(func(x, y): return float(x[1]) > float(y[1]))
+	if pairs.size() < 2:
+		return ""
+	return "%s %d · %s %d" % [pairs[0][0], int(pairs[0][1]), pairs[1][0], int(pairs[1][1])]
+
+
+## `week.gd:food_by_id` owns the table — never a second copy of it here (the forbidden pattern in
+## `.claude/docs/technical-preferences.md`).
+func _food_name(food_id: String) -> String:
+	return str(WeekLib.food_by_id(food_id).get("name", food_id))
+
+
+## Real portrait if `Art` has one, otherwise the species' initials at the SAME footprint. Local to
+## this file on purpose — `stable_ui.gd`/`market_ui.gd` each carry their own for the same reason
+## (they belong to other workstreams), and a shared one is a refactor, not this round's job.
+func _portrait(species_id: String, species_name: String, size_px: Vector2) -> Control:
+	var tex: Texture2D = Art.creature_texture(species_id)
+	if tex != null:
+		var t := TextureRect.new()
+		t.texture = tex
+		t.custom_minimum_size = size_px
+		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		return t
+	var p := PanelContainer.new()
+	p.custom_minimum_size = size_px
+	p.add_theme_stylebox_override("panel", UiTheme.panel_style("default", accent))
+	var l := Label.new()
+	l.text = species_name.substr(0, 2).to_upper()
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", accent)
+	l.add_theme_font_size_override("font_size", int(size_px.y * 0.35))
+	p.add_child(l)
+	return p
+
+
+## ── WHAT IS WORTH DOING THIS WEEK ─────────────────────────────────────────────────────────────
+## The acceptance bar for this screen is: *from the town, a player can name the single best thing
+## to do this week.* A row of doors cannot answer that — it lists where you may go, never what is
+## waiting there. So every prompt below is DERIVED FROM LIVE STATE and ranked, the top one gets
+## the button, and when nothing is wrong the panel says so rather than inventing urgency.
+##
+## ⚠️ NOTHING HERE MAY BE A GUESS. Each rule reads the same object the acting screen reads, so a
+## prompt that says "3 have no plan" is counting the exact dictionaries `WeekPlan.advance()` will
+## spend. A hub that nags about a state the destination screen disagrees with is the round-13
+## scoreboard again.
+func _agenda_panel() -> Control:
+	var panel := PanelContainer.new()
+	var items: Array = _agenda_items()
+	var top_tint: Color = items[0]["tint"] if not items.is_empty() else UiTheme.BORDER
+	var sb := UiTheme.panel_style("raised", top_tint)
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+	col.add_child(UiTheme.heading("This week", 3))
+	col.add_child(UiTheme.body_text(_calendar_line(), "muted"))
+	col.add_child(HSeparator.new())
+
+	for i in range(items.size()):
+		var it: Dictionary = items[i]
+		var line := UiTheme.body_text(("➤ " if i == 0 else "· ") + str(it["text"]),
+			"primary" if i == 0 else "secondary")
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		if i == 0:
+			line.add_theme_color_override("font_color", it["tint"])
+		col.add_child(line)
+		# Only the top prompt gets a button. Five buttons is a second navigation grid, and the
+		# panel's job is to RANK, not to duplicate the doors two columns to its left.
+		if i == 0 and str(it.get("scene", "")) != "":
+			var b := Button.new()
+			b.text = str(it["action"])
+			b.custom_minimum_size = Vector2(0, 34)
+			b.focus_mode = Control.FOCUS_ALL
+			for state in ["normal", "hover", "pressed", "disabled"]:
+				b.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
+			b.add_theme_stylebox_override("focus", UiTheme.button_stylebox("primary", "focus"))
+			var target: String = str(it["scene"])
+			b.pressed.connect(func(): get_tree().change_scene_to_file(target))
+			col.add_child(b)
+
+	col.add_child(HSeparator.new())
+	col.add_child(UiTheme.body_text(_purse_line(), "secondary"))
+	return panel
+
+
+## The game-year clock `cup_run.gd` already keeps — 13 months of 4 weeks — plus the marquee if one
+## falls in this month at or below the player's rung. ⚠️ ASKED, NOT RECOMPUTED: `CupRun.is_marquee`
+## and `CupRun.marquee_name` are the same calls the tournament screen and the purse multiplier use,
+## so the hub cannot advertise an event the cup screen does not run.
+func _calendar_line() -> String:
+	if not has_node("/root/CupRun") or not has_node("/root/Career"):
+		return ""
+	var wpm: int = CupRun.WEEKS_PER_MONTH
+	var mpy: int = CupRun.MONTHS_PER_YEAR
+	var year: int = int(Career.week) / (wpm * mpy) + 1
+	var month: int = (int(Career.week) % (wpm * mpy)) / wpm + 1
+	var out := "Year %d, month %d of %d" % [year, month, mpy]
+	for i in range(Career.league_index + 1):
+		if CupRun.is_marquee(i):
+			out += "  ·  ★ %s is on" % CupRun.marquee_name(i)
+			break
+	return out
+
+
+func _purse_line() -> String:
+	var gold: int = Career.gold if has_node("/root/Career") else 0
+	var bill: int = 0
+	if has_node("/root/WeekPlan") and has_node("/root/Roster"):
+		bill = WeekPlan.rent_for(Roster.frozen)
+	var planned: Dictionary = {}
+	if has_node("/root/WeekPlan") and has_node("/root/Roster"):
+		planned = WeekPlan.projected_cost(Roster.monsters)
+	var food: int = int(planned.get("gold", 0))
+	return "%dg in hand · this week costs %dg food + %dg freezer" % [gold, food, bill]
+
+
+func _agenda_items() -> Array:
+	var out: Array = []
+	if not has_node("/root/Roster") or not has_node("/root/Career"):
+		return out
+	var monsters: Array = Roster.monsters
+
+	if monsters.is_empty():
+		out.append({"text": "The stable is empty. Nothing else can happen until there is a body in it.",
+			"action": "Go to the Market →", "scene": "res://scenes/market.tscn", "tint": UiTheme.GOLD})
+		return out
+
+	# 1 — a retiree is the loudest thing in the game: it holds a barn slot and can never race again.
+	var retirees: Array = Roster.retirees_in_barn()
+	if not retirees.is_empty():
+		out.append({"text": "%s has retired. It holds a barn slot and can never race again — enshrine it free at the Lab to keep its line, or release it." % retirees[0].species_name,
+			"action": "Go to the Lab →", "scene": "res://scenes/lab.tscn", "tint": UiTheme.DANGER})
+
+	# 2 — an unbooked week is a week spent for nothing. `chosen` is what tells "rested on purpose"
+	# from "never looked at", which is exactly why `week_plan.gd` carries that flag.
+	var unplanned := 0
+	for mi in monsters:
+		if mi.retired:
+			continue
+		if not bool(WeekPlan.plan_for(mi.id).get("chosen", false)):
+			unplanned += 1
+	if unplanned > 0:
+		out.append({"text": "%d of %d have no plan booked. End the week now and they rest for free and train nothing." % [
+			unplanned, monsters.size()],
+			"action": "Go to the Stable →", "scene": "res://scenes/stable.tscn", "tint": UiTheme.CAUTION})
+
+	# 3 — training below 30 stamina rolls at HALF (`week.gd:stamina_malus`). Read, not restated.
+	var tired: Array = []
+	for mi in monsters:
+		if not mi.retired and mi.stamina <= 30.0:
+			tired.append(mi.species_name)
+	if not tired.is_empty():
+		out.append({"text": "%s below 30 stamina — every drill rolls at ×%.2f until they rest." % [
+			", ".join(PackedStringArray(tired)), WeekLib.stamina_malus(0.0)],
+			"action": "Go to the Stable →", "scene": "res://scenes/stable.tscn", "tint": UiTheme.CAUTION})
+
+	# 4 — cannot field the league you have reached. `entry_block_reason` is the tournament screen's
+	# own gate, so this cannot promise an entry the cup screen refuses.
+	var need: int = Career.current_team_size()
+	var block: String = Roster.entry_block_reason(need)
+	if block != "":
+		out.append({"text": block,
+			"action": "Go to the Market →", "scene": "res://scenes/market.tscn", "tint": UiTheme.CAUTION})
+
+	# 5 — the marquee is the only 1.75x purse in the game and it is on for one month a year.
+	if has_node("/root/CupRun"):
+		for i in range(Career.league_index + 1):
+			if CupRun.is_marquee(i):
+				out.append({"text": "★ %s is on this month — a deeper field, and ×%.2f the purse. It will not come round again this year." % [
+					CupRun.marquee_name(i), CupRun.MARQUEE_PURSE_MULT],
+					"action": "Go to the Tournament →", "scene": "res://scenes/tournament.tscn",
+					"tint": UiTheme.GOLD})
+				break
+
+	# 6 — a full barn is what blocks breeding, succession and the bench all at once (`shop_ui.gd`'s
+	# long ⚠️). Only worth saying when the gold to fix it is actually in hand.
+	if monsters.size() >= Career.barn_capacity:
+		out.append({"text": "The barn is full at %d. No foal, no fusion and no recruit can land until there is a stall for it." % Career.barn_capacity,
+			"action": "Go to the Shop →", "scene": "res://scenes/shop.tscn", "tint": UiTheme.TEXT_SECONDARY})
+
+	if out.is_empty():
+		out.append({"text": "Nothing is urgent. Every body is planned, rested and housed — this is the week to spend on the ladder.",
+			"action": "Go to the Tournament →", "scene": "res://scenes/tournament.tscn", "tint": UiTheme.SAFE})
+	return out
 
 
 ## `forced_disabled`/`forced_reason` let a location that IS built (e.g. Tournament) be temporarily

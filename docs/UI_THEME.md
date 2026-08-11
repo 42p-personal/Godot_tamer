@@ -11,6 +11,41 @@ the look again. This file is the fix — call the builder instead of inventing a
 
 ---
 
+## 0. Where adoption actually stands (measured 2026-08-11)
+
+⚠️ **THE THEME SHIPPED AND THEN HALF THE SCREENS NEVER CALLED IT.** Not a design failure — an
+adoption one, and it is measurable.
+
+| screens | `UiTheme` references | `StyleBoxFlat.new()` |
+|---|---|---|
+| stable · town · ending · tournament · breeding · lab · training · feeding · shop | 18–82 each | 0–3 |
+| **`tactics_ui` · `report_ui` · `market_ui` · `title_ui` · `sandbox_ui` · `battle_ui` · `arena_view`** | ⚠️ **0** | 0–7 |
+
+`report_ui.gd` is **1,555 lines** and `tactics_ui.gd` **684** — the two screens carrying the
+scouting read and the post-fight verdict, the two places the game's whole "preparation is the
+skill, observation is the reward" promise is cashed, are the two that never adopted the house
+style. Between them and `market_ui` they carry **62 distinct inline `Color(...)` literals**,
+where the theme defines 15, and **font sizes 10/11/12/13/15/24/26/30/34** where the theme hands
+out 14/16/18/22/32.
+
+`scripts/_probe_house.gd` measures this at runtime across all thirteen screens; its first-run
+numbers and the per-screen table are in `docs/UI_LAYOUT_RULES.md` §3. **111 labels are painted in
+one of 29 invented colours** and **118 labels sit below 14px**.
+
+⚠️ **THE COLOURS ARE NEAR-DUPLICATES, NOT A RIVAL PALETTE.** Six greys within Δ0.15 of
+`TEXT_SECONDARY`/`TEXT_MUTED`; four ambers within Δ0.28 of `GOLD`. Nobody chose a second look —
+five authors each reached for "a grey" without a shared one to reach for. That is the exact
+failure §5's before/after describes, still live.
+
+⚠️ **AND ONE CASE WHERE THE THEME IS BEING USED AGAINST ITSELF.** `town_ui.gd:644` fills a mood
+bar with `UiTheme.FOCUS`, whose own comment reads *"never reused for anything else"* — a focus
+ring drawn next to it is no longer the only cyan on the screen. `town_ui.gd:83` also derives the
+hub's whole chrome accent from `Art.team_colour(0)`, which is the league/team/status collision
+`docs/ART_THEME.md` forbids: the town's colour is currently decided by an unrelated system.
+Both are in files this stream does not own — flagged for the integrator, not fixed here.
+
+---
+
 ## 1. Adopt it in three lines
 
 ```gdscript
@@ -122,6 +157,56 @@ LG 10`.
 
 ---
 
+## 4b. The shared components (added 2026-08-11) — sections 9–14 of the gallery
+
+⚠️ **THIS SECTION EXISTS BECAUSE FILE OWNERSHIP MANUFACTURED THE DUPLICATION, AND THE CODE SAYS
+SO IN ITS OWN COMMENTS.** `market_ui.gd:445` carries the line: *"duplicated from `stable_ui.gd`'s
+`_portrait` rather than shared, since that file is out of this stream's scope to edit or
+refactor."* There are **five** independent `_portrait` implementations in `scripts/ui/` (stable,
+market, report, tactics, ending) with **three different signatures**, and **seven** screens that
+name a monster while showing no portrait at all. Every one of those authors was right about the
+ownership rule; what was missing was a shared place to put it.
+
+⚠️ **THE HARD RULE FOR ALL OF THEM: A COMPONENT RENDERS, IT NEVER DERIVES.** Nothing in §8 of
+`theme.gd` reads `Career`, `Roster`, `WeekLib` or a `MonsterInstance`. Callers pass values they
+have already read from the system that owns them. This is the structural form of the project's
+rule (1) — *a screen must not lie about the thing it describes*: a second copy of the week's
+maths cannot grow in a file that cannot see the week. The only exception is `Art` (portraits),
+which is an asset lookup, not a rule.
+
+| call | what it is for | the failure it makes unrepeatable |
+|---|---|---|
+| `portrait(species_id, name, size, accent)` | one creature portrait, with the accent-tinted initials placeholder at the SAME footprint | five copies with three signatures; layout jumping when art lands mid-session |
+| `monster_card(info, opts)` | THE "here is a monster" shape — portrait · name · subtitle · state note · chips · trailing slot | seven screens naming a monster with no portrait, while 65 real portraits ship |
+| `stat_bar(label, value, ceiling, fill, label_w, hard_max)` | ⚠️ **now draws a CAP MARKER** — fill, a tick at this monster's ceiling, and the unreachable scale as a dead band | one bar showing one "max" while another screen shows a different, equally true "max" |
+| `delta_chip(amount, unit, good_is_up, decimals)` | "what changed" — `▲ +9 STR`, `▼ −15 stamina`, `• no change` | a week that resolved and left no trace on screen |
+| `comparison_row(label, left, right, verdict, winner)` | "which of these two", with the difference SPELLED OUT | five breeding rows all reading `potential ×1.00 · Wild stock — Gen 1` |
+| `empty_state(title, body, action)` + `empty_state_button()` | what a region says when it holds nothing | the town at 52% empty black, indistinguishable from a screen that failed to load |
+| `disable_with_reason(btn, reason, in_label)` / `enable_control(btn)` | the only sanctioned way to disable a control | UI_LAYOUT_RULES R3 as prose nobody could enforce |
+| `commit_bar(summary, action)` + `commit_bar_button/_summary/_set()` | the pinned commitment footer, a SIBLING of the scroll | no commit button findable on the tactics screen at 1152×648 |
+| `TOKEN_FONT_SIZES` / `TOKEN_TEXT_COLOURS` / `is_token_colour()` | the published token sets `_probe_house.gd` checks against | a guard keeping its own copy of the truth and drifting from it |
+
+### The cap marker, specifically
+
+⚠️ **A ProgressBar HAS ONE QUANTITY; A TRAINED STAT HAS THREE.** Where it is, where *this*
+monster can get to, and how wide the scale runs. `stat_bar()` now draws all three: fill, a
+full-height tick at `ceiling`, and everything past it as a visibly dead band.
+
+⚠️ **AND A CORRECTION TO WHAT THIS WAS BUILT FOR.** Round 18 reported the stable reading
+`115 / 540` and training reading `115 / 400` for the same stat in the same week, and read it as
+two copies of the maths. It is not — `stable_ui.gd:626` and `training_ui.gd:215` both call
+`WeekLib.stat_ceiling(m, Career.current_stat_cap(), stat)`, identical inputs, identical function.
+The contradiction is between the flat **league cap** in a header and the **per-monster ceiling**
+on a bar, both of which are true and both of which the UI called "ceiling". That is a labelling
+failure, not a duplication one — and it is why the fix is a bar that shows both at once rather
+than a hunt for a second implementation. **Callers must still read `ceiling` from the system that
+owns it; passing a league cap because it was easier to reach is the bug, dressed differently.**
+
+Existing two-argument callers (`stable_ui`, `training_ui`, `town_ui`) are unchanged: with
+`hard_max` unset there is no dead band and no tick, exactly as before.
+
+---
+
 ## 5. Two concrete accessibility fixes this unlocks
 
 1. **`arena_3d.gd`'s HP bar is colour-only today** (`docs/ACCESSIBILITY.md` finding #2, the
@@ -154,10 +239,19 @@ one-line swaps for whichever stream owns `arena_3d.gd` to make.
   `docs/ART_THEME.md` §3 calls for. The grouping/shape/colour *logic* is correct and ready;
   swapping in real linework later needs no call-site changes.
 - **No colourblind-simulator pass on the new status hues** — see §3 above.
-- **No execution/screenshot verification this session** — no Godot run, no `game_screenshot`,
-  no `run_contract.sh` were available in this session's toolset. Everything here is built and
-  hand-reviewed but not run. Run `theme_gallery.tscn` and `run_contract.sh` before trusting this
-  in a shipped scene.
+- ~~**No execution/screenshot verification this session**~~ — ✅ **CLEARED 2026-08-11.** The
+  gallery was run in a real window at 1152×648, all fourteen sections captured to
+  `user://house/gallery_NN.png` and read back; `./run_contract.sh` PASSES. Two defects were found
+  *in the captures* and fixed there: a trailing slot on `monster_card` that wrapped over three
+  lines and slid off the card edge (`body_text` sets `AUTOWRAP_WORD`, right for a paragraph and
+  wrong for a price), and a `delta_chip` whose `good_is_up` semantics were documented backwards.
+  Neither was findable by reading the code.
+- **The un-adopted screens are still un-adopted** — §0. The components exist; `report_ui`,
+  `tactics_ui` and `market_ui` do not yet call them, and that conversion is not this stream's to
+  make. The measurable target is `_probe_house.gd`'s last two columns reaching zero.
+- **`TutorialOverlay` overlaps the bottom action rail**, including in the theme gallery's own
+  capture, where it covered the commit bar's button. Independently reproduced here; it is a
+  tutorial-layer fix, not a theme one.
 
 ---
 
@@ -170,3 +264,11 @@ one-line swaps for whichever stream owns `arena_3d.gd` to make.
 - Don't add a new status without an entry in `UiTheme.STATUS_META` — an unlisted status falls
   back to the utility/grey family, which is a silent downgrade, not a crash, so it's easy to
   miss.
+- **Don't hand-roll a portrait, a monster row, a stat bar, an empty region or a commit footer** —
+  §4b. Five `_portrait`s is the evidence that "I'll just do it locally" compounds.
+- **Don't write `btn.disabled = true`.** Use `disable_with_reason()`; the reason is a required
+  argument precisely so it cannot be forgotten.
+- **Don't widen `TOKEN_FONT_SIZES` or `TOKEN_TEXT_COLOURS` to quiet the probe.** That is deleting
+  the measurement, not passing it.
+- **Don't let a component derive a game number.** Pass what you read from the system that owns
+  it. `theme.gd` cannot see `Career`/`Roster`/`WeekLib` and that is deliberate.

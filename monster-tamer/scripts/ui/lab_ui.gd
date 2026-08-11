@@ -306,11 +306,7 @@ func _refresh() -> void:
 	if _fuse_a != null and not frozen.has(_fuse_a): _fuse_a = null
 	if _fuse_b != null and not frozen.has(_fuse_b): _fuse_b = null
 
-	_box.add_child(UiTheme.body_text(
-		"Preserving takes a monster out of the barn without losing it. It stops ageing and cannot train, compete or be fed — but it becomes BREEDING STOCK, and it is the only thing that is.
-
-THE BILL IS FOR THE OPTION, NOT THE STORAGE. Preserve a monster that could still be racing and the freezer charges %dg every week, forever — you are paying to keep it young and thawable. Preserve one that has RETIRED and it is enshrined free: it can never race again, so there is nothing left to pay for. Waiting costs you the years you could have bred from a monster still climbing." % _rent(),
-		"secondary"))
+	_box.add_child(_ledger_card(frozen, rent, free_count))
 
 	var retirees: Array = Roster.retirees_in_barn()
 	if not retirees.is_empty():
@@ -336,6 +332,126 @@ THE BILL IS FOR THE OPTION, NOT THE STORAGE. Preserve a monster that could still
 	_box.add_child(_fusion_bench())
 
 
+## ── THE BILL AS A NUMBER, THE REASONING BEHIND A DISCLOSURE ───────────────────────────────────
+## ⚠️ THIS SCREEN OPENED WITH TWO PARAGRAPHS OF 11px JUSTIFICATION BEFORE ANY CONTROL, on the
+## screen its own header calls *"the decision at the centre of the meta-game"*. Measured from
+## round 18's before-capture: the first interactive thing on the page sat below the halfway line,
+## under an essay. The rules in that essay are load-bearing and hard-won — they are NOT deleted,
+## they are moved behind `Rules ▸`, and the top of the screen now states the trade the way a
+## ledger states it: what is on the bill, what it costs a week, what it buys.
+##
+## ⚠️ EVERY FIGURE HERE COMES FROM `week_plan.gd:rent_for`, WHICH IS WHAT ACTUALLY BILLS. The
+## previous version of this file hand-copied `RENTAL_PER_FROZEN` and its own comment admitted the
+## screen would be the one lying if the two ever disagreed. Do not reintroduce a second copy.
+var _show_rules := false
+
+func _ledger_card(frozen: Array, rent: int, free_count: int) -> Control:
+	var panel := PanelContainer.new()
+	var sb := UiTheme.panel_style("raised", UiTheme.GOLD)
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_XXL)
+	col.add_child(row)
+	row.add_child(_ledger_tile("on the bill", "%d" % (frozen.size() - free_count),
+		"paying %dg/week each" % _rent(), UiTheme.CAUTION))
+	row.add_child(_ledger_tile("enshrined free", "%d" % free_count,
+		"retired — nothing left to pay for", UiTheme.SAFE))
+	row.add_child(_ledger_tile("this week", "%dg" % rent,
+		"of %dg in hand" % Career.gold, UiTheme.GOLD if rent <= Career.gold else UiTheme.DANGER))
+	row.add_child(_ledger_tile("breeding stock", "%d" % frozen.size(),
+		"a pairing needs 2", UiTheme.STATUS_BUFF if frozen.size() >= 2 else UiTheme.TEXT_MUTED))
+
+	var toggle := Button.new()
+	toggle.text = ("Rules ▾  what preserving does, and why it is billed" if _show_rules
+		else "Rules ▸  what preserving does, and why it is billed")
+	toggle.focus_mode = Control.FOCUS_ALL
+	toggle.custom_minimum_size = Vector2(0, 30)
+	toggle.pressed.connect(func(): _show_rules = not _show_rules; _refresh())
+	col.add_child(toggle)
+
+	if _show_rules:
+		var body := UiTheme.body_text(
+			"Preserving takes a monster out of the barn without losing it. It stops ageing and cannot train, compete or be fed — but it becomes BREEDING STOCK, and it is the only thing that is.
+
+THE BILL IS FOR THE OPTION, NOT THE STORAGE. Preserve a monster that could still be racing and the freezer charges %dg every week, forever — you are paying to keep it young and thawable. Preserve one that has RETIRED and it is enshrined free: it can never race again, so there is nothing left to pay for. Waiting costs you the years you could have bred from a monster still climbing." % _rent(),
+			"secondary")
+		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(body)
+	return panel
+
+
+## ⚠️ AUTOWRAP OFF, AND THAT IS NOT COSMETIC. `UiTheme.body_text` turns word-wrap ON, which is
+## right for a paragraph and wrong for a tile: four wrapping labels inside an `HBoxContainer` each
+## report a minimum width of one character, so the row collapsed and the four tiles overprinted
+## each other into an unreadable column (caught in this round's own after-capture, not by a probe —
+## every mechanical check passed on that frame). A fixed floor plus EXPAND_FILL is the fix.
+func _ledger_tile(label: String, value: String, note: String, tint: Color) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.custom_minimum_size = Vector2(210, 0)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var l := UiTheme.body_text(label, "muted")
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	col.add_child(l)
+	var v := Label.new()
+	v.text = value
+	v.add_theme_font_size_override("font_size", UiTheme.SIZE_HEADING)
+	v.add_theme_color_override("font_color", tint)
+	col.add_child(v)
+	var n := UiTheme.body_text(note, "secondary")
+	n.autowrap_mode = TextServer.AUTOWRAP_OFF
+	n.clip_text = true
+	col.add_child(n)
+	return col
+
+
+## Portrait, or the species' initials at the same footprint. See the ⚠️ on `breeding_ui.gd`'s copy:
+## three screens rendered sixty-five species of finished art as nothing at all.
+func _portrait(species_id: String, species_name: String, size_px: Vector2) -> Control:
+	var tex: Texture2D = Art.creature_texture(species_id)
+	if tex != null:
+		var t := TextureRect.new()
+		t.texture = tex
+		t.custom_minimum_size = size_px
+		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		return t
+	var p := PanelContainer.new()
+	p.custom_minimum_size = size_px
+	p.add_theme_stylebox_override("panel", UiTheme.panel_style("default", UiTheme.GOLD))
+	var l := Label.new()
+	l.text = species_name.substr(0, 2).to_upper()
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", UiTheme.GOLD)
+	l.add_theme_font_size_override("font_size", int(size_px.y * 0.35))
+	p.add_child(l)
+	return p
+
+
+func _stats_line(mi) -> String:
+	var bits: Array = []
+	for s in STATS:
+		bits.append("%s %d" % [s, int(float(mi.stats.get(s, 0.0)))])
+	return " · ".join(PackedStringArray(bits))
+
+
+## ⚠️ THE LEFT-HAND SIDE OF THE TRADE, WHICH THE SCREEN NEVER SHOWED. Preserving costs *racing
+## years surrendered*; every row offered the bill and none of them offered the loss. A retiree has
+## zero left, which is the whole reason it is enshrined free rather than a discount.
+func _age_line(mi) -> String:
+	var info: Dictionary = WeekLib.stage_info(mi.age_weeks, mi.lifespan_years)
+	var left: float = maxf(0.0, mi.lifespan_years - float(mi.age_weeks) / float(WeekLib.WEEKS_PER_YEAR))
+	return "%s · %.1f of %.1f yrs · %.1f racing years left" % [
+		str(info["stage"]), float(mi.age_weeks) / float(WeekLib.WEEKS_PER_YEAR),
+		mi.lifespan_years, left]
+
+
 func _kit_line(mi) -> String:
 	var names: Array = []
 	for m in mi.moveset:
@@ -346,13 +462,19 @@ func _kit_line(mi) -> String:
 func _barn_row(mi) -> Control:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	panel.add_child(outer)
+	outer.add_child(_portrait(mi.species_id, mi.species_name, Vector2(72, 72)))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
-	panel.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(col)
 
 	col.add_child(UiTheme.heading("%s — %s · potential ×%.2f%s" % [
 		mi.species_name, mi.class_name_, mi.potential, " · RETIRED" if mi.retired else ""], 3))
-	col.add_child(UiTheme.body_text(mi.lineage_label(), "muted"))
+	col.add_child(UiTheme.body_text(_stats_line(mi), "primary"))
+	col.add_child(UiTheme.body_text("%s · %s" % [_age_line(mi), mi.lineage_label()], "secondary"))
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
@@ -394,13 +516,19 @@ func _barn_row(mi) -> Control:
 func _frozen_row(mi) -> Control:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.GOLD))
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	panel.add_child(outer)
+	outer.add_child(_portrait(mi.species_id, mi.species_name, Vector2(72, 72)))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
-	panel.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(col)
 
 	col.add_child(UiTheme.heading("%s — %s · potential ×%.2f%s" % [
 		mi.species_name, mi.class_name_, mi.potential,
 		" · enshrined" if mi.retired else ""], 3))
+	col.add_child(UiTheme.body_text(_stats_line(mi), "primary"))
 	col.add_child(UiTheme.body_text("%s · %d of 2 matings used" % [
 		mi.lineage_label(), int(mi.get_meta("children", 0))], "secondary"))
 	col.add_child(UiTheme.body_text(_kit_line(mi), "muted"))

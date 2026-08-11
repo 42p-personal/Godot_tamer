@@ -311,14 +311,24 @@ func _make_card(m, index: int) -> PanelContainer:
 	class_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	col.add_child(class_lbl)
 
-	# The "plan status at a glance" tell React's RanchView had — adapted honestly: this build has
-	# no weekly plan to show (docs/META_GAME_DISPOSITION.md §1, the tick isn't ported), so the
-	# real state shown instead is whether this monster still has room to grow at all this league.
+	# The "plan status at a glance" tell React's RanchView had. ⚠️ THE COMMENT THAT USED TO BE HERE
+	# SAID THE TICK WASN'T PORTED AND THAT HAS BEEN FALSE SINCE `week.gd`/`week_plan.gd` LANDED —
+	# so the card fell back to "does it still have room to grow", which printed `● Growing` on all
+	# five monsters at once and told the player nothing (docs/META_UI_DIRECTION.md §A4). The chip
+	# now carries the two things that actually differ between five bodies in one week: where each
+	# is on its life arc, and whether its week is booked.
 	var chip := Label.new()
 	chip.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	col.add_child(chip)
 	card_chip_labels.append(chip)
 	_set_chip_text(chip, m)
+
+	var cond := Label.new()
+	cond.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	cond.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+	cond.text = "stamina %d · heart %d/%d" % [
+		int(round(m.stamina)), m.happiness, WeekLib.MAX_HAPPINESS]
+	col.add_child(cond)
 
 	return panel
 
@@ -336,13 +346,27 @@ func _has_room(m) -> bool:
 	return false
 
 
+## ⚠️ THE AT-A-GLANCE LINE MUST ACTUALLY DISTINGUISH. Five monsters aged 1 to 7 years all read
+## `● Growing` before this, because "has room to grow" is true for essentially every mid-career
+## body. Stage + age + plan differ per monster by construction, so they are what the strip carries;
+## "at cap" survives as an override because a body with nowhere left to train is the one state that
+## outranks everything else on this line.
 func _set_chip_text(chip: Label, m) -> void:
-	if _has_room(m):
-		chip.text = "● Growing"
-		chip.add_theme_color_override("font_color", UiTheme.SAFE)
-	else:
-		chip.text = "● At cap"
+	var info: Dictionary = WeekLib.stage_info(m.age_weeks, m.lifespan_years)
+	var stage: String = str(info.get("stage", "?"))
+	var left: int = _weeks_left(m)
+	var years: float = float(m.age_weeks) / float(WeekLib.WEEKS_PER_YEAR)
+	var planned: bool = has_node("/root/WeekPlan") and WeekPlan.is_planned(m.id)
+	var plan_mark: String = "booked" if planned else "NO PLAN"
+	if not _has_room(m):
+		chip.text = "● At cap · %.1fy · %s" % [years, plan_mark]
 		chip.add_theme_color_override("font_color", UiTheme.GOLD)
+		chip.tooltip_text = "Every stat is at this body's ceiling — win promotion to raise it."
+		return
+	chip.text = "● %s · %.1fy · %s" % [stage, years, plan_mark]
+	chip.add_theme_color_override("font_color", _arc_color(stage, left))
+	chip.tooltip_text = "%d weeks of trainable career left. Training multiplier ×%.2f." % [
+		left, float(info.get("trainMult", 1.0))]
 
 
 func _update_card_chip(index: int) -> void:
@@ -409,11 +433,39 @@ func _refresh_detail() -> void:
 
 	detail_box.add_child(HSeparator.new())
 
-	# ── the bestiary story — the long-form lore, same text as docs/BESTIARY.md ────────────────
-	detail_box.add_child(UiTheme.heading("Story", 2))
-	var bio := UiTheme.body_text(GameData.bio_for(m.species_id), "secondary")
-	bio.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	detail_box.add_child(bio)
+	# ── CONDITION, THEN STATS, ABOVE EVERYTHING ELSE ──────────────────────────────────────────
+	# ⚠️ THIS ORDER IS THE FIX, AND THE OLD ORDER WAS THE BUG (docs/META_UI_DIRECTION.md §A1).
+	# `Story` — four lines of bestiary lore — used to sit directly under the portrait, with the six
+	# stat bars pushed below Temperament and the whole Class panel. Measured at 1152×648: **not one
+	# stat bar was visible without scrolling.** The primary readout of a monster-taming game was
+	# below the fold and a biography was above it. Monster Rancher's stable screen is a CONDITION
+	# READOUT; this had become a species encyclopaedia with a monster attached.
+	#
+	# The lore is not deleted — it is the reason the 65 species have identity and it is genuinely
+	# good writing. It is simply no longer the first thing you read about a body you are deciding
+	# whether to spend a week on. It now sits at the bottom, with the moveset and the innates.
+	detail_box.add_child(_condition_section(m))
+
+	detail_box.add_child(HSeparator.new())
+
+	detail_box.add_child(UiTheme.heading("Stats", 2))
+	# ⚠️ ONE CEILING, AND SAY WHICH IS WHICH (docs/META_UI_DIRECTION.md §A3). This screen read
+	# `115 / 540` while the Training screen read `115 / 400` for the same stat in the same week —
+	# both defensible, which is exactly why it was a lie. The number both screens now draw against
+	# is `week.gd:stat_ceiling`, because that is the one the TICK clamps to and the one
+	# `WeekPlan.drill_note` gates the Book button on. The flat league cap is still shown, named as
+	# what it is: the rung's number, which promotion moves.
+	var _cap_now := GameData.stat_cap()
+	var _ceil_now := WeekLib.stat_ceiling(m, _cap_now, str(Classify.STATS[0]))
+	if _ceil_now > _cap_now + 0.5:
+		detail_box.add_child(UiTheme.body_text(
+			"%s cap %d. Bars read against %d — this body may push one stat that far by leaving the room unspent elsewhere." % [
+				_league_name(), int(round(_cap_now)), int(round(_ceil_now))], "muted"))
+	else:
+		detail_box.add_child(UiTheme.body_text(
+			"%s cap %d — win promotion to raise it." % [_league_name(), int(round(_cap_now))], "muted"))
+	for stat in Classify.STATS:
+		detail_box.add_child(_stat_row(m, stat))
 
 	detail_box.add_child(HSeparator.new())
 
@@ -427,13 +479,15 @@ func _refresh_detail() -> void:
 	detail_box.add_child(_class_commitment_section(m))
 
 	detail_box.add_child(HSeparator.new())
-
-	detail_box.add_child(UiTheme.heading("Stats", 2))
-	for stat in Classify.STATS:
-		detail_box.add_child(_stat_row(m, stat))
+	detail_box.add_child(_training_preview_section(m))
 
 	detail_box.add_child(HSeparator.new())
-	detail_box.add_child(_training_preview_section(m))
+
+	# ── the bestiary story — the long-form lore, same text as docs/BESTIARY.md ────────────────
+	detail_box.add_child(UiTheme.heading("Story", 2))
+	var bio := UiTheme.body_text(GameData.bio_for(m.species_id), "secondary")
+	bio.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	detail_box.add_child(bio)
 
 	detail_box.add_child(HSeparator.new())
 	detail_box.add_child(UiTheme.heading("Moveset (%d known)" % m.moveset.size(), 2))
@@ -447,6 +501,120 @@ func _refresh_detail() -> void:
 		detail_box.add_child(UiTheme.heading("Innate traits", 2))
 		for inn in m.innate:
 			detail_box.add_child(UiTheme.body_text("  %s — %s" % [inn["name"], inn["desc"]], "secondary"))
+
+
+# =============================================================================
+# THE LIFE ARC — born, peaks, declines, retires.
+#
+# ⚠️ THE DRAMA OF THE WHOLE STABLE HALF WAS INVISIBLE UNTIL THIS EXISTED. `stage_info` has always
+# known which of five stages a body is in and how hard that stage multiplies its training
+# (Baby ×0.50 · Teen ×1.35 · Fully Grown ×1.15 · Elder ×0.80 · Retiree ×0.00), and
+# `docs/META_UI_DIRECTION.md` measured that **no screen in the game showed any of it except the
+# ending screen** — the roster strip printed `● Growing` five times for five monsters aged 1 to 7.
+# Monster Rancher's engine is that your best monster is always dying; a game that hides the clock
+# has no breeding half, because nothing makes the player want an heir.
+#
+# ⚠️ AND IT IS READ FROM `week.gd:stage_info`, NEVER RE-DERIVED. A second age→stage table on a
+# screen is exactly the `INTENSIVE_PAIR` failure at the top of this file, and the stage multiplier
+# is one of the terms the tick multiplies a drill by — a screen that disagreed with it would be
+# mis-stating the training week's single largest modifier.
+# =============================================================================
+
+## Weeks of trainable career left. Floors at 0 rather than going negative for a Retiree.
+func _weeks_left(m) -> int:
+	var span_weeks: int = int(round(float(m.lifespan_years) * float(WeekLib.WEEKS_PER_YEAR)))
+	return maxi(0, span_weeks - int(m.age_weeks))
+
+
+## One line of condition, at a glance: how far through its life, what that costs it, how tired and
+## how happy it is, and whether the week is booked. This is the readout Monster Rancher opens with.
+func _condition_section(m) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+
+	var info: Dictionary = WeekLib.stage_info(m.age_weeks, m.lifespan_years)
+	var stage: String = str(info.get("stage", "?"))
+	var left: int = _weeks_left(m)
+	var years: float = float(m.age_weeks) / float(WeekLib.WEEKS_PER_YEAR)
+
+	var arc := UiTheme.body_text("%s — %.1f of %.1f years · training ×%.2f · %d weeks of career left" % [
+		stage, years, float(m.lifespan_years), float(info.get("trainMult", 1.0)), left], "primary")
+	arc.add_theme_color_override("font_color", _arc_color(stage, left))
+	box.add_child(arc)
+
+	# The one sentence that tells the player what to DO about the stage they are in. Every stage
+	# has a different correct answer and none of them were stated anywhere in the game.
+	box.add_child(UiTheme.body_text(_arc_advice(stage, left), "muted"))
+
+	var bars := HBoxContainer.new()
+	bars.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	box.add_child(bars)
+	var st := UiTheme.stat_bar("Stamina", m.stamina, WeekLib.MAX_STAMINA, _stamina_color(m.stamina), 64)
+	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bars.add_child(st)
+	var hp := UiTheme.stat_bar("Heart", float(m.happiness), float(WeekLib.MAX_HAPPINESS), _heart_color(m.happiness), 64)
+	hp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bars.add_child(hp)
+
+	box.add_child(UiTheme.body_text(_plan_line(m), "secondary"))
+	return box
+
+
+func _arc_color(stage: String, left: int) -> Color:
+	if stage == "Retiree" or left <= 0:
+		return UiTheme.DANGER
+	if stage == "Elder" or left <= WeekLib.WEEKS_PER_YEAR:
+		return UiTheme.CAUTION
+	return UiTheme.TEXT_PRIMARY
+
+
+func _stamina_color(stamina: float) -> Color:
+	# The brackets are `week.gd:stamina_malus`'s own, not invented ones — below 30 every drill pays
+	# HALF, and that cliff is the only stamina number a player needs to be able to see coming.
+	if stamina < 30.0:
+		return UiTheme.DANGER
+	if stamina < 50.0:
+		return UiTheme.CAUTION
+	return UiTheme.SAFE
+
+
+func _heart_color(happiness: int) -> Color:
+	if happiness <= 2:
+		return UiTheme.DANGER
+	if happiness <= 4:
+		return UiTheme.CAUTION
+	return UiTheme.SAFE
+
+
+func _arc_advice(stage: String, left: int) -> String:
+	match stage:
+		"Baby":
+			return "Too young to train hard — every drill pays half. Rest and feed it; the Teen year is the one that matters."
+		"Teen":
+			return "Its best year. Training pays ×1.35 and it will never pay this well again — spend the weeks on the shape you actually want."
+		"Fully Grown":
+			return "Its working life. Steady ×1.15 gains; this is where a career is banked."
+		"Elder":
+			return "Declining — ×0.80 and %d weeks left. Race it now, or preserve it at the Lab before the bloodline is lost." % left
+		"Retiree":
+			return "Retired. It cannot train again. Its only remaining value is at the Lab, as bloodline."
+	return ""
+
+
+## Whether the week is spoken for, and with what. Read straight from `WeekPlan` — the same plan
+## `Advance Week` will spend, never a guess about it.
+func _plan_line(m) -> String:
+	if not has_node("/root/WeekPlan"):
+		return ""
+	var p: Dictionary = WeekPlan.plan_for(m.id)
+	var act: String = str(p.get("activity", "rest"))
+	var what: String = "resting" if act == "rest" else str(WeekLib.drill_by_id(act).get("name", act))
+	var meal := "eating nothing"
+	if bool(p.get("forage", false)):
+		meal = "foraging"
+	elif str(p.get("food", "")) != "":
+		meal = "eating %s" % str(WeekLib.food_by_id(str(p.get("food", ""))).get("name", p.get("food", "")))
+	return "This week: %s, %s." % [what, meal]
 
 
 ## ⚠️ The cap is the CURRENT LEAGUE's, not a flat placeholder — GameData.stat_cap() reads
@@ -463,14 +631,12 @@ func _stat_row(m, stat: String) -> Control:
 	# The bar is drawn against this monster's OWN ceiling, so a stat trained into its headroom is
 	# not silently painted as overflowing a bar it has legitimately passed.
 	col.add_child(UiTheme.stat_bar(stat, value, maxf(ceiling, value), accent, 40))
-	# ⚠️ THE TIER IS THE STAT'S MOST IMPORTANT PROPERTY ONCE CLASSES ARE ASSIGNED, so it is on the
-	# bar itself, not buried in the commitment panel. An off-class stat stopping 30% short of the
-	# number the league calls "the cap" is the single most likely thing to read as a bug.
-	var tier: String = WeekPlan.stat_ceiling_tier(m, stat)
-	if tier == "primary" or tier == "secondary" or tier == "off-class":
-		col.add_child(UiTheme.body_text("%s for a %s · ceiling %d" % [
-			tier, WeekLib.assigned_class_of(m), int(round(ceiling))],
-			"secondary" if tier != "off-class" else "muted"))
+	# ⚠️ A PER-CLASS TIER LINE STOOD HERE AND HAD NEVER DRAWN A SINGLE PIXEL. It rendered only for
+	# tier "primary"/"secondary"/"off-class", and `week_plan.gd:stat_ceiling_tier()` returns the
+	# literal string "league" down BOTH of its branches — the per-class caps it described were
+	# removed with `week.gd:class_headroom` and the reader was left behind. Deleted rather than
+	# repaired: there is no per-class ceiling to report, so reporting one would be rule (1).
+	# `_ceiling_reason()` already names the ceiling that IS applied.
 	if value >= ceiling - 0.001:
 		col.add_child(UiTheme.body_text(
 			WeekPlan.drill_note(m, "x" + stat.to_lower(), cap).get("note",

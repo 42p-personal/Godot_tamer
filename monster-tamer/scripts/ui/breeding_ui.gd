@@ -342,11 +342,15 @@ func _refresh() -> void:
 	if _pick_a != null and not stock.has(_pick_a): _pick_a = null
 	if _pick_b != null and not stock.has(_pick_b): _pick_b = null
 
-	_box.add_child(UiTheme.heading("The stud book", 2))
-	if stock.is_empty():
-		_box.add_child(UiTheme.body_text(
-			"Empty. A monster can only be bred from once it has been PRESERVED at the Lab — taken out of competition, kept on the freezer's weekly bill. That is the decision breeding asks, and it has to be made while the monster is still worth preserving.",
-			"muted"))
+	_box.add_child(UiTheme.heading("The stud book — %d preserved" % stock.size(), 2))
+	# ⚠️ THE SCREEN'S REAL FAILURE STATE, NAMED. Round 18's before-capture showed ONE eligible stud
+	# and the screen said only "Choose two preserved parents." — so the whole apparatus below
+	# (bequest, foal preview, the comparison) was structurally unreachable and nothing on the page
+	# said why or where to go. `docs/META_UI_DIRECTION.md` read that capture as "no foal preview";
+	# the preview was there and could not render. A gate the player cannot see is the same defect
+	# as a gate that does not exist.
+	if stock.size() < 2:
+		_box.add_child(_gate_card(stock.size()))
 	for mi in stock:
 		_box.add_child(_parent_card(mi))
 
@@ -379,23 +383,104 @@ func _kit_line(mi) -> String:
 	return "kit: " + (", ".join(names) if not names.is_empty() else "—")
 
 
+## ── PORTRAITS AND NUMBERS ON EVERY BODY THIS SCREEN NAMES ─────────────────────────────────────
+## ⚠️ THIS SCREEN RENDERED SIXTY-FIVE SPECIES OF FINISHED ART AS NOTHING AT ALL, and every row as
+## the same string: `potential ×1.00 · Wild stock — Gen 1`. Five bodies, five identical lines, and
+## the question the screen exists to ask is *which one*. Portrait + the six stats + the age is the
+## whole fix: it is all live data, none of it is new, and without it the decision has literally no
+## discriminating information on the page.
+func _portrait(species_id: String, species_name: String, size_px: Vector2) -> Control:
+	var tex: Texture2D = Art.creature_texture(species_id)
+	if tex != null:
+		var t := TextureRect.new()
+		t.texture = tex
+		t.custom_minimum_size = size_px
+		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		return t
+	var p := PanelContainer.new()
+	p.custom_minimum_size = size_px
+	p.add_theme_stylebox_override("panel", UiTheme.panel_style("default", UiTheme.GOLD))
+	var l := Label.new()
+	l.text = species_name.substr(0, 2).to_upper()
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", UiTheme.GOLD)
+	l.add_theme_font_size_override("font_size", int(size_px.y * 0.35))
+	p.add_child(l)
+	return p
+
+
+func _stats_line(mi) -> String:
+	var bits: Array = []
+	for s in STATS:
+		bits.append("%s %d" % [s, int(float(mi.stats.get(s, 0.0)))])
+	return " · ".join(PackedStringArray(bits))
+
+
+## Age said in years against its own span — the number that decides whether a body still has a
+## career to surrender. `week.gd:stage_info` grades it; this only reads.
+func _age_line(mi) -> String:
+	var info: Dictionary = WeekLib.stage_info(mi.age_weeks, mi.lifespan_years)
+	return "%s · %.1f of %.1f yrs" % [
+		str(info["stage"]), float(mi.age_weeks) / float(WeekLib.WEEKS_PER_YEAR), mi.lifespan_years]
+
+
+## What is standing between the player and a pairing, and the door that fixes it. Never a dead end.
+func _gate_card(have: int) -> Control:
+	var panel := PanelContainer.new()
+	var sb := UiTheme.panel_style("raised", UiTheme.CAUTION)
+	sb.set_border_width_all(2)
+	panel.add_theme_stylebox_override("panel", sb)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+	var head := UiTheme.body_text(
+		"A pairing needs TWO preserved parents — you have %d." % have, "primary")
+	head.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
+	head.add_theme_color_override("font_color", UiTheme.CAUTION)
+	col.add_child(head)
+	var why := UiTheme.body_text(
+		"Only a monster PRESERVED at the Lab is breeding stock. Preserving takes it out of competition and starts a freezer bill that never stops — a retired one is enshrined free, because it can never race again. That trade is the decision breeding asks, and it has to be made while the monster is still worth making it for.",
+		"secondary")
+	why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(why)
+	var b := Button.new()
+	b.text = "Go to the Lab — preserve %s →" % ("a second body" if have == 1 else "a body")
+	b.custom_minimum_size = Vector2(0, 38)
+	b.focus_mode = Control.FOCUS_ALL
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		b.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
+	b.add_theme_stylebox_override("focus", UiTheme.button_stylebox("primary", "focus"))
+	b.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/lab.tscn"))
+	col.add_child(b)
+	return panel
+
+
 func _parent_card(mi) -> Control:
 	var picked: bool = (mi == _pick_a or mi == _pick_b)
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel",
 		UiTheme.panel_style("raised", UiTheme.GOLD) if picked else UiTheme.panel_style("default"))
 
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	panel.add_child(outer)
+	outer.add_child(_portrait(mi.species_id, mi.species_name, Vector2(88, 88)))
+
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
-	panel.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(col)
 
 	var used: int = _children_of(mi)
 	var role := "A" if mi == _pick_a else ("B" if mi == _pick_b else "")
 	col.add_child(UiTheme.heading("%s%s — %s%s" % [
 		"[%s] " % role if role != "" else "", mi.species_name, mi.class_name_,
 		" (retired)" if mi.retired else ""], 3))
-	col.add_child(UiTheme.body_text("%s body · potential ×%.2f · %s · %d of %d matings used" % [
-		mi.body, mi.potential, mi.lineage_label(), used, MAX_CHILDREN_PER_PARENT], "secondary"))
+	col.add_child(UiTheme.body_text(_stats_line(mi), "primary"))
+	col.add_child(UiTheme.body_text("%s body · %s · potential ×%.2f · %s · %d of %d matings used" % [
+		mi.body, _age_line(mi), mi.potential, mi.lineage_label(), used, MAX_CHILDREN_PER_PARENT], "secondary"))
 	col.add_child(UiTheme.body_text(_aptitude_line(mi), "muted"))
 	col.add_child(UiTheme.body_text(_kit_line(mi), "muted"))
 
@@ -435,12 +520,22 @@ func _reset_bequest() -> void:
 func _barn_card(mi) -> Control:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	panel.add_child(outer)
+	outer.add_child(_portrait(mi.species_id, mi.species_name, Vector2(64, 64)))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
-	panel.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(col)
 	col.add_child(UiTheme.heading("%s — %s%s" % [
 		mi.species_name, mi.class_name_, " (retired)" if mi.retired else ""], 3))
-	col.add_child(UiTheme.body_text("potential ×%.2f · %s" % [mi.potential, mi.lineage_label()], "muted"))
+	col.add_child(UiTheme.body_text(_stats_line(mi), "primary"))
+	# ⚠️ WHAT PRESERVING COSTS, ON THE ROW THAT OFFERS IT. The trade is *racing years surrendered*
+	# against *a line kept* — and the age is the whole left-hand side of it. A retiree has none left
+	# to surrender, which is exactly why it is enshrined free.
+	col.add_child(UiTheme.body_text("%s · potential ×%.2f · %s" % [
+		_age_line(mi), mi.potential, mi.lineage_label()], "secondary"))
 
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 34)
@@ -449,7 +544,14 @@ func _barn_card(mi) -> Control:
 		btn.disabled = true
 		btn.text = "Your only monster — the barn cannot be left empty"
 	else:
-		btn.text = "Preserve at the Lab — it stops competing, and starts costing rent"
+		# ⚠️ THE PRICE OF PRESERVING IS DIFFERENT FOR A RETIREE AND THE BUTTON MUST SAY WHICH — the
+		# rule lives in `week_plan.gd:rent_for` (retired bodies are not billed), so the two labels
+		# below are two readings of ONE rule, never a second copy of it.
+		btn.text = ("Preserve — enshrined FREE, it can never race again"
+			if mi.retired else
+			"Preserve — surrenders %.1f racing years, then %dg/week forever" % [
+				maxf(0.0, mi.lifespan_years - float(mi.age_weeks) / float(WeekLib.WEEKS_PER_YEAR)),
+				int(WeekPlan.RENTAL_PER_FROZEN)])
 		btn.pressed.connect(func():
 			Roster.preserve(mi)
 			_refresh())
@@ -536,6 +638,60 @@ func _bequest_card() -> Control:
 	return panel
 
 
+## Parent A · parent B · foal, one row per stat, with the three faces above their columns. The
+## emphasis stat is marked ◆ in the LABEL column so the mark reads against the row it belongs to.
+func _lineage_grid(a, b, child) -> Control:
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_LG)
+	grid.add_theme_constant_override("v_separation", 2)
+
+	grid.add_child(_cell("", "muted", 80))
+	# ⚠️ "AT HATCH" IS NOT DECORATION. Read from the capture, the grid invites the wrong comparison:
+	# a foal of two trained champions shows 48/46/131 against parents at 198/202/277 and looks like
+	# a catastrophe, when it is the 30% head start plus the species floor behaving exactly as
+	# designed — the honest yardstick is a WILD-CAUGHT body of the same species, which the line
+	# under this card already gives (360 points against 136). Naming the column for the moment it
+	# describes is the cheapest way to stop the table implying a claim it is not making.
+	for entry in [[a, "A"], [b, "B"], [child, "foal at hatch"]]:
+		var head := VBoxContainer.new()
+		head.add_theme_constant_override("separation", 0)
+		var face := HBoxContainer.new()
+		face.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+		face.add_child(_portrait(entry[0].species_id, entry[0].species_name, Vector2(56, 56)))
+		head.add_child(face)
+		var nm := _cell("%s (%s)" % [entry[0].species_name, entry[1]],
+			"primary" if str(entry[1]).begins_with("foal") else "secondary", 110)
+		if str(entry[1]).begins_with("foal"):
+			nm.add_theme_color_override("font_color", UiTheme.GOLD)
+		head.add_child(nm)
+		grid.add_child(head)
+
+	for s in STATS:
+		var lbl := _cell("%s%s" % [s, " ◆" if s == _emphasis else ""], "secondary", 80)
+		if s == _emphasis:
+			lbl.add_theme_color_override("font_color", UiTheme.GOLD)
+		grid.add_child(lbl)
+		grid.add_child(_cell("%d" % int(float(a.stats.get(s, 0.0))), "muted", 110))
+		grid.add_child(_cell("%d" % int(float(b.stats.get(s, 0.0))), "muted", 110))
+		var kid := _cell("%d" % int(float(child.stats.get(s, 0.0))), "primary", 110)
+		kid.add_theme_color_override("font_color", UiTheme.GOLD if s == _emphasis else UiTheme.TEXT_PRIMARY)
+		grid.add_child(kid)
+	return grid
+
+
+## ⚠️ TABLE CELLS MUST NOT WORD-WRAP. `UiTheme.body_text` turns wrapping on — correct for prose,
+## fatal in a `GridContainer`, where a wrapping label's minimum width is ONE CHARACTER and the
+## whole table collapses into overlapping vertical strips. It happened twice in this round (here
+## and on `shop_ui.gd`) and every mechanical probe check passed on both frames; only reading the
+## capture caught it.
+func _cell(text: String, tier: String, width: int) -> Label:
+	var l := UiTheme.body_text(text, tier)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.custom_minimum_size = Vector2(width, 0)
+	return l
+
+
 func _child_preview(a, b) -> Control:
 	var child = _make_child(a, b, "")
 	var panel := PanelContainer.new()
@@ -547,10 +703,14 @@ func _child_preview(a, b) -> Control:
 	col.add_child(UiTheme.heading("The foal: %s — %s, Gen %d" % [
 		child.species_name, child.class_name_, child.generation], 3))
 
-	var stat_bits: Array = []
-	for s in STATS:
-		stat_bits.append("%s %d%s" % [s, int(child.stats[s]), "◆" if s == _emphasis else ""])
-	col.add_child(UiTheme.body_text(" · ".join(stat_bits), "primary"))
+	# ⚠️ THE PREDICTION IS THE PRODUCT, SO IT IS RENDERED AS A COMPARISON AND NOT AS A SENTENCE.
+	# `docs/META_UI_DIRECTION.md`'s acceptance for this screen is *"from breeding they can predict
+	# roughly what a pairing yields"*, and a six-item run-on line of the child's stats cannot be
+	# compared against the two parents it came from — the player would have to hold twelve numbers
+	# in their head and do the averaging the code just did. Three columns against one stat label is
+	# the same information, arranged so the head start, the emphasis tax and the species floor are
+	# all VISIBLE as differences rather than asserted in prose underneath.
+	col.add_child(_lineage_grid(a, b, child))
 	col.add_child(UiTheme.body_text("%d HP · %d MP · %s · %s" % [
 		child.max_hp, child.max_mp, child.body, _aptitude_line(child)], "secondary"))
 

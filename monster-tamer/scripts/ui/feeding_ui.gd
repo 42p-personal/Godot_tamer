@@ -10,6 +10,7 @@
 extends Control
 
 const UiTheme = preload("res://scripts/ui/theme.gd")
+const WeekLib = preload("res://scripts/week.gd")
 
 var _report: Dictionary = {}
 var _list: VBoxContainer
@@ -39,10 +40,16 @@ func _build() -> void:
 	margin.add_child(page)
 
 	var wk: int = int(_report.get("week", 0))
-	page.add_child(UiTheme.heading("Week %d resolved" % wk, 1))
+	# ⚠️ THE SCREEN IS CALLED "FEEDING" IN THE SCENE TREE AND IT FEEDS NOBODY — that name is a
+	# fossil of `town.ts`'s sequential feeding phase; food is chosen a week earlier on the Training
+	# screen (docs/META_UI_DIRECTION.md §A7). The heading says what the screen IS: the week's
+	# ledger. The FILE and scene keep their names deliberately — renaming them touches
+	# `stable_ui.gd`'s scene change, `save_game.gd` and the probe's screen table, none of which are
+	# this stream's to move. Flagged for the integrator rather than done here.
+	page.add_child(UiTheme.heading("The Week — %d resolved" % wk, 1))
 
 	var spent: int = int(_report.get("goldSpent", 0))
-	var sub := "The stable ate, trained and rested. %s" % (
+	var sub := "The stable ate, trained, rested — and aged one week. %s" % (
 		"Nothing was spent." if spent <= 0 else "%d gold went on food and upkeep." % spent)
 	page.add_child(UiTheme.body_text(sub, "secondary"))
 	page.add_child(HSeparator.new())
@@ -74,6 +81,49 @@ func _build() -> void:
 	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/stable.tscn"))
 	page.add_child(back)
 	back.grab_focus()
+
+
+## Where this monster now sits on its life arc, or "" if it cannot be identified with certainty.
+##
+## ⚠️ THE REPORT ROW IS KEYED BY SPECIES NAME AND THAT IS NOT AN IDENTITY. `WeekPlan.advance()`
+## emits `{"name": mi.species_name, ...}`, so two monsters of the same species collapse onto one
+## key — the exact hazard `docs/UX_LEGIBILITY.md` §2 already flagged against `report_ui.gd`. This
+## function REFUSES rather than guesses: if the name is ambiguous it returns "" and the row simply
+## carries no arc line. A ledger that attributes one monster's ageing to another would be
+## precisely the class of failure this project's rule (1) exists to stop, and no arc line is a
+## much cheaper wrong than the wrong arc line.
+##
+## The real fix is upstream — `advance()` should carry `mi.id` — but `week_plan.gd` is not this
+## stream's file. Flagged for the integrator.
+## ⚠️ RESOLVES BY SLOT ID FIRST. This matched on species name only until round 18, and had to
+## return "" whenever two monsters shared a species — silently dropping the life-arc line rather
+## than risk attributing one monster's ageing to another. `week_plan.gd:advance()` now emits `id`
+## on every report row, so the exact match is available; the name path stays as the fallback for a
+## row written by an older build (or a save mid-migration) and keeps its refusal.
+func _arc_for(name: String, id: String = "") -> String:
+	if not has_node("/root/Roster"):
+		return ""
+	var found = null
+	if id != "":
+		for mi in Roster.monsters:
+			if str(mi.id) == id:
+				found = mi
+				break
+	if found == null:
+		if name == "":
+			return ""
+		for mi in Roster.monsters:
+			if str(mi.species_name) == name:
+				if found != null:
+					return ""   # ambiguous — say nothing rather than guess
+				found = mi
+	if found == null:
+		return ""
+	var info: Dictionary = WeekLib.stage_info(found.age_weeks, found.lifespan_years)
+	var span_weeks: int = int(round(float(found.lifespan_years) * float(WeekLib.WEEKS_PER_YEAR)))
+	var left: int = maxi(0, span_weeks - int(found.age_weeks))
+	return "now %.1f years — %s · %d weeks of career left" % [
+		float(found.age_weeks) / float(WeekLib.WEEKS_PER_YEAR), str(info.get("stage", "?")), left]
 
 
 func _monster_row(m: Dictionary) -> Control:
@@ -111,6 +161,14 @@ func _monster_row(m: Dictionary) -> Control:
 	if not why.is_empty():
 		var w := UiTheme.body_text("why: %s" % "  ·  ".join(PackedStringArray(why)), "muted")
 		col.add_child(w)
+
+	# ⚠️ THE WEEK COST A WEEK OF ITS LIFE, AND THE LEDGER NEVER SAID SO. `docs/META_UI_DIRECTION.md`
+	# §2 slack point 1: the ledger accounts for stats, stamina, happiness and gold — every currency
+	# except the only finite one. This adds the arc position AFTER the tick, so the week a monster
+	# crosses into Elder or Retiree is announced on the screen that reports the week it happened in.
+	var arc: String = _arc_for(str(m.get("name", "")), str(m.get("id", "")))
+	if arc != "":
+		col.add_child(UiTheme.body_text(arc, "secondary"))
 
 	var stam: float = float(m.get("stamina", 0.0))
 	var happy: int = int(m.get("happiness", 0))

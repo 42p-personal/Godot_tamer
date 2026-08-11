@@ -51,6 +51,13 @@ func _build_ui() -> void:
 	_section(col, "6. Team chips (all 8 liveries)", _build_team_section())
 	_section(col, "7. Status chips (every STATUS_META entry)", _build_status_section())
 	_section(col, "8. Before / after", _build_before_after_section())
+	_section(col, "9. Monster card — ONE shape, everywhere a monster appears", _build_card_section())
+	_section(col, "10. Stat bar with a CAP MARKER", _build_capbar_section())
+	_section(col, "11. Delta chips — what changed since last week", _build_delta_section())
+	_section(col, "12. Comparison row — which of these two", _build_compare_section())
+	_section(col, "13. Empty state + a dead control that says why", _build_empty_section())
+	_section(col, "14. Commit bar — the affordance that pins itself outside the scroll", _build_commit_section())
+	_section(col, "15. THE ACCEPTANCE TEST — the same monster, three screens", _build_three_screens_section())
 
 
 func _section(parent: VBoxContainer, title: String, body: Control) -> void:
@@ -260,3 +267,298 @@ func _build_before_after_section() -> Control:
 	row.add_child(after)
 
 	return row
+
+
+# -- 9. Monster card ------------------------------------------------------------
+
+## Five screens hand-roll a portrait today (stable/market/report/tactics/ending) with three
+## different signatures, and seven more name a monster while showing none. This is the one shape.
+func _build_card_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+
+	col.add_child(UiTheme.monster_card({
+		"species_id": "aegisox", "name": "Terrock", "subtitle": "Tank · support",
+		"note": "● Growing — 6y left of 8y", "note_colour": UiTheme.SAFE,
+		"chips": [UiTheme.delta_chip(9, "STR"), UiTheme.delta_chip(-15, "stamina")],
+	}, {"selected": true}))
+
+	col.add_child(UiTheme.monster_card({
+		"species_id": "corvaan", "name": "Cobalon", "subtitle": "Wizard · damage",
+		"note": "● At cap — 4y left of 8y", "note_colour": UiTheme.GOLD,
+		"trailing": UiTheme.body_text("Recruit · 365g", "secondary"),
+	}))
+
+	# The deliberate degrade: an unknown species id, so `Art.creature_texture()` returns null and
+	# the placeholder renders at the SAME footprint. This row is the proof the layout does not
+	# jump the moment art lands mid-session.
+	col.add_child(UiTheme.monster_card({
+		"species_id": "no_such_species", "name": "Unarted", "subtitle": "Art.* returned null",
+		"note": "the placeholder is the contract, not a fallback nobody sees",
+	}, {"focusable": false}))
+	return col
+
+
+# -- 10. Cap bar ----------------------------------------------------------------
+
+func _build_capbar_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	col.add_child(UiTheme.body_text(
+		"Round 18 found the stable reading 115 / 540 and training reading 115 / 400 for the SAME " +
+		"stat in the SAME week. Both were true of a different 'max'. One bar that draws all three " +
+		"quantities — where it is, the ceiling, the scale — makes that lie unspeakable.", "secondary"))
+	col.add_child(UiTheme.stat_bar("STR", 130, 400, UiTheme.GOLD, 40, 1100))
+	col.add_child(UiTheme.stat_bar("CON", 340, 540, UiTheme.GOLD, 40, 1100))
+	col.add_child(UiTheme.stat_bar("WIS", 88, 400, UiTheme.GOLD, 40, 1100))
+	col.add_child(UiTheme.body_text(
+		"fill = now · white tick = this monster's ceiling · dark band = the scale it can never " +
+		"reach. Old two-argument callers get no dead zone and no tick — unchanged.", "muted"))
+	col.add_child(UiTheme.stat_bar("DEX", 300, 500, UiTheme.GOLD))
+	return col
+
+
+# -- 11. Delta chips -------------------------------------------------------------
+
+func _build_delta_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", UiTheme.SPACE_SM)
+	row.add_theme_constant_override("v_separation", UiTheme.SPACE_XS)
+	row.add_child(UiTheme.delta_chip(9, "STR"))
+	row.add_child(UiTheme.delta_chip(-4, "DEX"))
+	row.add_child(UiTheme.delta_chip(0, "CON"))
+	row.add_child(UiTheme.delta_chip(-15, "stamina"))
+	row.add_child(UiTheme.delta_chip(107, "g"))
+	row.add_child(UiTheme.delta_chip(-1, "happiness"))
+	row.add_child(UiTheme.delta_chip(40, "g upkeep", false))
+	row.add_child(UiTheme.delta_chip(1.2, "potential", true, 2))
+	col.add_child(row)
+	col.add_child(UiTheme.body_text(
+		"Sign is a GLYPH as well as a colour (▲ ▼ •), so a training week reads without the hue. " +
+		"Default: bigger is better, so −15 stamina is amber. good_is_up=false flips it for a " +
+		"quantity where SMALLER is better — +40g of upkeep is amber going UP.", "muted"))
+	return col
+
+
+# -- 12. Comparison row ----------------------------------------------------------
+
+func _build_compare_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(110, 0)
+	head.add_child(spacer)
+	for n in ["Terrock (sire)", "Rosewing (dam)"]:
+		var h := UiTheme.heading(n, 2)
+		h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head.add_child(h)
+	var vspacer := Control.new()
+	vspacer.custom_minimum_size = Vector2(180, 0)
+	head.add_child(vspacer)
+	col.add_child(head)
+
+	col.add_child(UiTheme.comparison_row("Potential", "×1.00 Gen 1", "×1.14 Gen 3", "child inherits ×1.14", 2))
+	col.add_child(UiTheme.comparison_row("Best stat", "CON 340", "CHA 291", "sire leads by 49", 1))
+	col.add_child(UiTheme.comparison_row("Age", "5y of 8y", "7y of 8y", "dam has one season left", 1))
+	col.add_child(UiTheme.comparison_row("Heirloom", "none", "Hymn of Shields", "only the dam can bequeath", 2))
+	col.add_child(UiTheme.body_text(
+		"Round 18 found five breeding rows all reading 'potential ×1.00 · Wild stock — Gen 1'. " +
+		"Five values with no difference between them is a list, not a choice.", "muted"))
+	return col
+
+
+# -- 13. Empty state + disabled-with-a-reason ------------------------------------
+
+func _build_empty_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	col.add_child(UiTheme.empty_state(
+		"The freezer is empty",
+		"Preserved bodies appear here when a monster retires. Nothing has retired yet — " +
+		"your oldest is Rosewing, 7y of 8y.",
+		"Go to the Stable"))
+
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	var locked := Button.new()
+	locked.text = "Barn Extension · 900g"
+	UiTheme.disable_with_reason(locked, "Locked — reach Iron league (you are Bronze)", true)
+	btn_row.add_child(locked)
+	var broke := Button.new()
+	broke.text = "Breed"
+	UiTheme.disable_with_reason(broke, "Needs two unretired parents; you have one")
+	btn_row.add_child(broke)
+	col.add_child(btn_row)
+	col.add_child(UiTheme.body_text(
+		"disable_with_reason() makes the reason a REQUIRED argument — the rule is enforced by " +
+		"the signature, not by memory. in_label=true puts it in the visible text (left), which " +
+		"beats a tooltip a keyboard user never hovers.", "muted"))
+	return col
+
+
+# -- 14. Commit bar --------------------------------------------------------------
+
+func _build_commit_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+
+	var ready_bar := UiTheme.commit_bar(
+		"5 monsters · 4 have a plan · this week costs 0 gold and 80 stamina", "Advance Week")
+	col.add_child(ready_bar)
+
+	var blocked := UiTheme.commit_bar("", "Commit and fight")
+	UiTheme.commit_bar_set(blocked, "", false, "Two of five have no station — drag them onto the board")
+	col.add_child(blocked)
+
+	col.add_child(UiTheme.body_text(
+		"Add it as a SIBLING of the ScrollContainer, never inside it. Round 18 could not find a " +
+		"commit button on the tactics screen at 1152x648 in either capture — this is the shape " +
+		"that cannot be lost below the fold, and cannot be disabled without saying why.", "muted"))
+	return col
+
+
+# -- 15. The same monster, three screens ----------------------------------------
+
+## ⚠️ THE ACCEPTANCE TEST FOR THIS WHOLE FILE, PUT ON THE SCREEN RATHER THAN ASSERTED.
+## The brief's bar was "a capture of three different screens side by side reads as ONE game".
+## Three screens cannot be composited into one capture, so this section does the honest
+## equivalent: ONE monster, rendered THREE TIMES, in each screen's current treatment — copied
+## line-for-line from the live files, not caricatured — and then once through `monster_card()`.
+##
+## The three treatments below are verbatim:
+##   stable_ui.gd:295-321   portrait 48 · name at SIZE_BODY · class at SIZE_CAPTION · state chip
+##   market_ui.gd:262-282   portrait 34 · name at 15px in a grade colour · body at 12px grey
+##   report_ui.gd:960-996   portrait 40 · name at theme default · dealt/took at 12px sage green
+##
+## They are not variations on a house style. They are three house styles.
+func _build_three_screens_section() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+
+	col.add_child(UiTheme.body_text(
+		"One monster, three screens, as they render TODAY — each block copied from the live file. " +
+		"Read the three together: three portrait sizes, three name sizes, three greys, three " +
+		"ideas of what a row of a monster is.", "secondary"))
+
+	var today := HBoxContainer.new()
+	today.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	today.add_child(_today_stable())
+	today.add_child(_today_market())
+	today.add_child(_today_report())
+	col.add_child(today)
+
+	col.add_child(HSeparator.new())
+	col.add_child(UiTheme.body_text("The same three rows through monster_card():", "secondary"))
+
+	var after := HBoxContainer.new()
+	after.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	for spec in [
+		{"note": "● Growing — 6y left of 8y", "note_colour": UiTheme.SAFE, "trailing": null, "sel": true},
+		{"note": "Prospect · ceiling 400 (×1.00)", "note_colour": UiTheme.TEXT_MUTED, "trailing": "Recruit · 173g", "sel": false},
+		{"note": "dealt 130 · took 399 · fell at 6.2s", "note_colour": UiTheme.TEXT_MUTED, "trailing": null, "sel": false},
+	]:
+		var info := {
+			"species_id": "aegisox", "name": "Terrock", "subtitle": "Mammal · Tank · support",
+			"note": spec["note"], "note_colour": spec["note_colour"],
+		}
+		if spec["trailing"] != null:
+			info["trailing"] = UiTheme.body_text(str(spec["trailing"]), "secondary")
+		var card := UiTheme.monster_card(info, {"selected": spec["sel"], "focusable": false})
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		after.add_child(card)
+	col.add_child(after)
+
+	col.add_child(UiTheme.body_text(
+		"⚠️ The components exist; the three screens do not call them yet, and converting them is " +
+		"not this stream's file to touch. The measurable target is _probe_house.gd's last two " +
+		"columns reaching zero on report_ui / tactics_ui / market_ui.", "muted"))
+	return col
+
+
+func _label(parent: Node, text: String, fsize: int, col: Color) -> void:
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD
+	l.add_theme_font_size_override("font_size", fsize)
+	l.add_theme_color_override("font_color", col)
+	parent.add_child(l)
+
+
+func _today_panel(title: String) -> Array:
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	box.add_child(UiTheme.body_text(title, "muted"))
+	var panel := PanelContainer.new()
+	box.add_child(panel)
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	panel.add_child(hbox)
+	return [box, panel, hbox]
+
+
+## stable_ui.gd — 48px portrait, name at SIZE_BODY, class at SIZE_CAPTION, a coloured state chip.
+func _today_stable() -> Control:
+	var parts := _today_panel("stable_ui.gd (theme-adopted)")
+	var panel: PanelContainer = parts[1]
+	var hbox: HBoxContainer = parts[2]
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.GOLD))
+	hbox.add_child(UiTheme.portrait("aegisox", "Terrock", Vector2(48, 48), UiTheme.GOLD))
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(col)
+	col.add_child(UiTheme.body_text("Terrock", "primary"))
+	_label(col, "Tank · support", UiTheme.SIZE_CAPTION, UiTheme.TEXT_SECONDARY)
+	_label(col, "● Growing", UiTheme.SIZE_CAPTION, UiTheme.SAFE)
+	return parts[0]
+
+
+## market_ui.gd — 34px portrait, name at 15px in a per-grade amber, body line at 12px grey
+## Color(0.65,0.65,0.7), aptitude line at 12px in the file's own FOCUS_COLOR.
+func _today_market() -> Control:
+	var parts := _today_panel("market_ui.gd (never adopted)")
+	var panel: PanelContainer = parts[1]
+	var hbox: HBoxContainer = parts[2]
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.13, 0.13, 0.17)
+	sb.border_color = Color(0.22, 0.22, 0.26)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	panel.add_theme_stylebox_override("panel", sb)
+	hbox.add_child(UiTheme.portrait("aegisox", "Terrock", Vector2(34, 34), Color(0.9, 0.75, 0.4)))
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(col)
+	_label(col, "Terrock — Prospect", 15, Color(0.9, 0.75, 0.4))
+	_label(col, "Mammal · Tank", 12, Color(0.65, 0.65, 0.7))
+	_label(col, "now 91/stat · ceiling 400 (×1.00) · 7y left of 8y", 11, Color(0.6, 0.6, 0.65))
+	_label(col, "trains: STR ×1.20, WIS ×1.10, DEX ×0.95", 12, Color(0.4, 0.65, 0.95))
+	return parts[0]
+
+
+## report_ui.gd — 40px portrait, name at the theme's default size in Color(0.9,0.9,0.93),
+## dealt/took at 12px in a sage Color(0.7,0.75,0.7), orders line at 12px in a fourth warm grey.
+func _today_report() -> Control:
+	var parts := _today_panel("report_ui.gd (never adopted)")
+	var panel: PanelContainer = parts[1]
+	var hbox: HBoxContainer = parts[2]
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.07, 0.08, 0.1)
+	sb.border_color = Color(0.26, 0.43, 0.65)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	panel.add_theme_stylebox_override("panel", sb)
+	hbox.add_child(UiTheme.portrait("aegisox", "Terrock", Vector2(40, 40), Color(0.2, 0.38, 0.62)))
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(col)
+	_label(col, "Terrock  (fallen)", 16, Color(0.9, 0.9, 0.93))
+	_label(col, "dealt 130 · took 399", 12, Color(0.7, 0.75, 0.7))
+	_label(col, "◆ Hold · ⚑ Team default", 12, Color(0.82, 0.78, 0.62))
+	_label(col, "▸ Orders & decision log", 11, Color(0.6, 0.6, 0.68))
+	return parts[0]

@@ -280,10 +280,65 @@ static func button_stylebox(kind: String, state: String) -> StyleBoxFlat:
 	return sb
 
 
-## A labelled stat bar with the numeric value ALWAYS rendered as text — never fill colour alone.
-## General-purpose version (training/stat screens, any 0..max quantity); see `hp_bar()` for the
-## specific green/amber/red threat-gradient version used on the live arena screen.
-static func stat_bar(label_text: String, value: float, max_value: float, fill_color: Color = GOLD, label_width: int = 40) -> Control:
+## The drawn part of `stat_bar()` — track, fill, and (the point of it) a CAP MARKER at the
+## ceiling with the unreachable remainder rendered as a visibly dead zone.
+##
+## ⚠️ WHY THIS IS A CUSTOM DRAW AND NOT A ProgressBar. A ProgressBar has exactly one quantity:
+## a fill. A trained stat has THREE — where it is, where THIS monster can get to, and how wide
+## the scale runs. Drawing only the first two is what let the stable read `115 / 540` and the
+## training screen read `115 / 400` for the same stat in the same week (round 18's rule-1 find):
+## both were true of a different "max", and neither said which. One bar that draws all three
+## makes that particular lie unspeakable — the ceiling is a mark on the track, not a divisor
+## chosen per screen.
+class CapBar extends Control:
+	var value: float = 0.0
+	var ceiling: float = 1.0
+	var hard_max: float = 1.0
+	var fill_color: Color = Color.WHITE
+
+	func _draw() -> void:
+		var w: float = size.x
+		var h: float = size.y
+		var span: float = maxf(hard_max, 0.0001)
+
+		# Track — the full scale, including what this body can never reach.
+		draw_rect(Rect2(0, 0, w, h), SURFACE, true)
+
+		# Dead zone — beyond the ceiling. Drawn as a distinct darker band, not merely "empty",
+		# so "there is no more room here" is a visible fact rather than an inference.
+		var cx: float = clampf(ceiling / span, 0.0, 1.0) * w
+		if cx < w - 0.5:
+			draw_rect(Rect2(cx, 0, w - cx, h), Color(0, 0, 0, 0.45), true)
+
+		# Fill.
+		var fx: float = clampf(value / span, 0.0, 1.0) * w
+		if fx > 0.5:
+			draw_rect(Rect2(0, 0, fx, h), fill_color, true)
+
+		# Cap marker — a full-height tick plus a notch above/below, so it survives being drawn
+		# over the fill AND over the dead zone. Never colour alone: `stat_bar()` prints the
+		# ceiling as a number in the same row.
+		if ceiling < span - 0.001:
+			draw_rect(Rect2(cx - 1.0, -2.0, 2.0, h + 4.0), TEXT_PRIMARY, true)
+
+		draw_rect(Rect2(0, 0, w, h), BORDER, false, 1.0)
+
+
+## A labelled stat bar with the numeric value ALWAYS rendered as text — never fill colour alone —
+## and a CAP MARKER at the ceiling this particular monster can actually reach.
+##
+## ⚠️ THE CALLER READS THE CEILING, THIS FUNCTION NEVER DERIVES IT. Pass the number you got from
+## the system that owns it (`week.gd:stat_ceiling` for a trained stat) — do not pass a league cap
+## because it was easier to reach. This file deliberately has no access to a monster, precisely so
+## no second copy of that maths can grow here.
+##
+## `ceiling` — what this body can reach. Rendered as the marker AND as the denominator.
+## `hard_max` — how wide to draw the scale (e.g. the final-league cap), so two monsters at
+##   different ceilings are comparable at a glance. Defaults to `ceiling` (no dead zone drawn),
+##   which is exactly the old single-max behaviour, so existing callers are unchanged.
+static func stat_bar(label_text: String, value: float, ceiling: float, fill_color: Color = GOLD, label_width: int = 40, hard_max: float = -1.0) -> Control:
+	var span: float = ceiling if hard_max < 0.0 else maxf(hard_max, ceiling)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", SPACE_SM)
 
@@ -294,25 +349,21 @@ static func stat_bar(label_text: String, value: float, max_value: float, fill_co
 	lbl.add_theme_color_override("font_color", TEXT_SECONDARY)
 	row.add_child(lbl)
 
-	var bar := ProgressBar.new()
-	bar.min_value = 0
-	bar.max_value = maxf(max_value, 0.0001)
+	var bar := CapBar.new()
 	bar.value = value
-	bar.show_percentage = false
+	bar.ceiling = maxf(ceiling, 0.0001)
+	bar.hard_max = maxf(span, 0.0001)
+	bar.fill_color = fill_color
 	bar.custom_minimum_size = Vector2(0, 14)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var fg := StyleBoxFlat.new()
-	fg.bg_color = fill_color
-	fg.set_corner_radius_all(RADIUS_SM)
-	var bg2 := StyleBoxFlat.new()
-	bg2.bg_color = SURFACE
-	bg2.set_corner_radius_all(RADIUS_SM)
-	bar.add_theme_stylebox_override("fill", fg)
-	bar.add_theme_stylebox_override("background", bg2)
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.tooltip_text = "%d now · ceiling %d%s" % [
+		int(round(value)), int(round(ceiling)),
+		("" if span <= ceiling + 0.001 else " · scale runs to %d" % int(round(span)))]
 	row.add_child(bar)
 
 	var val_lbl := Label.new()
-	val_lbl.text = "%d / %d" % [int(round(value)), int(round(max_value))]
+	val_lbl.text = "%d / %d" % [int(round(value)), int(round(ceiling))]
 	val_lbl.custom_minimum_size = Vector2(80, 0)
 	val_lbl.add_theme_font_size_override("font_size", SIZE_CAPTION)
 	val_lbl.add_theme_color_override("font_color", TEXT_SECONDARY)
@@ -584,3 +635,417 @@ static func base_theme() -> Theme:
 	th.set_font_size("font_size", "LineEdit", SIZE_BODY)
 
 	return th
+
+# =============================================================================
+# 8. SHARED COMPONENTS — the things EVERY screen needs and each currently hand-rolls.
+#
+#    ⚠️ FILE OWNERSHIP MANUFACTURED THIS DUPLICATION, AND THE CODE SAYS SO IN ITS OWN COMMENTS.
+#    `market_ui.gd:445` carries the line: "duplicated from stable_ui.gd's `_portrait` rather than
+#    shared, since that file is out of this stream's scope to edit or refactor." There are FIVE
+#    independent `_portrait` implementations in scripts/ui/ (stable, market, report, tactics,
+#    ending) with THREE different signatures, and seven screens that name a monster while showing
+#    no portrait at all. Every one of those authors was right about the ownership rule; what was
+#    missing was a shared place to put it. This is that place.
+#
+#    ⚠️ THE HARD RULE FOR EVERYTHING BELOW: A COMPONENT RENDERS, IT NEVER DERIVES.
+#    Nothing in this section reads Career, Roster, WeekLib or a MonsterInstance. Callers pass
+#    values they have already read from the system that owns them. That is deliberate, and it is
+#    the structural form of the project's rule (1) — a screen must not lie about the thing it
+#    describes. A second copy of the week's maths cannot grow in a file that cannot see the week.
+#    The single exception is `Art` (portraits), which is an asset lookup, not a rule.
+# =============================================================================
+
+## The token sets, published so a PROBE can check conformance without keeping its own copy of the
+## list — a rule nothing enforces is a rule that decays, and this project has watched that happen
+## to a dozen invariants. `scripts/_probe_house.gd` walks every screen and flags any font size or
+## text colour outside these. ⚠️ Adding an entry here WIDENS what the probe permits — do it on
+## purpose, not to make a red line go away.
+const TOKEN_FONT_SIZES := [SIZE_CAPTION, SIZE_BODY, SIZE_SUBHEADING, SIZE_HEADING, SIZE_DISPLAY]
+const TOKEN_TEXT_COLOURS := [
+	TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, GOLD, SAFE, CAUTION, DANGER, FOCUS,
+	STATUS_HARD_CONTROL, STATUS_POISON, STATUS_BURN, STATUS_BLEED, STATUS_DOOM,
+	STATUS_UTILITY, STATUS_BUFF,
+]
+
+
+## True if `c` is one of the published text tokens. Tolerance is generous on purpose — the
+## question a probe asks is "did someone invent a sixth grey", not "is this bit-identical".
+static func is_token_colour(c: Color, tol: float = 0.02) -> bool:
+	for t in TOKEN_TEXT_COLOURS:
+		var tc: Color = t
+		if absf(tc.r - c.r) <= tol and absf(tc.g - c.g) <= tol and absf(tc.b - c.b) <= tol:
+			return true
+	return false
+
+
+# -- 8.1 PORTRAIT --------------------------------------------------------------------------
+
+## A creature portrait, or a deliberate accent-tinted placeholder carrying the species' initials
+## at the SAME footprint. Callers never branch on which they got, and the layout does not jump
+## the moment art lands mid-session.
+##
+## ⚠️ THE PLACEHOLDER IS PART OF THE CONTRACT, not a fallback nobody sees — `UI_LAYOUT_RULES`
+## checklist: "Degrades deliberately when `Art.*` returns null". Behaviour is lifted verbatim
+## from `stable_ui.gd:_portrait`, which is the version the other four were copied from.
+static func portrait(species_id: String, display_name: String, portrait_size: Vector2 = Vector2(48, 48), accent: Color = GOLD) -> Control:
+	var tex: Texture2D = Art.creature_texture(species_id)
+	if tex != null:
+		var t := TextureRect.new()
+		t.texture = tex
+		t.custom_minimum_size = portrait_size
+		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		t.tooltip_text = display_name
+		return t
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = portrait_size
+	panel.tooltip_text = display_name
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(accent.r, accent.g, accent.b, 0.16)
+	sb.border_color = accent
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(RADIUS_MD)
+	panel.add_theme_stylebox_override("panel", sb)
+	var lbl := Label.new()
+	lbl.text = display_name.substr(0, 2).to_upper()
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	lbl.add_theme_color_override("font_color", accent)
+	lbl.add_theme_font_size_override("font_size", maxi(SIZE_CAPTION, int(portrait_size.y * 0.35)))
+	panel.add_child(lbl)
+	return panel
+
+
+# -- 8.2 MONSTER CARD ----------------------------------------------------------------------
+
+## THE monster card. One shape for "here is a monster", wherever a monster appears: the stable
+## strip, the market shelf, the breeding parent picker, the lab freezer, a tournament roster, a
+## report line-up.
+##
+## `info` keys (all optional except "name") — every one a value the CALLER has already read:
+##   "name"        String  — the monster's own name, the primary line
+##   "species_id"  String  — portrait lookup only
+##   "subtitle"    String  — "Warrior · damage", "Mammal · Tank", whatever this screen is about
+##   "note"        String  — one short state line: "● Growing", "4y left of 8y", "At cap"
+##   "note_colour" Color   — defaults TEXT_MUTED. Pair it with a glyph in the text; never colour alone
+##   "chips"       Array   — pre-built Controls (delta_chip/status_chip/team_chip), laid in a row
+##   "trailing"    Control — a right-hand slot: a price, a Recruit button, a stat bar
+##
+## `opts` keys: "portrait" Vector2 (default 48x48) · "accent" Color · "selected" bool ·
+## "focusable" bool (default true).
+static func monster_card(info: Dictionary, opts: Dictionary = {}) -> PanelContainer:
+	var accent: Color = opts.get("accent", GOLD)
+	var selected: bool = bool(opts.get("selected", false))
+	var psize: Vector2 = opts.get("portrait", Vector2(48, 48))
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", panel_style("raised" if selected else "default", accent if selected else BORDER))
+	if bool(opts.get("focusable", true)):
+		panel.focus_mode = Control.FOCUS_ALL
+		# Focus must be visually distinct from selection, not the same treatment wider
+		# (docs/ACCESSIBILITY.md SC 2.4.7) — that is exactly what `focus_style()` guarantees.
+		panel.add_theme_stylebox_override("focus", focus_style(panel_style("raised", accent)))
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPACE_MD)
+	panel.add_child(row)
+
+	row.add_child(portrait(str(info.get("species_id", "")), str(info.get("name", "?")), psize, accent))
+
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	col.add_theme_constant_override("separation", 2)
+	row.add_child(col)
+
+	var name_lbl := Label.new()
+	name_lbl.text = str(info.get("name", "?"))
+	name_lbl.add_theme_font_size_override("font_size", SIZE_SUBHEADING)
+	name_lbl.add_theme_color_override("font_color", TEXT_PRIMARY)
+	col.add_child(name_lbl)
+
+	if str(info.get("subtitle", "")) != "":
+		col.add_child(body_text(str(info["subtitle"]), "secondary"))
+
+	if str(info.get("note", "")) != "":
+		var note := Label.new()
+		note.text = str(info["note"])
+		note.add_theme_font_size_override("font_size", SIZE_CAPTION)
+		note.add_theme_color_override("font_color", info.get("note_colour", TEXT_MUTED))
+		col.add_child(note)
+
+	var chips: Array = info.get("chips", [])
+	if not chips.is_empty():
+		var chip_row := HFlowContainer.new()
+		chip_row.add_theme_constant_override("h_separation", SPACE_SM)
+		chip_row.add_theme_constant_override("v_separation", SPACE_XS)
+		for c in chips:
+			if c is Control:
+				chip_row.add_child(c)
+		col.add_child(chip_row)
+
+	var trailing: Variant = info.get("trailing", null)
+	if trailing is Control:
+		var t: Control = trailing
+		t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		t.size_flags_horizontal = Control.SIZE_SHRINK_END
+		# ⚠️ THE TRAILING SLOT MUST NOT WRAP, AND THE FIRST CAPTURE OF THIS COMPONENT SHOWED WHY.
+		# `body_text()` sets AUTOWRAP_WORD, which is right for a paragraph and wrong for a price:
+		# "Recruit · 365g" broke over three lines and slid off the card's right edge because the
+		# name column claimed the width first. A trailing slot is a fixed fact — a price, a
+		# button, a bar — so it opts out of wrapping.
+		if t is Label:
+			(t as Label).autowrap_mode = TextServer.AUTOWRAP_OFF
+		row.add_child(t)
+
+	return panel
+
+
+# -- 8.3 DELTA CHIP ------------------------------------------------------------------------
+
+## "What changed" — a signed quantity with an explicit sign GLYPH as well as a colour, because a
+## player who cannot separate green from red must still be able to read a training week.
+## `▲ +9 STR`, `▼ −15 stamina`, `▲ +107g`. Zero renders as a muted `• no change`, never a blank.
+##
+## ⚠️ THE CALLER SUPPLIES THE NUMBER; THIS CANNOT COMPUTE A WEEK. Round 14 found a training
+## preview hard-coding "+6 basic / +12 intensive", ignoring every multiplier the week is actually
+## decided by. A delta shown to the player must come from the real tick on a throwaway clone
+## (`week.gd:preview_week`), and this component is deliberately incapable of guessing one.
+##
+## `good_is_up` — which DIRECTION is good, so the colour follows the meaning rather than the
+## arithmetic sign. Default true: bigger is better (a stat, gold held, happiness, stamina left),
+## so a negative delta reads amber. Pass false where SMALLER is better (a price, a cooldown, an
+## upkeep, weeks until retirement), so a positive delta reads amber instead.
+static func delta_chip(amount: float, unit: String = "", good_is_up: bool = true, decimals: int = 0) -> Control:
+	var up: bool = amount > 0.0001
+	var down: bool = amount < -0.0001
+	var glyph := "•"
+	var col := TEXT_MUTED
+	if up:
+		glyph = "▲"
+		col = SAFE if good_is_up else CAUTION
+	elif down:
+		glyph = "▼"
+		col = CAUTION if good_is_up else SAFE
+
+	var text := "no change"
+	if up or down:
+		var num := ("%+.*f" % [decimals, amount]) if decimals > 0 else ("%+d" % int(round(amount)))
+		# Godot prints ASCII '-'; swap in a true minus, which stays legible at 14px.
+		num = num.replace("-", "−")
+		text = num if unit == "" else "%s %s" % [num, unit]
+
+	var chip := PanelContainer.new()
+	var sb := panel_style("default", BORDER_FAINT)
+	sb.bg_color = Color(col.r, col.g, col.b, 0.14)
+	sb.border_color = ensure_contrast(col, PANEL, 3.0)
+	sb.content_margin_left = SPACE_SM
+	sb.content_margin_right = SPACE_SM
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 2
+	chip.add_theme_stylebox_override("panel", sb)
+
+	var lbl := Label.new()
+	lbl.text = "%s %s" % [glyph, text]
+	lbl.add_theme_font_size_override("font_size", SIZE_CAPTION)
+	lbl.add_theme_color_override("font_color", ensure_contrast(col, PANEL, 4.5))
+	chip.add_child(lbl)
+	return chip
+
+
+# -- 8.4 COMPARISON ROW --------------------------------------------------------------------
+
+## Two candidates on one line with the difference SPELLED OUT — the shape "which of these two"
+## needs, and which no screen currently has. Breeding's two parents; a market recruit against the
+## body you already own; a cup's purse against the one before it.
+##
+## ⚠️ THE DIFFERENCE IS THE WHOLE POINT. Round 18's capture found five breeding rows reading an
+## identical `potential ×1.00 · Wild stock — Gen 1` — five values with zero discriminating
+## information, which is a list, not a choice. `verdict` is where the caller says what the
+## difference MEANS; passing "" prints nothing rather than a reassuring blank.
+static func comparison_row(label_text: String, left_text: String, right_text: String, verdict: String = "", winner: int = 0) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPACE_MD)
+
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.custom_minimum_size = Vector2(110, 0)
+	lbl.add_theme_font_size_override("font_size", SIZE_CAPTION)
+	lbl.add_theme_color_override("font_color", TEXT_SECONDARY)
+	row.add_child(lbl)
+
+	for side in [0, 1]:
+		var v := Label.new()
+		v.text = left_text if side == 0 else right_text
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_theme_font_size_override("font_size", SIZE_BODY)
+		var is_winner: bool = (winner == 1 and side == 0) or (winner == 2 and side == 1)
+		v.add_theme_color_override("font_color", GOLD if is_winner else TEXT_PRIMARY)
+		# Never colour alone — the winning side is also marked in the text.
+		if is_winner:
+			v.text = "▸ " + v.text
+		row.add_child(v)
+
+	var vd := Label.new()
+	vd.text = verdict
+	vd.custom_minimum_size = Vector2(180, 0)
+	vd.add_theme_font_size_override("font_size", SIZE_CAPTION)
+	vd.add_theme_color_override("font_color", TEXT_MUTED)
+	row.add_child(vd)
+
+	return row
+
+
+# -- 8.5 EMPTY STATE -----------------------------------------------------------------------
+
+## What a region says when it has nothing in it. ⚠️ NOT DECORATION — round 18 measured the town
+## hub at 52% empty black, the shop at 55% and the market at 40%, and a blank region is
+## indistinguishable from a screen that failed to load. An empty state states the fact, states
+## what would fill it, and where possible offers the door.
+##
+## If `action_text` is non-empty the Button is reachable via `empty_state_button()`.
+static func empty_state(title: String, body: String, action_text: String = "") -> PanelContainer:
+	var panel := PanelContainer.new()
+	var sb := panel_style("default", BORDER_FAINT)
+	sb.content_margin_left = SPACE_XL
+	sb.content_margin_right = SPACE_XL
+	sb.content_margin_top = SPACE_XL
+	sb.content_margin_bottom = SPACE_XL
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", SPACE_SM)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	panel.add_child(col)
+
+	var t := heading(title, 2)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(t)
+
+	var b := body_text(body, "secondary")
+	b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(b)
+
+	if action_text != "":
+		var btn := Button.new()
+		btn.name = "EmptyStateAction"
+		btn.text = action_text
+		btn.focus_mode = Control.FOCUS_ALL
+		btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		for state in ["normal", "hover", "pressed", "focus"]:
+			btn.add_theme_stylebox_override(state, button_stylebox("primary", state))
+		col.add_child(btn)
+	return panel
+
+
+static func empty_state_button(panel: PanelContainer) -> Button:
+	return panel.find_child("EmptyStateAction", true, false) as Button
+
+
+# -- 8.6 DISABLED WITH A REASON ------------------------------------------------------------
+
+## ⚠️ THE ONLY SANCTIONED WAY TO DISABLE A CONTROL. `UI_LAYOUT_RULES` rule 3 — never a dead
+## control with no explanation — has no teeth as prose: `btn.disabled = true` is one token, and
+## remembering the tooltip is a discipline nobody has consistently had. Here the reason is a
+## REQUIRED ARGUMENT, so the rule is enforced by the signature instead of by memory.
+##
+## ⚠️ AND A TOOLTIP IS THE FLOOR, NOT THE CEILING. `shop_ui.gd` puts the reason in the LABEL —
+## "Locked — reach Iron league (you are Bronze)" — which is strictly better, because a tooltip
+## needs a hover a keyboard user may never perform. Pass `in_label` true for that. Round 18's
+## probe scored those two shop buttons as violations precisely because it could only see
+## tooltips; they were the best examples on the screen. `_probe_house.gd` now accepts either.
+static func disable_with_reason(btn: Button, reason: String, in_label: bool = false) -> void:
+	btn.disabled = true
+	btn.tooltip_text = reason
+	if in_label and not btn.text.contains(reason):
+		# " · " not " — ", because the reasons themselves already use an em-dash
+		# ("Locked — reach Iron league"), and dash-on-dash read as one run-on line in the capture.
+		btn.text = "%s · %s" % [btn.text, reason]
+	btn.add_theme_stylebox_override("disabled", button_stylebox("secondary", "disabled"))
+
+
+## The inverse — re-enable and clear the reason, so a stale explanation cannot survive on a live
+## control (the mirror failure: a button that works but still says why it does not).
+static func enable_control(btn: Button, tooltip: String = "") -> void:
+	btn.disabled = false
+	btn.tooltip_text = tooltip
+
+
+# -- 8.7 COMMIT BAR ------------------------------------------------------------------------
+
+## THE commitment affordance: a pinned footer that states what is about to happen, in the same
+## place on every screen, with the primary action in it.
+##
+## ⚠️ IT IS PINNED OUTSIDE THE SCROLL BY CONSTRUCTION, WHICH IS THE POINT. `UI_LAYOUT_RULES`
+## rule 2 says a primary action must be reachable without the player guessing that a region
+## scrolls; round 18 could not find a commit button on the tactics screen at 1152x648 in either
+## capture. Add this as a SIBLING of the ScrollContainer, never inside it:
+##
+##     var bar := UiTheme.commit_bar("Five monsters · 80 stamina · 0 gold", "Advance Week")
+##     root_vbox.add_child(bar)                       # sibling of the scroll, last child
+##     UiTheme.commit_bar_button(bar).pressed.connect(_on_advance)
+##     UiTheme.commit_bar_set(bar, "…", false, "Two monsters have no plan")
+##
+## ⚠️ THE SUMMARY IS NOT FLAVOUR. This game asks the player to commit and then WATCH; the summary
+## line is the last chance to state what is being committed to. Read it from the system that owns
+## it, per section 8's standing rule — and update it every time it changes, because a stale
+## summary above a live commit button is a rule-(1) lie in the most expensive place on the screen.
+static func commit_bar(summary: String, action_text: String, kind: String = "primary") -> PanelContainer:
+	var bar := PanelContainer.new()
+	var sb := panel_style("default", BORDER)
+	sb.bg_color = PANEL
+	sb.content_margin_left = SPACE_LG
+	sb.content_margin_right = SPACE_LG
+	sb.content_margin_top = SPACE_SM
+	sb.content_margin_bottom = SPACE_SM
+	bar.add_theme_stylebox_override("panel", sb)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPACE_LG)
+	bar.add_child(row)
+
+	var summary_lbl := body_text(summary, "secondary")
+	summary_lbl.name = "CommitSummary"
+	summary_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(summary_lbl)
+
+	var btn := Button.new()
+	btn.name = "CommitAction"
+	btn.text = action_text
+	btn.focus_mode = Control.FOCUS_ALL
+	btn.custom_minimum_size = Vector2(200, 40)
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		btn.add_theme_stylebox_override(state, button_stylebox(kind, state))
+	row.add_child(btn)
+	return bar
+
+
+static func commit_bar_button(bar: PanelContainer) -> Button:
+	return bar.find_child("CommitAction", true, false) as Button
+
+
+static func commit_bar_summary(bar: PanelContainer) -> Label:
+	return bar.find_child("CommitSummary", true, false) as Label
+
+
+## Update summary AND readiness in one call. There is no route through this API that disables the
+## commit button without stating a reason, and none that leaves the summary behind when the thing
+## being committed changes.
+static func commit_bar_set(bar: PanelContainer, summary: String, ready: bool, reason: String = "") -> void:
+	var lbl := commit_bar_summary(bar)
+	var btn := commit_bar_button(bar)
+	if lbl == null or btn == null:
+		return
+	if ready:
+		lbl.text = summary
+		lbl.add_theme_color_override("font_color", TEXT_SECONDARY)
+		enable_control(btn)
+	else:
+		var why := reason if reason != "" else "Not ready yet"
+		lbl.text = why
+		lbl.add_theme_color_override("font_color", CAUTION)
+		disable_with_reason(btn, why)

@@ -22,6 +22,14 @@ var step_index: int = 0
 
 ## ⚠️ Each `done` is a Callable read from LIVE state — never a flag this file sets itself, or the
 ## tutorial and the game can disagree and the player gets told to do something already done.
+##
+## ⚠️ AND EACH STEP DECLARES `where` — THE SCREENS ON WHICH ITS INSTRUCTION CAN ACTUALLY BE
+## FOLLOWED. Without it the banner is screen-agnostic, and round 18's captures caught the result:
+## "Decide what it eats — open Training and pick this week's food" was rendered, in full, on the
+## Title screen, the Town, the Tournament board and the Breeding Ranch. That is this project's
+## rule (1) — a screen must not lie about the thing it describes — committed by an autoload that
+## draws over all thirteen of them. `at` is the human name of the destination, so a screen that
+## cannot host the step can still point at the one that can.
 var _steps: Array = []
 
 
@@ -32,24 +40,28 @@ func _ready() -> void:
 			"title": "Recruit your first monster",
 			"body": "Your stable is empty and you have 500 gold. The Market is in the Town. The barn holds two — choose well, because a third costs an upgrade.",
 			"done": func() -> bool: return Roster.monsters.size() > 0,
+			"where": ["market"], "at": "the Market",
 		},
 		{
 			"id": "food",
 			"title": "Decide what it eats",
 			"body": "Open Training and pick this week's food. Paid food costs gold. Foraging is free but costs stamina and heart — hunger is never free, it is only ever paid differently.",
 			"done": func() -> bool: return _any_planned_food(),
+			"where": ["training"], "at": "Training",
 		},
 		{
 			"id": "plan",
 			"title": "Book a drill — it spends nothing yet",
 			"body": "Booking a drill only writes the plan. No stat moves until the week does. Take your time and read what each drill costs.",
 			"done": func() -> bool: return _any_planned_drill(),
+			"where": ["training"], "at": "Training",
 		},
 		{
 			"id": "advance",
 			"title": "Advance the week",
 			"body": "This is the only thing that moves the clock. It feeds the stable, runs every drill you booked, ages your monsters and pays the bills — all at once.",
 			"done": func() -> bool: return Career.week >= 1,
+			"where": ["stable", "town"], "at": "the Stable",
 		},
 		{
 			"id": "stamina",
@@ -63,12 +75,14 @@ func _ready() -> void:
 			# A week counter never proved the player LEARNED anything. Resting does: it is the
 			# specific behaviour this step exists to teach, and it cannot be satisfied by accident.
 			"done": func() -> bool: return _has_rested_deliberately(),
+			"where": ["training"], "at": "Training",
 		},
 		{
 			"id": "tournament",
 			"title": "Enter a cup",
 			"body": "You will not command the fight. You set the tactics, and then you watch your read play out. Everything you decide before the bell is the whole of your skill.",
 			"done": func() -> bool: return false,  # terminal — the tutorial ends here
+			"where": ["tournament"], "at": "Tournaments",
 		},
 	]
 	_advance_past_completed()

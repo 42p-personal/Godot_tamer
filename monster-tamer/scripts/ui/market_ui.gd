@@ -14,7 +14,20 @@
 ## UI built entirely in code, matching stable_ui.gd/training_ui.gd's established house style.
 extends Control
 
-const FOCUS_COLOR := Color(0.40, 0.85, 1.0)
+## ⚠️ THIS SCREEN DID NOT PRELOAD THE SHARED THEME AT ALL, WHICH IS WHY IT HAND-ROLLED A TOKEN.
+## `_probe_house.gd` measures it as one of the three worst offenders in the project (42 off-scale
+## font sizes, 17 off-token colours) and the reason is structural, not careless: with no `UiTheme`
+## in scope, every colour and size in this file HAD to be a literal. The import is the precondition
+## for converting it; the conversion itself is round-19 work and is not attempted here.
+const UiTheme = preload("res://scripts/ui/theme.gd")
+
+## ⚠️ THIS WAS A HAND-ROLLED COPY OF `UiTheme.FOCUS` USED AS AN ACCENT ON THE APTITUDE LINE — two
+## faults in one line. It duplicated a token (so the palette could drift here and nowhere else),
+## and the token it duplicated is the KEYBOARD-FOCUS RING, which theme.gd reserves and which stops
+## being identifiable the moment body text also draws in it. `STATUS_BUFF` is the teal the palette
+## keeps clear of it on purpose. Kept as a named alias rather than inlined so the two call sites
+## below still read as "the aptitude accent".
+const APTITUDE_ACCENT := UiTheme.STATUS_BUFF
 
 ## Fallback cap, used ONLY if the Career autoload is missing (a standalone scene run). The real
 ## cap is `Career.barn_capacity` — town.ts:START_BARN is 2, and CLAUDE.md/CORE_LOOP_PORT.md are
@@ -251,7 +264,10 @@ func _offer_row(o: Dictionary, stable_full: bool) -> PanelContainer:
 	hbox.add_theme_constant_override("separation", 10)
 	panel.add_child(hbox)
 
-	hbox.add_child(_portrait(mi.species_id, mi.species_name, Vector2(44, 44)))
+	# ⚠️ ~28px OF A SIXTY-FIVE-SPECIES PAINTED ROSTER, ON THE ONE SCREEN WHERE YOU CHOOSE A BODY.
+	# Round 18's before-capture measured the recruit portraits at thumbnail size beside a wall of
+	# 11px text. The art is the fastest-read thing on the card and it was the smallest.
+	hbox.add_child(_portrait(mi.species_id, mi.species_name, Vector2(96, 96)))
 
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -265,7 +281,7 @@ func _offer_row(o: Dictionary, stable_full: bool) -> PanelContainer:
 	# finding. So the card states, in the player's own units: what it is worth NOW (mean stat),
 	# what it can ever become (ceiling = league cap x potential), and how much of its career is
 	# already spent.
-	_row(col, "now %d/stat · ceiling %d (×%.2f) · %s" % [
+	_row(col, "now %d/stat · league cap %d (bloodline ×%.2f) · %s" % [
 		int(round(_mean_stat(mi))), int(round(GameData.stat_cap() * mi.potential)),
 		mi.potential, _age_phrase(mi)], 12, _grade_colour(str(o.get("grade", ""))))
 	# ⚠️ THE CLASS DECISION IS MADE AT THE MARKET, NOT AT THE STABLE, and it was invisible here.
@@ -276,7 +292,7 @@ func _offer_row(o: Dictionary, stable_full: bool) -> PanelContainer:
 	# "made with knowledge the player has earned"; this is the earnable half, printed where it is
 	# spent. The class NAME here is a suggestion from aptitude, never a lock — any species can train
 	# into any class, and the whole point of an ASSIGNED class is that this row is advice.
-	_row(col, _aptitude_line(mi), 12, FOCUS_COLOR)
+	_row(col, _aptitude_line(mi), 12, APTITUDE_ACCENT)
 	# The one-line flavour is the recruit pitch; the full bestiary story lives on the stable
 	# detail once the monster is yours.
 	var pitch := Label.new()
@@ -287,9 +303,17 @@ func _offer_row(o: Dictionary, stable_full: bool) -> PanelContainer:
 	pitch.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_child(pitch)
 
+	# ⚠️ THIS RENDERED AS FLAT BORDERLESS TEXT, NOT AS A BUTTON. With no theme on the screen the
+	# engine's default Button style is nearly invisible against the market's dark scrim, so the
+	# single commit action on the screen — spending real gold on a permanent roster change — read
+	# as a caption. Styled through the shared builder so it matches the primary action on every
+	# other screen; an affordance is not decoration.
 	var buy_btn := Button.new()
 	buy_btn.text = "Recruit · %dg" % int(o["price"])
 	buy_btn.focus_mode = Control.FOCUS_ALL
+	buy_btn.custom_minimum_size = Vector2(150, 38)
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		buy_btn.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
 	var have_gold: bool = has_node("/root/Career") and Career.gold >= int(o["price"])
 	buy_btn.disabled = stable_full or not have_gold
 	if stable_full:
@@ -376,18 +400,33 @@ func _release_row(mi) -> PanelContainer:
 	hbox.add_theme_constant_override("separation", 10)
 	panel.add_child(hbox)
 
-	hbox.add_child(_portrait(mi.species_id, mi.species_name, Vector2(40, 40)))
+	hbox.add_child(_portrait(mi.species_id, mi.species_name, Vector2(96, 96)))
 
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hbox.add_child(col)
-	_row(col, mi.species_name, 14, Color(0.9, 0.9, 0.93))
+	_row(col, mi.species_name, 15, Color(0.9, 0.9, 0.93))
 	_row(col, "%s · %s" % [mi.body, mi.class_name_], 12, Color(0.65, 0.65, 0.7))
+	# ⚠️ THE TWO HALVES OF THE TRADE WERE RENDERED IN TWO INCOMPARABLE FORMATS. The recruit card
+	# states what it is worth now, what it can ever become and how much career it has left; the
+	# body you would DROP FOR IT stated its name and its class, and nothing else. The actual
+	# question this screen asks — *is this recruit better than the one I would release?* — was
+	# therefore unanswerable from the screen. These are the SAME three lines the offer card uses,
+	# built from the same helpers, deliberately word-for-word so the columns can be read across.
+	_row(col, "now %d/stat · league cap %d (bloodline ×%.2f) · %s" % [
+		int(round(_mean_stat(mi))), int(round(GameData.stat_cap() * mi.potential)),
+		mi.potential, _age_phrase(mi)], 12, Color(0.85, 0.72, 0.35))
+	_row(col, _aptitude_line(mi), 12, APTITUDE_ACCENT)
 
 	var refund := int(round(_estimate_value(mi) * RELEASE_REFUND_FRAC))
+	# The mirror of the Recruit button, and deliberately NOT "primary": releasing is the
+	# irreversible half of the trade and should not compete for the eye with recruiting.
 	var release_btn := Button.new()
 	release_btn.text = "Release · +%dg" % refund
 	release_btn.focus_mode = Control.FOCUS_ALL
+	release_btn.custom_minimum_size = Vector2(150, 38)
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		release_btn.add_theme_stylebox_override(state, UiTheme.button_stylebox("default", state))
 	release_btn.tooltip_text = "%s leaves the stable for good." % mi.species_name
 	release_btn.pressed.connect(func(): _on_release(mi, refund))
 	hbox.add_child(release_btn)

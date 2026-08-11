@@ -115,10 +115,12 @@ func _refresh() -> void:
 		Career.gold, Career.barn_capacity, Career.current_league_name()]
 
 	_box.add_child(_barn_card())
+	_box.add_child(_barn_ladder())
 	_box.add_child(_licence_card("Special License", 800, 4,
 		"Draconic and Abyssal bloodlines appear at the Market."))
 	_box.add_child(_licence_card("Elite License", 2000, 6,
 		"Mythical bloodlines appear at the Market."))
+	_box.add_child(_sinks_card())
 
 
 func _barn_card() -> Control:
@@ -153,6 +155,112 @@ func _barn_card() -> Control:
 					Career.barn_capacity += 1
 					_refresh())
 	col.add_child(btn)
+	return panel
+
+
+## ── WHAT GOLD IS FOR, ACROSS THE WHOLE CLIMB ──────────────────────────────────────────────────
+## ⚠️ THE ONLY OUTLET THE ECONOMY HAS READ AS A SETTINGS PAGE: three rows, then 55% empty screen
+## (measured, round 18's before-capture). The player could see the one purchase they can afford
+## this week and had no way to learn what 2,200g or 9,000g eventually buys — so gold had no
+## destination, and a purse won at Bronze meant nothing beyond the next barn slot.
+##
+## ⚠️ EVERY NUMBER IS READ, NOT RESTATED. Prices come from this file's own `BARN_PRICES`, the team
+## requirement from `Career.team_size_for_league()`, and the two off-screen sinks from the const
+## that actually charges them (`breeding_ui.gd:BREED_COST`, `lab_ui.gd:FUSION_COST`,
+## `week_plan.gd:RENTAL_PER_FROZEN`). A shop that quotes a price the paying screen disagrees with
+## is exactly the failure this project has already shipped twice.
+const BreedingLib = preload("res://scripts/ui/breeding_ui.gd")
+const LabLib = preload("res://scripts/ui/lab_ui.gd")
+
+
+## ⚠️ A TABLE CELL MUST NOT WORD-WRAP, AND THIS IS THE SECOND TIME IT BIT THIS ROUND.
+## `UiTheme.body_text` sets `AUTOWRAP_WORD_SMART`, which is right for a paragraph and catastrophic
+## in a `GridContainer`: a wrapping label's minimum width is one character, so every column
+## collapsed to a few pixels and the table rendered as four overlapping vertical strips of single
+## words. Every mechanical check passed on that frame — the probe counts controls, not legibility —
+## and it was caught only by reading the capture back. Wrap off, explicit floor, always.
+func _cell(text: String, tier: String, width: int) -> Control:
+	var l := UiTheme.body_text(text, tier)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.custom_minimum_size = Vector2(width, 0)
+	return l
+
+
+## The first league that FIELDS `n` bodies — so a barn rung can name what it is for, rather than
+## being a number that climbs for its own sake.
+func _first_league_needing(n: int) -> String:
+	for i in range(Career.leagues.size()):
+		if Career.team_size_for_league(i) >= n:
+			return str(Career.league_at(i).get("name", "?"))
+	return ""
+
+
+func _barn_ladder() -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+	col.add_child(UiTheme.heading("The barn, all the way up", 3))
+	col.add_child(UiTheme.body_text(
+		"Every stall you will ever buy, and what each one is for. A stall is not only a body — a foal, a fusion and a bought recruit all need somewhere to land, so the barn is what gates the whole generational half of the game.",
+		"secondary"))
+
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_XL)
+	grid.add_theme_constant_override("v_separation", 2)
+	var widths := [90, 90, 110, 420]
+	var heads := ["stall", "price", "cumulative", "what it unlocks"]
+	for i in range(heads.size()):
+		grid.add_child(_cell(heads[i], "muted", widths[i]))
+
+	var cum := 0
+	for n in range(3, MAX_BARN + 1):
+		var price: int = BARN_PRICES[n] if n < BARN_PRICES.size() else 0
+		cum += price
+		var have: bool = Career.barn_capacity >= n
+		var tier := "muted" if have else ("primary" if n == Career.barn_capacity + 1 else "secondary")
+		var mark := "✓ " if have else ""
+		grid.add_child(_cell("%s%d" % [mark, n], tier, widths[0]))
+		grid.add_child(_cell("%dg" % price, tier, widths[1]))
+		grid.add_child(_cell("%dg" % cum, tier, widths[2]))
+		var need: String = _first_league_needing(n)
+		var what: String = ("fields a %s team" % need) if need != "" else "bench — a foal, a fusion, or a successor behind an ageing champion"
+		grid.add_child(_cell(what, tier, widths[3]))
+	col.add_child(grid)
+	return panel
+
+
+func _sinks_card() -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+	col.add_child(UiTheme.heading("Gold also goes here — and not at this counter", 3))
+	col.add_child(UiTheme.body_text(
+		"The Shop is not the only thing competing for a purse. These are priced elsewhere and are listed here because a player budgeting for a barn slot is budgeting against them.",
+		"secondary"))
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_XL)
+	grid.add_theme_constant_override("v_separation", 2)
+	var widths := [220, 380, 150]
+	var heads := ["", "price", "where"]
+	for i in range(heads.size()):
+		grid.add_child(_cell(heads[i], "muted", widths[i]))
+	var rows := [
+		["Breed a foal", "%dg once" % BreedingLib.BREED_COST, "Breeding Ranch"],
+		["Forge a fusion", "%dg once, both parents consumed" % LabLib.FUSION_COST, "Lab"],
+		["Keep a body thawable", "%dg every week, forever" % int(WeekPlan.RENTAL_PER_FROZEN), "Lab"],
+		["Feed the stable", "10g plain, 75–500g for the training and premium foods", "Stable"],
+	]
+	for r in rows:
+		grid.add_child(_cell(str(r[0]), "primary", widths[0]))
+		grid.add_child(_cell(str(r[1]), "secondary", widths[1]))
+		grid.add_child(_cell(str(r[2]), "muted", widths[2]))
+	col.add_child(grid)
 	return panel
 
 

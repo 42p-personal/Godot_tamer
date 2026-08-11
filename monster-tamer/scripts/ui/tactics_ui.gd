@@ -17,6 +17,7 @@ const DeploymentBoardScript = preload("res://scripts/ui/deployment_board.gd")
 ## states the claims, that screen grades the SAME strings. Preloaded for its statics only; no
 ## instance of the report is ever made here.
 const ReadScript = preload("res://scripts/ui/report_ui.gd")
+const UiTheme = preload("res://scripts/ui/theme.gd")
 
 const TEAM_SIZE := 5
 
@@ -113,27 +114,74 @@ func _build_ui() -> void:
 		round_lbl.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
 		vbox.add_child(round_lbl)
 
+	## ⚠️ THE ROOT SCROLLS NOW, AND THE TWO INNER SCROLLERS ARE GONE — ONE CHANGE, THREE RULES.
+	## `UI_LAYOUT_RULES` rule 1 (every screen's root is scrollable) was the one this screen never
+	## satisfied: it was laid out as if 1080 were a guarantee, so the moment the per-monster order
+	## strip below was given the height it actually needs, the screen CLIPPED (measured: content
+	## 1119 against a 1080 viewport). Rule 5 was the other half — the team column and the rival
+	## column each carried their own `ScrollContainer`, and three wheel targets stacked in one
+	## screen is the frustration that rule names.
+	##
+	## One outer scroll fixes both: the columns get their real minimum height and the page scrolls
+	## if the window cannot hold them, while the inner lists become plain VBoxes that always show
+	## every row. And because `bottom` stays OUTSIDE this scroll, the commit rail is pinned — rule 2,
+	## on the most important button in the game.
+	##
+	## ⚠️ `ScrollContainer` STILL EXPANDS A CHILD SMALLER THAN ITSELF, so the columns' existing
+	## `SIZE_EXPAND_FILL` behaviour is unchanged when there is room. Verified by capture, not by
+	## reading the docs.
+	var page_scroll := ScrollContainer.new()
+	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vbox.add_child(page_scroll)
+
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 20)
 	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(columns)
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page_scroll.add_child(columns)
 
 	_build_team_column(columns)
 	_build_rival_column(columns)
 
+	# ── THE COMMIT RAIL ───────────────────────────────────────────────────────────────────────
+	#
+	# ⚠️ THE MOST IMPORTANT BUTTON IN THE GAME WAS INVISIBLE, AND NOT FOR THE REASON ANYONE GUESSED.
+	# `docs/META_UI_DIRECTION.md` C4 flagged that no commit control appears in either capture of this
+	# screen at 1152×648 and asked whether it was below the fold. It is NOT below the fold — the
+	# whole screen measures exactly one viewport. It was RIGHT-ALIGNED IN THE BOTTOM RAIL, and
+	# `TutorialOverlay` is a `layer = 100` CanvasLayer autoload pinned bottom-right on every screen
+	# in the game. Cropping the capture at (890..1150, 528..645) shows the guide panel sitting
+	# precisely where "Back to the Stable" and "Commit and fight" are drawn. The button was painted
+	# and then covered — the same class of failure as the v0.79 z-index bug CLAUDE.md warns about,
+	# where every computed-style and hit-test check passes while the screen looks empty.
+	#
+	# THE FIX HERE IS THE HALF THIS FILE OWNS: the primary action LEADS the rail instead of trailing
+	# it. That is also the right hierarchy independently of the overlay — the commit is the reason
+	# the screen exists and "Back to the Stable" is an escape hatch — so it is not a workaround
+	# waiting on someone else's file. ⚠️ The overlay itself still needs fixing (it overlaps a pinned
+	# rail on five other screens and shows a food hint on the title screen); that is flagged for the
+	# integrator in the round report, and it is NOT this file's to change.
 	var bottom := HBoxContainer.new()
 	bottom.add_theme_constant_override("separation", 12)
 	vbox.add_child(bottom)
 
-	commit_status_label = Label.new()
-	commit_status_label.text = "Orders are live until you commit."
-	commit_status_label.add_theme_font_size_override("font_size", 12)
-	commit_status_label.add_theme_color_override("font_color", Color(0.7, 0.75, 0.7))
-	commit_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bottom.add_child(commit_status_label)
+	commit_btn = Button.new()
+	commit_btn.text = "COMMIT AND FIGHT  —  no take-backs"
+	commit_btn.custom_minimum_size = Vector2(300, 44)
+	commit_btn.focus_mode = Control.FOCUS_ALL
+	commit_btn.tooltip_text = "Locks these orders. You cannot intervene once the fight starts — the report will grade exactly the claims listed under YOUR READ."
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		commit_btn.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
+	commit_btn.add_theme_stylebox_override("focus", UiTheme.button_stylebox("primary", "focus"))
+	commit_btn.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
+	commit_btn.pressed.connect(_on_commit)
+	bottom.add_child(commit_btn)
 
 	var back_btn := Button.new()
 	back_btn.text = "Back to the Stable"
+	back_btn.custom_minimum_size = Vector2(0, 44)
+	back_btn.focus_mode = Control.FOCUS_ALL
 	back_btn.pressed.connect(func():
 		if _cup != null and _cup.active:
 			_cup.cancel()
@@ -141,10 +189,13 @@ func _build_ui() -> void:
 	bottom.add_child(back_btn)
 	_interactive.append(back_btn)
 
-	commit_btn = Button.new()
-	commit_btn.text = "Commit and fight"
-	commit_btn.pressed.connect(_on_commit)
-	bottom.add_child(commit_btn)
+	commit_status_label = Label.new()
+	commit_status_label.text = "Orders are live until you commit."
+	commit_status_label.add_theme_font_size_override("font_size", 12)
+	commit_status_label.add_theme_color_override("font_color", Color(0.7, 0.75, 0.7))
+	commit_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	commit_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bottom.add_child(commit_status_label)
 
 	## ⚠️ THE FIELDING RULE HAS TO BE SAYABLE HERE TOO, NOT JUST AT SIGN-UP. `tournament_ui.gd`
 	## refuses entry when nobody can be fielded, so the ONLY ways to arrive here with an empty sheet
@@ -300,13 +351,17 @@ func _build_team_column(parent: HBoxContainer) -> void:
 	# `.disabled` property (see `_on_commit`), and the board is a container. It gets its own
 	# `set_locked()` call at commit time instead.
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	col.add_child(scroll)
+	## ⚠️ THIS SCROLLER SHOWED 2 OF 3 MONSTERS AND THAT IS A LIE ABOUT THE SHEET.
+	## `UI_LAYOUT_RULES` rule 5 permits a nested scroll when the pane is genuinely independent, and
+	## a per-monster order strip beside a formation board qualifies — but it was given whatever
+	## height was left over, which at 1152×648 was two rows out of three (`META_UI_DIRECTION.md`
+	## §1.11). A player who cannot see their third monster's row does not know it has orders at all.
+	## The floor is sized to the roster (capped at five, the largest team any league fields), so the
+	## strip asks for the room it needs and only scrolls past the cap.
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 6)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(list)
+	col.add_child(list)
 	for m in team_a:
 		_add_team_monster_row(list, m)
 
@@ -401,6 +456,20 @@ func _build_rival_column(parent: HBoxContainer) -> void:
 	var gp_box := VBoxContainer.new()
 	gp_box.add_theme_constant_override("separation", 4)
 	gp_panel.add_child(gp_box)
+	# ⚠️ WHO, EXACTLY. `_cup.current_round_entry()` carries the drawn field's own `label` — "Round 2
+	# of the draw", or the titleholder by name for the last round — and this screen never said it.
+	# A player arriving here from the sign-up screen scouted a NAMED opponent per round; landing on
+	# a panel that says only "Gameplan: Bulwark" loses the identity between the two screens.
+	var entry2: Dictionary = _cup.current_round_entry() if (_cup != null and _cup.active) else {}
+	if not entry2.is_empty():
+		var who := Label.new()
+		who.text = "%s%s" % ["♛  " if bool(entry2.get("champion", false)) else "",
+			str(entry2.get("label", ""))]
+		who.autowrap_mode = TextServer.AUTOWRAP_WORD
+		who.add_theme_font_size_override("font_size", 15)
+		who.add_theme_color_override("font_color", Color(0.95, 0.85, 0.5) if bool(entry2.get("champion", false)) else Color(0.85, 0.85, 0.9))
+		gp_box.add_child(who)
+
 	var gp_title := Label.new()
 	gp_title.text = "%s  Gameplan: %s" % [gp.get("icon", "?"), gp.get("name", "Unknown")]
 	gp_title.add_theme_font_size_override("font_size", 15)
@@ -408,6 +477,31 @@ func _build_rival_column(parent: HBoxContainer) -> void:
 	gp_box.add_child(gp_title)
 	_wrapped_row(gp_box, gp.get("tell", ""), 12, Color(0.8, 0.8, 0.85))
 	_wrapped_row(gp_box, "Win condition: %s" % gp.get("winCon", ""), 12, Color(0.7, 0.75, 0.7))
+	# ⚠️ `signature` WAS AUTHORED FOR ALL SIX ARCHETYPES AND RENDERED BY NOTHING. `grep signature
+	# scripts/ui/` returned no hits before this line: six one-sentence descriptions of *what the
+	# fight will LOOK like* — "the highest damage-per-second of any archetype, and the shortest
+	# fights", "far more landed statuses than any other archetype" — sitting unread in
+	# `tactics.gd:GAMEPLANS`. That is the project's signature failure (authored and unreached, 11+
+	# instances) landing on the one screen whose entire job is telling the player what is coming.
+	if str(gp.get("signature", "")) != "":
+		_wrapped_row(gp_box, "What it will look like: %s." % str(gp.get("signature", "")),
+			12, Color(0.78, 0.76, 0.86))
+
+	# ⚠️ "WAS IT ME OR WAS IT THEM" IS ASKED AFTER THE LOSS AND ANSWERABLE BEFORE IT.
+	# `report_ui.gd:_strength_line()` already quotes this exact number in the right-and-lost case —
+	# the most instructive result in the game and the one most likely to be misread as unfairness.
+	# Quoting it BEFORE the commit is what makes the difference between "the game cheated" and "I
+	# knew I was 12% short and gambled". Same function, `ReadScript.roster_power()`, so the two
+	# bookends cannot disagree.
+	var strength := _strength_row(team_a, team_b)
+	if strength != "":
+		var s_lbl := Label.new()
+		s_lbl.text = strength
+		s_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		s_lbl.add_theme_font_size_override("font_size", 12)
+		s_lbl.add_theme_color_override("font_color", _strength_colour(team_a, team_b))
+		gp_box.add_child(s_lbl)
+
 	gp_box.add_child(HSeparator.new())
 	var counter_title := Label.new()
 	counter_title.text = "Counter-read"
@@ -423,13 +517,13 @@ func _build_rival_column(parent: HBoxContainer) -> void:
 	mark_hint_label.visible = false
 	col.add_child(mark_hint_label)
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	col.add_child(scroll)
+	## Plain VBox, not a scroller — see the root-scroll ⚠️ in `_build_ui()`. A five-body rival sheet
+	## is the largest any league fields, and it must be readable in one look: this is the thing the
+	## player is scouting.
 	var rival_list := VBoxContainer.new()
 	rival_list.add_theme_constant_override("separation", 6)
 	rival_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(rival_list)
+	col.add_child(rival_list)
 
 	for m in team_b:
 		_add_rival_row(rival_list, m)
@@ -673,6 +767,37 @@ func _creature_visual(species_id: String, accent: Color) -> Control:
 		swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		box.add_child(swatch)
 	return box
+
+
+## The trained-stat gap between the two sheets, in the report's own words and off the report's own
+## function. ⚠️ NOT A POWER RATING AND IT MUST NOT READ AS ONE — it is the flat sum of six trained
+## stats, which is exactly the thing the ladder's `field_fill` dial moves and the one number a
+## player can act on by training. It does not know about kits, orders or the archetype correction
+## (`Tactics.FILL_MULT`), and the copy says so rather than implying a prediction.
+func _strength_row(a: Array, b: Array) -> String:
+	var pa: float = ReadScript.roster_power(a)
+	var pb: float = ReadScript.roster_power(b)
+	if pa <= 0.0 or pb <= 0.0:
+		return ""
+	var pct: float = (pb / pa - 1.0) * 100.0
+	if pct >= 8.0:
+		return "Trained stat: they carry %.0f%% more than you. Orders will not close that on their own — a right read here buys you a close fight, not a free one." % pct
+	if pct <= -8.0:
+		return "Trained stat: you carry %.0f%% more than they do. This is yours to lose on orders." % absf(pct)
+	return "Trained stat: within %.0f%% of each other. The rosters will not decide this — the orders will." % absf(pct)
+
+
+func _strength_colour(a: Array, b: Array) -> Color:
+	var pa: float = ReadScript.roster_power(a)
+	var pb: float = ReadScript.roster_power(b)
+	if pa <= 0.0 or pb <= 0.0:
+		return Color(0.7, 0.7, 0.75)
+	var pct: float = (pb / pa - 1.0) * 100.0
+	if pct >= 8.0:
+		return Color(0.95, 0.6, 0.45)
+	if pct <= -8.0:
+		return Color(0.55, 0.88, 0.6)
+	return Color(0.85, 0.85, 0.9)
 
 
 func _wrapped_row(parent: Node, text: String, font_size: int, color: Color) -> void:

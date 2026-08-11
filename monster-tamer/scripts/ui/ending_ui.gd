@@ -360,6 +360,19 @@ func _ladder_block() -> Control:
 		bar.tooltip_text = "%s — title %s" % [str((leagues[i] as Dictionary).get("name", "?")),
 			"taken" if taken else "not taken"]
 		grid.add_child(bar)
+	## ⚠️ NAME THE PEOPLE. Eleven abstract rungs is a progress bar; eleven NAMED titleholders is a
+	## career. `Career.champion_for()` has authored a name and a title for every rung since the
+	## ladder shipped and this screen — the one that exists to say what the climb was worth —
+	## printed none of them. Surnames only: a full name does not fit an eleven-column grid, and a
+	## truncated first name ("Dunna…") identifies nobody. The tournament screen's Ladder Board uses
+	## the same rule and the same source, so the two boards can never name different champions.
+	if c.has_method("champion_for"):
+		for i in range(n):
+			var taken2: bool = i < won.size() and bool(won[i])
+			var champ: Dictionary = c.call("champion_for", i)
+			grid.add_child(_climb_cell(_surname(str(champ.get("name", ""))),
+				UiTheme.TEXT_SECONDARY if taken2 else UiTheme.TEXT_MUTED, UiTheme.SIZE_CAPTION))
+
 	for i in range(n):
 		grid.add_child(_climb_cell("wk %d" % par_week_for(i), UiTheme.TEXT_MUTED, UiTheme.SIZE_CAPTION))
 
@@ -367,7 +380,7 @@ func _ladder_block() -> Control:
 	if c.has_method("dynasty_standing"):
 		dyn = c.call("dynasty_standing")
 	var foot := UiTheme.body_text(
-		"A gold bar is a title TAKEN — the whole draw, the champion's belt included. The week under each rung is when %s arrived there; they take the Apex title in week %d."
+		"A gold bar is a title TAKEN — the whole draw, the champion's belt included, off the titleholder named under it. The week beneath is when %s arrived there; they take the Apex title in week %d."
 		% [str(dyn.get("house", "the pace-setter")), int(dyn.get("parWeek", 0))], "muted")
 	foot.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(foot)
@@ -379,6 +392,16 @@ func _ladder_block() -> Control:
 ## does not use. Only the first character moves.
 static func _sentence_case(s: String) -> String:
 	return s if s == "" else s.substr(0, 1).to_upper() + s.substr(1)
+
+
+## "Dunnal Bray" -> "Bray"; "The Dynast" -> "Dynast". ⚠️ `tournament_ui.gd:_surname()` is the same
+## two lines — deliberately duplicated rather than shared, because the alternative is one screen
+## preloading the other purely for a string helper, and `report_ui.gd` already reaches into THIS
+## file for the pace model. Two ⚠️-marked copies of a two-line formatter is cheaper than a third
+## cross-screen dependency; if a third caller appears, that is the signal to lift it into theme.gd.
+static func _surname(full: String) -> String:
+	var parts: PackedStringArray = full.strip_edges().split(" ", false)
+	return full if parts.size() == 0 else str(parts[parts.size() - 1])
 
 
 func _climb_cell(text: String, tint: Color, size: int) -> Control:

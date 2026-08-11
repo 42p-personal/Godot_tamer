@@ -151,10 +151,12 @@ func projected_cost(monsters: Array) -> Dictionary:
 ## does not apply: this function returned "off-class" and the caller told the player their stat
 ## "stops at 70% of the league cap" while `class_headroom` handed that same stat 1.35x. A screen
 ## that invents a constraint is worse than one that omits it, because the player plans around it.
-func stat_ceiling_tier(mi, _stat: String) -> String:
-	if not WeekLib.assignment_active(mi):
-		return "league"
-	return "league"
+## ⚠️ DEAD ON ARRIVAL AND NOW RETIRED. Both branches returned "league", so every caller's
+## non-"league" branch was unreachable — a live function that could not fire, which is the mirror
+## image of this project's signature failure (authored and unreached). Both call sites were removed
+## in round 18. Kept only as this note so the next person does not re-derive it; delete freely.
+##
+##   func stat_ceiling_tier(mi, _stat) -> String: return "league"
 
 
 ## ⚠️ THE PER-CLASS TIER MESSAGES ARE GONE WITH THE CAPS THEY DESCRIBED. This function used to
@@ -281,13 +283,15 @@ func _why_lines(mi, p: Dictionary) -> Array:
 		# on the result rather than a multiplier on the roll, but it is the term most likely to be
 		# the reason a week landed smaller than the card promised — and the whole point of this list
 		# is that the player can explain the week afterwards.
-		var tier := stat_ceiling_tier(mi, str(stat))
-		if tier != "league" and tier != "unassigned":
-			var ceil_v: float = WeekLib.stat_ceiling(mi, cap_of_record(), str(stat))
-			var room: float = ceil_v - float(mi.stats.get(stat, 0.0))
-			if room < 40.0:
-				out.append("%s is %s for a %s — %d points of room left" % [
-					stat, tier, WeekLib.assigned_class_of(mi), int(maxf(0.0, round(room)))])
+		# ⚠️ A `stat_ceiling_tier()` BRANCH STOOD HERE AND COULD NOT FIRE. The function returns the
+		# literal "league" down both of its branches, so the `tier != "league"` guard was always
+		# false and this warning has never been emitted. Removed with its reader in `stable_ui.gd`
+		# — the per-class caps it described went out with `week.gd:class_headroom`.
+		var ceil_v: float = WeekLib.stat_ceiling(mi, cap_of_record(), str(stat))
+		var room: float = ceil_v - float(mi.stats.get(stat, 0.0))
+		if room < 40.0:
+			out.append("%s has %d points of room left before its ceiling" % [
+				stat, int(maxf(0.0, round(room)))])
 	return out
 
 
@@ -355,6 +359,14 @@ func advance(monsters: Array) -> Dictionary:
 		elif str(b.get("food", "")) != "":
 			meal = str(WeekLib.food_by_id(str(b["food"])).get("name", b["food"]))
 		lines.append({
+			# ⚠️ THE ROW MUST CARRY THE SLOT ID, NOT ONLY THE SPECIES NAME. A stable can hold two
+			# of the same species — the market draws from a shared pool and breeding produces
+			# children of a parent's species — so `name` is not a key. `feeding_ui.gd:_arc_for()`
+			# had to resolve a row back to its monster to print the life arc, could only match on
+			# the name, and correctly REFUSED (printing nothing) whenever two matched, because
+			# attributing one monster's ageing to another is the exact class of lie
+			# `UX_LEGIBILITY.md` §2 flags. Emitting the id lets it resolve exactly instead.
+			"id": mi.id,
 			"name": mi.species_name,
 			"stats": stat_moves,
 			"stamina": mi.stamina - float(b["stamina"]),

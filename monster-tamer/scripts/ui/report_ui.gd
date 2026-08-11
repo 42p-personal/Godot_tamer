@@ -38,6 +38,11 @@
 ## ────────────────────────────────────────────────────────────────────────────────────────────
 extends Control
 
+const UiTheme = preload("res://scripts/ui/theme.gd")
+
+## Height of the pinned bottom rail (see `_build_shell()` — R2).
+const RAIL_H := 72
+
 const BattleSimScript = preload("res://scripts/battle_sim.gd")
 const TacticsScript = preload("res://scripts/tactics.gd")
 const Sp = preload("res://scripts/spatial.gd")
@@ -611,8 +616,8 @@ static func read_verdict(graded: Array, winner: String, team_a: Array, team_b: A
 ## by training. Quoted only in the right-and-lost case, where "was it me or was it them" is the
 ## actual question and an unanswered one turns a teachable loss into a grievance.
 static func _strength_line(team_a: Array, team_b: Array) -> String:
-	var pa := _roster_power(team_a)
-	var pb := _roster_power(team_b)
+	var pa := roster_power(team_a)
+	var pb := roster_power(team_b)
 	if pa <= 0.0:
 		return "The tactics were not the problem."
 	var pct: float = (pb / pa - 1.0) * 100.0
@@ -623,7 +628,11 @@ static func _strength_line(team_a: Array, team_b: Array) -> String:
 	return "The two rosters are within %.0f%% of each other, so the plan was not the difference. Read the turning point below." % absf(pct)
 
 
-static func _roster_power(team: Array) -> float:
+## ⚠️ PUBLIC BECAUSE `tactics_ui.gd` QUOTES THE SAME NUMBER BEFORE THE FIGHT. The report tells a
+## player who read correctly and lost that "their roster carries N% more trained stat than yours";
+## the scouting panel now tells them the same N% BEFORE they commit, so the two bookends of a fight
+## use one measurement rather than two that agree until they don't (`UX_LEGIBILITY.md` §1 rule 1).
+static func roster_power(team: Array) -> float:
 	var total := 0.0
 	for m in team:
 		for k in ["STR", "DEX", "CON", "WIS", "INT", "CHA"]:
@@ -664,8 +673,15 @@ func _build_shell() -> void:
 	bg.anchor_right = 1; bg.anchor_bottom = 1
 	add_child(bg)
 
+	# ⚠️ THE SCROLL STOPS SHORT OF THE BOTTOM SO THE RAIL CAN LIVE THERE. `_probe_house.gd`
+	# measures R2 — the primary action reachable WITHOUT scrolling — and this screen was the only
+	# one in the project failing it: its single exit sat at the foot of an 1,179px report, so
+	# "leave the report" required scrolling to the end of the analysis first. That is the wrong
+	# way round for a screen the player reaches after a fight they could not influence: reading
+	# the breakdown must be optional, and leaving must not be.
 	var scroll := ScrollContainer.new()
 	scroll.anchor_right = 1; scroll.anchor_bottom = 1
+	scroll.offset_bottom = -RAIL_H
 	add_child(scroll)
 
 	var margin := MarginContainer.new()
@@ -678,6 +694,17 @@ func _build_shell() -> void:
 	_content.add_theme_constant_override("separation", 14)
 	_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.add_child(_content)
+
+	# The pinned rail, a SIBLING of the scroll — built once in the shell, so `_rebuild()` clearing
+	# `_content` can never take the exit with it.
+	var rail := UiTheme.commit_bar("The breakdown below is optional reading.", "Back to the Stable")
+	rail.anchor_left = 0; rail.anchor_top = 1
+	rail.anchor_right = 1; rail.anchor_bottom = 1
+	rail.offset_top = -RAIL_H
+	add_child(rail)
+	var rail_btn := UiTheme.commit_bar_button(rail)
+	if rail_btn != null:
+		rail_btn.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/stable.tscn"))
 
 
 ## Self-contained default so this scene is screenshot-able standalone — same pattern battle_ui.gd
@@ -737,20 +764,25 @@ func _rebuild() -> void:
 	var analysis := _analyze(_result.get("log", []), _team_a, _team_b, frames, id_of, roster)
 	var dec := _decision_events_by_id(_result.get("log", []), frames, _result, roster, _team_a.size())
 
-	# ⚠️ THE READ GOES FIRST, ABOVE THE SCORELINE. The vision's payoff is not "who won" — it is
-	# "my read was right" — so the verdict on the read is the most prominent thing on this screen
-	# and the result is demoted to a subtitle under it. A report that leads with the score and
-	# buries the grading has told the player what happened without telling them whether they were
-	# right, which is the half of "commit, then observe" this screen exists for.
-	# ⚠️ THE ORDER OF THIS SCREEN IS THE ARGUMENT IT MAKES: verdict, then result, then WHY, then
-	# the detail. It used to open with a 40px VICTORY/DEFEAT and put the causal sentence below ten
-	# monster panels — which tells the player what happened and makes them scroll for whether they
-	# were right. The turning point is promoted with the verdict because `read_verdict()` points at
-	# it by name in the right-and-lost case, and a sentence that refers to something off-screen is
-	# not a sentence.
-	_content.add_child(_read_block(applies))
-	_content.add_child(HSeparator.new())
-	_content.add_child(_banner())
+	# ⚠️ THE ORDER OF THIS SCREEN IS THE ARGUMENT IT MAKES: result, then whether the read was right,
+	# then WHY, then the detail. The turning point stays up here with the verdict because
+	# `read_verdict()` points at it by name in the right-and-lost case, and a sentence that refers
+	# to something off-screen is not a sentence.
+	#
+	# ⚠️ THIS ORDER WAS THE OTHER WAY ROUND AND THE REASONING FOR IT WAS HALF RIGHT. The previous
+	# version led with the read verdict at 34px and demoted VICTORY/DEFEAT to a 24px subhead,
+	# arguing — correctly — that the vision's payoff is "my read was right", not "who won". What
+	# that argument missed is what happens when the grader has nothing to say: the first capture of
+	# this screen has **`THE READ COULD NOT BE GRADED` as the largest type on a fight the player
+	# WON**. A screen whose loudest sentence is an apology about its own machinery has led with the
+	# machinery, not with the payoff.
+	#
+	# So they are now ONE block and the ranking is by what is always true. The result is always
+	# knowable; the grade sometimes is not. Result largest, read verdict immediately beneath it at
+	# heading size and in the tone colour — still the second thing on the screen, still above every
+	# number, and it degrades to a quiet line instead of a shout when it cannot answer.
+	# See `_verdict_block()`.
+	_content.add_child(_verdict_block(applies))
 
 	var narrative := _narrative(analysis, dec, id_of, roster)
 	if narrative != "":
@@ -765,23 +797,63 @@ func _rebuild() -> void:
 
 	_content.add_child(HSeparator.new())
 	_content.add_child(_teams_row(analysis, id_of, dec, applies))
-	_content.add_child(HSeparator.new())
-
-	var back := Button.new()
-	back.text = "Back to the Stable"
-	back.custom_minimum_size = Vector2(0, 40)
-	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/stable.tscn"))
-	_content.add_child(back)
+	# ⚠️ NO EXIT BUTTON HERE ANY MORE — it is pinned in `_build_shell()`'s rail, outside the scroll.
+	# Leaving a duplicate at the foot of the content would be two controls doing one job, and the
+	# scrolled one is the one the player cannot see.
 
 
-## THE VERDICT BLOCK — the answer to the promise `tactics_ui.gd` took. Reads the claims the
-## player actually confirmed (stored on `Tactics.committed.read` at commit time, so the words
-## graded here are byte-identical to the words they said yes to), grades them against this fight,
-## and leads with the sentence.
-func _read_block(tactics_apply: bool) -> Control:
+## THE VERDICT BLOCK — what happened, and whether the plan was the reason, in that order.
+##
+## Reads the claims the player actually confirmed (stored on `Tactics.committed.read` at commit
+## time, so the words graded here are byte-identical to the words they said yes to), grades them
+## against this fight, and states both bookends as one piece.
+func _verdict_block(tactics_apply: bool) -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 
+	# ── 1. WHAT HAPPENED. The one fact that is always knowable. ──────────────────────────────
+	var winner: String = _result.get("winner", "draw")
+	var result_text := "DRAW"
+	var result_col := Color(0.7, 0.7, 0.72)
+	if winner == "A":
+		var id_a: Dictionary = Art.team_identity(0)
+		result_text = "%s VICTORY" % id_a["badge"]
+		result_col = id_a["colour"]
+	elif winner == "B":
+		var id_b: Dictionary = Art.team_identity(1)
+		result_text = "%s DEFEAT" % id_b["badge"]
+		result_col = id_b["colour"]
+
+	var result_lbl := Label.new()
+	result_lbl.text = result_text
+	result_lbl.add_theme_font_size_override("font_size", 40)
+	result_lbl.add_theme_color_override("font_color", result_col)
+	box.add_child(result_lbl)
+
+	var sub := Label.new()
+	sub.text = "%.1fs — %d vs %d standing" % [float(_result.get("duration", 0.0)),
+		int(_result.get("survivorsA", 0)), int(_result.get("survivorsB", 0))]
+	sub.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
+	box.add_child(sub)
+
+	# ⚠️ THE CLOCK, ON THE SCREEN THE PLAYER SEES MOST. Round 16 measured a fight advantage
+	# compounding to 4.03x and dying against a boolean; round 17's answer is to score PACE instead
+	# of adding difficulty (`docs/CONVERSION_DIAGNOSIS.md` §2d — there are only ~6 points of
+	# headroom above a competent player, so any harder gate must work by deleting the naive one).
+	# That only converts anything if the clock is FELT during the climb, so it is stated after every
+	# fight, not saved for a screen visited once. Read live from `Career` via `Pace.snapshot()`.
+	var snap: Dictionary = Pace.snapshot()
+	if not snap.is_empty():
+		var pace_lbl := Label.new()
+		pace_lbl.text = Pace.pace_line(snap)
+		pace_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pace_lbl.add_theme_font_size_override("font_size", 14)
+		pace_lbl.add_theme_color_override("font_color", Pace.pace_color(snap))
+		box.add_child(pace_lbl)
+
+	box.add_child(HSeparator.new())
+
+	# ── 2. WAS THE PLAN THE REASON. ──────────────────────────────────────────────────────────
 	var committed: Dictionary = TacticsScript.committed if tactics_apply else {}
 	var stored: Dictionary = committed.get("read", {})
 	var plan_a: Dictionary = committed.get("planA", {})
@@ -804,10 +876,17 @@ func _read_block(tactics_apply: bool) -> Control:
 	eyebrow.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
 	box.add_child(eyebrow)
 
+	# ⚠️ SIZED BY TONE, AND THAT IS THE FIX RATHER THAN A NEW SENTENCE. `docs/META_UI_DIRECTION.md`
+	# C3 says "fix the hierarchy, not the sentence" — so a verdict that ANSWERS the read is a
+	# heading (22px, second-largest thing on the screen, right under the result) and a verdict that
+	# reports our own inability to answer it ("flat" tone: NO READ TO GRADE / THE READ COULD NOT BE
+	# GRADED) drops to body size. It still says the same honest thing in the same words; it just
+	# stops being the loudest thing in a fight the player won.
+	var flat: bool = str(verdict.get("tone", "flat")) == "flat"
 	var headline := Label.new()
 	headline.text = str(verdict.get("headline", ""))
 	headline.autowrap_mode = TextServer.AUTOWRAP_WORD
-	headline.add_theme_font_size_override("font_size", 34)
+	headline.add_theme_font_size_override("font_size", 15 if flat else 22)
 	headline.add_theme_color_override("font_color", tone_colour.get(str(verdict.get("tone", "flat")), Color(0.8, 0.8, 0.85)))
 	box.add_child(headline)
 
@@ -843,50 +922,6 @@ func _claim_row(c: Dictionary) -> Control:
 	var evidence: String = str(c.get("evidence", ""))
 	row.add_child(_line("      from your order “%s” · %s" % [order_text, evidence], 11, Color(0.62, 0.62, 0.68)))
 	return row
-
-
-func _banner() -> Control:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 2)
-	var winner: String = _result.get("winner", "draw")
-	var headline_text := "DRAW"
-	var color := Color(0.7, 0.7, 0.72)
-	if winner == "A":
-		var id_a: Dictionary = Art.team_identity(0)
-		headline_text = "%s VICTORY" % id_a["badge"]
-		color = id_a["colour"]
-	elif winner == "B":
-		var id_b: Dictionary = Art.team_identity(1)
-		headline_text = "%s DEFEAT" % id_b["badge"]
-		color = id_b["colour"]
-
-	var headline := Label.new()
-	headline.text = headline_text
-	# Demoted from 40 to 24: the score is context for the verdict above it, not the headline.
-	headline.add_theme_font_size_override("font_size", 24)
-	headline.add_theme_color_override("font_color", color)
-	box.add_child(headline)
-
-	var sub := Label.new()
-	sub.text = "%.1fs — %d vs %d standing" % [float(_result.get("duration", 0.0)), int(_result.get("survivorsA", 0)), int(_result.get("survivorsB", 0))]
-	sub.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
-	box.add_child(sub)
-
-	# ⚠️ THE CLOCK, ON THE SCREEN THE PLAYER SEES MOST. Round 16 measured a fight advantage
-	# compounding to 4.03x and dying against a boolean; round 17's answer is to score PACE instead
-	# of adding difficulty (docs/CONVERSION_DIAGNOSIS.md §2d — there are only ~6 points of headroom
-	# above a competent player, so any harder gate must work by deleting the naive one). That only
-	# converts anything if the clock is FELT during the climb, so it is stated after every fight,
-	# not saved for a screen visited once. Read live from `Career` via `Pace.snapshot()`.
-	var snap: Dictionary = Pace.snapshot()
-	if not snap.is_empty():
-		var pace_lbl := Label.new()
-		pace_lbl.text = Pace.pace_line(snap)
-		pace_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pace_lbl.add_theme_font_size_override("font_size", 14)
-		pace_lbl.add_theme_color_override("font_color", Pace.pace_color(snap))
-		box.add_child(pace_lbl)
-	return box
 
 
 func _teams_row(analysis: Dictionary, id_of: Dictionary, dec: Dictionary, tactics_apply: bool) -> Control:
@@ -960,6 +995,22 @@ func _unit_report_row(m, uid: int, unit_stats: Dictionary, tint: Color, is_team_
 	dmg_lbl.add_theme_font_size_override("font_size", 12)
 	dmg_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.7) if collision_tag == "" else Color(0.85, 0.65, 0.4))
 	info.add_child(dmg_lbl)
+
+	# ⚠️ THE ORDERS COME OUT OF THE DISCLOSURE. `docs/META_UI_DIRECTION.md` §2 slack-point 4: "the
+	# two halves of the loop do not use the same words in the same places" — The Read commits
+	# `🎯 Hunt the casters`, the report grades it, and then every per-monster row carried only
+	# `dealt 180 · took 347`. A damage table is what you build when you cannot say what happened.
+	# The row now leads with what this body was TOLD, in the tactics screen's own icon + name
+	# (`Tactics.*_INFO`, `UX_LEGIBILITY.md` §1 rule 1 — one vocabulary, never two), and the full
+	# order/nature breakdown stays inside the disclosure where it always was.
+	var told := _orders_chip_line(m, is_team_a, tactics_apply)
+	if told != "":
+		var told_lbl := Label.new()
+		told_lbl.text = told
+		told_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		told_lbl.add_theme_font_size_override("font_size", 12)
+		told_lbl.add_theme_color_override("font_color", Color(0.82, 0.78, 0.62) if is_team_a else Color(0.78, 0.7, 0.68))
+		info.add_child(told_lbl)
 
 	# Critical-event teaser — shown even collapsed, per UX_LEGIBILITY.md §7 item 2: the one line
 	# of the decision log that matters most should never require a click to see.
@@ -1069,6 +1120,48 @@ func _orders_summary_lines(m, is_team_a: bool, tactics_apply: bool) -> Array:
 			"%s: %s %s %s" % [axis_name, icon, name, suffix],
 			Color(0.8, 0.8, 0.85) if source == "order" else Color(0.6, 0.6, 0.65)))
 	return out
+
+
+## The one-line "what it was told" chip for the collapsed row: the axes the player (or the rival's
+## gameplan) actually SET, in the exact icon + name the tactics screen showed. Axes left on their
+## default are omitted rather than printed as "its nature" — a row that lists four defaults is the
+## four-line table `UX_LEGIBILITY.md` §9 already asked to be collapsed, and it says nothing.
+func _orders_chip_line(m, is_team_a: bool, tactics_apply: bool) -> String:
+	if not tactics_apply:
+		return ""
+	var committed: Dictionary = TacticsScript.committed
+	var plan: Dictionary = committed.get("planA" if is_team_a else "planB", {})
+	var orders_all: Dictionary = committed.get("ordersA" if is_team_a else "ordersB", {})
+	var own: Dictionary = orders_all.get(m, {})
+	var parts: Array = []
+
+	var tp_value := ""
+	if own.has("targetPriority"):
+		tp_value = str(own["targetPriority"])
+	elif plan.has("targetPriority"):
+		tp_value = str(plan["targetPriority"])
+	if tp_value != "":
+		parts.append(_read_order_name(TacticsScript.TARGET_PRIORITY_INFO, tp_value))
+
+	# ⚠️ TEMPERAMENT'S DEFAULT IS AMBIGUOUS FOR YOUR OWN SIDE AND THE ROW MUST NOT GUESS.
+	# `tactics_ui.gd` writes {"temperament": "balanced"} into every player row THE MOMENT THE ROW IS
+	# BUILT, so key-presence cannot tell "the player chose Balanced" from "never touched". Only a
+	# value that differs from that untouched default counts as an order — the same degradation
+	# `_orders_summary_lines()` already makes, and for the same reason.
+	var te_value: String = str(own.get("temperament", "balanced"))
+	if te_value != "balanced" or not is_team_a:
+		parts.append(_read_order_name(TacticsScript.TEMPERAMENT_INFO, te_value))
+
+	var pi_value: String = str(own.get("positionalIntent", ""))
+	if pi_value != "":
+		parts.append(_read_order_name(TacticsScript.POSITIONAL_INTENT_INFO, pi_value))
+
+	if plan.has("formation"):
+		parts.append(_read_order_name(TacticsScript.FORMATION_INFO, str(plan["formation"])))
+
+	if parts.is_empty():
+		return "" if is_team_a else ""
+	return "%s %s" % ["told:" if is_team_a else "their plan:", "  ·  ".join(parts)]
 
 
 func _order_suffix(source: String, is_team_a: bool) -> String:

@@ -26,6 +26,33 @@
 ## ⚠️ AND IT IS DRAWN FROM `week.gd:preview_week`, WHICH RUNS THE REAL TICK ON A CLONE. Not a
 ## second estimate. There is deliberately no arithmetic in this file that could drift from the
 ## tick — the number on the button IS the number that will land.
+##
+## ⚠️ 2026-08-11 — THE ARRANGEMENT WAS THE REMAINING PROBLEM, NOT THE INFORMATION.
+## `docs/META_UI_DIRECTION.md` §A2 measured this screen at **6,071px of single-column scroll, 43
+## buttons, ~130px per card**: choosing between STR and CHA meant scrolling four screen-heights
+## and holding two numbers in your head. Every number on it was already exact and already
+## explained — the player simply could not COMPARE two of them. The old React `RanchView`
+## condensed the same thirty drills into six columns by stat for precisely this reason and that
+## did not survive the port. It is restored here: one column per stat, basic/intensive/extreme
+## stacked inside it, the six cross-training drills in their own row underneath.
+##
+## ⚠️ NOTHING WAS DELETED TO MAKE IT FIT, but one thing was MOVED. The multiplier chain used to
+## read as a full sentence per raised stat ("STR: natural aptitude ×1.10 · STR already leads this
+## build — focus cost ×0.98"). At ~305px of column width that wraps to three lines and the grid
+## stops comparing. The chain is now a terse strip on the card (`×1.10 apt · ×0.98 focus`) with
+## the FULL sentence on the card's tooltip — the knowledge is still reachable, and round 14's
+## lesson (a preview that hides its multipliers teaches nothing) still holds. If a future round
+## finds the terse form is not teaching, put the sentence back and drop to four columns; do not
+## delete it.
+##
+## ⚠️ AND THE CEILING NUMBER CHANGED, DELIBERATELY, BECAUSE THIS SCREEN WAS CONTRADICTING ITSELF.
+## Every bar here read against the flat league cap (`400` at Bronze) while `WeekPlan.drill_note` —
+## the function that decides whether the BUTTON on the same card is enabled — gates on
+## `week.gd:stat_ceiling` (`540`). So the screen refused to admit 140 points of room its own
+## buttons would happily let you train into, and the Stable (which reads `stat_ceiling`) printed a
+## different denominator for the same stat in the same week. `stat_ceiling` is what the tick
+## clamps to, so `stat_ceiling` is what the bars read, and the flat league cap is now stated as
+## what it actually is: the rung's number, which promotion moves.
 extends Control
 
 const Pace = preload("res://scripts/ui/ending_ui.gd")
@@ -34,9 +61,17 @@ const WeekLib = preload("res://scripts/week.gd")
 
 var stat_box: VBoxContainer
 var header_label: Label
+var arc_label: Label
 var ladder_label: Label
 var pace_label: Label
 var plan_label: Label
+var food_box: VBoxContainer
+
+## The six stats in the fixed order every screen in this project prints them in. Also the column
+## order of the grid — `Classify.STATS` is the same list, but this file must not go blank if the
+## autoload is absent in a standalone scene run, so it is spelled out here as a display order only
+## (never as a source of game rules).
+const STAT_ORDER := ["STR", "DEX", "CON", "WIS", "INT", "CHA"]
 
 
 func _ready() -> void:
@@ -65,6 +100,14 @@ func _build_ui() -> void:
 	header_label = UiTheme.body_text("", "secondary")
 	page.add_child(header_label)
 
+	## ⚠️ THE LIFE ARC, ON THE SCREEN THAT SPENDS THE WEEKS. `docs/META_UI_DIRECTION.md` §2 slack
+	## point 1: the training screen prints what a drill GAINS and never what the week COSTS, and
+	## the one currency that is genuinely finite — the monster's remaining career — was on no
+	## surface in the game except the ending screen. Monster Rancher's whole drama is that your
+	## best monster is dying; `stage_info` has known that all along and no screen asked it.
+	arc_label = UiTheme.body_text("", "secondary")
+	page.add_child(arc_label)
+
 	# The ladder line — what the climb is about to ask of this monster. See `_refresh`.
 	ladder_label = UiTheme.body_text("", "secondary")
 	ladder_label.add_theme_color_override("font_color", UiTheme.GOLD)
@@ -82,6 +125,18 @@ func _build_ui() -> void:
 	plan_label = UiTheme.body_text("Nothing booked this week.", "primary")
 	plan_label.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	page.add_child(plan_label)
+
+	page.add_child(HSeparator.new())
+
+	## ⚠️ FOOD IS PINNED ABOVE THE DRILL SCROLL, NOT STACKED INSIDE IT (§A6). It used to be the
+	## first ~170px of the same scroll region as the thirty drills, so the first screenful of the
+	## TRAINING screen was the feeding decision and the drills began below the fold — two decisions
+	## in one scroll, wrong one first. It is still the first decision of the week (a training food
+	## adds +30% to its two stats, so it changes what every drill below is worth); it just no
+	## longer costs the drills their real estate.
+	food_box = VBoxContainer.new()
+	food_box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	page.add_child(food_box)
 
 	page.add_child(HSeparator.new())
 
@@ -152,20 +207,53 @@ func _league_name() -> String:
 	return Career.current_league_name() if has_node("/root/Career") else "current league"
 
 
+## ⚠️ THE CEILING THE TICK ACTUALLY CLAMPS TO — the SAME call `stable_ui.gd:_stat_row` and
+## `WeekPlan.drill_note` make. See the header note: reading the flat league cap here instead was
+## the screen disagreeing with its own Book buttons, and with the Stable, about one stat in one
+## week.
+func _ceiling(m, stat: String) -> float:
+	return WeekLib.stat_ceiling(m, _cap(), stat)
+
+
+## Weeks of trainable career this body has left — `stage_info`'s span, in the currency the player
+## is actually spending. Retirees return 0 rather than a negative.
+func _weeks_left(m) -> int:
+	var span_weeks: int = int(round(float(m.lifespan_years) * float(WeekLib.WEEKS_PER_YEAR)))
+	return maxi(0, span_weeks - int(m.age_weeks))
+
+
 func _refresh() -> void:
 	var m = Roster.selected()
 	for c in stat_box.get_children():
 		c.queue_free()
+	for c in food_box.get_children():
+		c.queue_free()
 	if m == null:
 		header_label.text = "No monster selected — buy one at the Market first."
+		arc_label.text = ""
 		ladder_label.text = ""
 		plan_label.text = ""
 		_refresh_pace()   ## the clock does not stop because nothing is selected
 		return
 
-	header_label.text = "%s — %s · stamina %d/100 · happiness %d/10 · %s ceiling %d" % [
-		m.species_name, m.class_name_, int(round(m.stamina)), m.happiness,
-		_league_name(), int(round(_cap()))]
+	header_label.text = "%s — %s · stamina %d/100 · happiness %d/10" % [
+		m.species_name, m.class_name_, int(round(m.stamina)), m.happiness]
+
+	# ── the life arc: what this week is spent OUT OF ──────────────────────────────────────────
+	var info: Dictionary = WeekLib.stage_info(m.age_weeks, m.lifespan_years)
+	var left: int = _weeks_left(m)
+	var stage: String = str(info.get("stage", "?"))
+	var tm: float = float(info.get("trainMult", 1.0))
+	arc_label.text = "%.1f of %.1f years — %s (training ×%.2f) · %d weeks of career left; this one is one of them." % [
+		float(m.age_weeks) / float(WeekLib.WEEKS_PER_YEAR), float(m.lifespan_years), stage, tm, left]
+	# Elder and Retiree are the states the player must not discover late. Nothing here is
+	# colour-ALONE — the stage word and the week count carry it; the colour only raises the volume.
+	if stage == "Retiree" or left <= 0:
+		arc_label.add_theme_color_override("font_color", UiTheme.DANGER)
+	elif stage == "Elder" or left <= WeekLib.WEEKS_PER_YEAR:
+		arc_label.add_theme_color_override("font_color", UiTheme.CAUTION)
+	else:
+		arc_label.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 
 	# ⚠️ TRAIN *FOR* SOMETHING. The ladder is the spine of the game (CLAUDE.md) and this screen
 	# had no idea it existed — a week planned against no target is maintenance by construction.
@@ -173,14 +261,22 @@ func _refresh() -> void:
 	var nxt := _league_cap_next()
 	var lead_stat := ""
 	var lead_val := -1.0
-	for stat in ["STR", "DEX", "CON", "WIS", "INT", "CHA"]:
+	for stat in STAT_ORDER:
 		if float(m.stats.get(stat, 0.0)) > lead_val:
 			lead_val = float(m.stats.get(stat, 0.0)); lead_stat = str(stat)
-	var ladder := "Leading stat %s %d/%d." % [lead_stat, int(round(lead_val)), int(round(_cap()))]
-	if lead_val >= _cap() - 0.5:
+	var lead_ceiling := _ceiling(m, lead_stat)
+	# ⚠️ BOTH NUMBERS, NAMED, BECAUSE THEY ARE DIFFERENT THINGS. The league cap is the rung's
+	# number and promotion is what moves it; the ceiling is what THIS body may train to out of its
+	# own shared budget. Printing only one of them is how the Stable and this screen came to show
+	# `115/540` and `115/400` for the same stat in the same week.
+	var ladder := "Leading stat %s %d/%d." % [lead_stat, int(round(lead_val)), int(round(lead_ceiling))]
+	if lead_ceiling > _cap() + 0.5:
+		ladder += "  (%s cap %d, +%d of headroom traded out of its other stats.)" % [
+			_league_name(), int(round(_cap())), int(round(lead_ceiling - _cap()))]
+	if lead_val >= lead_ceiling - 0.5:
 		ladder += "  AT THE CEILING — further %s work is wasted until you win promotion." % lead_stat
 	elif nxt > 0.0:
-		ladder += "  Next league lifts the ceiling to %d." % int(round(nxt))
+		ladder += "  Next league lifts the cap to %d." % int(round(nxt))
 	ladder_label.text = ladder
 	_refresh_pace()
 
@@ -188,67 +284,194 @@ func _refresh() -> void:
 
 	# ⚠️ FEEDING IS PART OF THE WEEK'S PLAN, NOT A SEPARATE ERRAND. Without this section gold only
 	# ever moved at the Market, so the weekly economy never bit and food was a mechanic on paper.
-	# It sits ABOVE the drills deliberately: what a monster eats changes what its drill is worth
-	# (training foods add +30% to their two stats), so the food is the first decision, not an
-	# afterthought.
-	stat_box.add_child(_food_card(m))
+	# It is pinned above the scroll (see `_build_ui`) rather than stacked on top of the drills.
+	_build_food_strip(m)
 
 	# Rest is a real option and must be as easy to pick as a drill — resting is how stamina comes
 	# back, and a week spent resting is a genuine strategic choice, not a failure state.
 	stat_box.add_child(_rest_card(m))
+
+	# ── SIX COLUMNS, ONE PER STAT (§A2) ───────────────────────────────────────────────────────
+	# Bucket every drill by the stat it RAISES MOST. The six cross-training drills raise two stats
+	# by the same amount and so belong to neither column — they get their own row underneath,
+	# which is also honest about what they are: the option you take when you do not want to pick.
+	var by_stat: Dictionary = {}
+	for s in STAT_ORDER:
+		by_stat[s] = []
+	var cross: Array = []
 	for d in WeekLib.DRILLS:
-		stat_box.add_child(_drill_card(m, d))
+		var owner_stat: String = _primary_stat_of(d)
+		if owner_stat == "":
+			cross.append(d)
+		else:
+			(by_stat[owner_stat] as Array).append(d)
+
+	var grid := GridContainer.new()
+	grid.columns = STAT_ORDER.size()
+	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_SM)
+	grid.add_theme_constant_override("v_separation", UiTheme.SPACE_SM)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stat_box.add_child(grid)
+
+	for s in STAT_ORDER:
+		grid.add_child(_stat_column(m, str(s), by_stat[s]))
+
+	if not cross.is_empty():
+		stat_box.add_child(UiTheme.heading("Cross-training — two stats, neither of them fast", 3))
+		var cross_grid := GridContainer.new()
+		cross_grid.columns = STAT_ORDER.size()
+		cross_grid.add_theme_constant_override("h_separation", UiTheme.SPACE_SM)
+		cross_grid.add_theme_constant_override("v_separation", UiTheme.SPACE_SM)
+		cross_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		stat_box.add_child(cross_grid)
+		for d in cross:
+			# ⚠️ A GridContainer GIVES A CHILD ONLY ITS MINIMUM WIDTH UNLESS THE CHILD ASKS TO
+			# EXPAND. The stat columns above set this on the column; these cards are added to the
+			# grid directly, and without it the first build rendered all six at ~55px — one word
+			# per line, a wall of vertical text. Caught in the capture, not by the probe: the
+			# content height was fine and every rule passed.
+			var card := _drill_card(m, d)
+			card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			cross_grid.add_child(card)
 
 
-## The week's food. Paid food costs gold; forage is free but costs stamina AND happiness — hunger
-## is never free, it is only ever paid differently (`docs/CORE_LOOP_PORT.md` §3).
-func _food_card(m) -> Control:
-	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+## Which stat a drill BELONGS to — the one it raises most. "" when two stats tie for the top,
+## which is exactly the six `diverse` drills and no others.
+## ⚠️ READ FROM `gains`, NEVER FROM A LOCAL TABLE. `stable_ui.gd` used to carry a hand-copied
+## six-entry drill table "kept in sync" with `week.gd:DRILLS` and it had silently drifted in three
+## separate ways (see that file's header). This asks the shipped table.
+func _primary_stat_of(d: Dictionary) -> String:
+	var gains: Dictionary = d.get("gains", {})
+	var best := ""
+	var best_v := 0.0
+	var tied := false
+	for stat in gains.keys():
+		var v: float = float(gains[stat])
+		if v <= 0.0:
+			continue
+		if v > best_v + 0.001:
+			best_v = v; best = str(stat); tied = false
+		elif absf(v - best_v) <= 0.001:
+			tied = true
+	return "" if tied else best
+
+
+## One stat's column: where the stat stands against the ceiling the tick clamps to, then every
+## drill that leads with it, cheapest first.
+func _stat_column(m, stat: String, drills: Array) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
-	panel.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.size_flags_vertical = Control.SIZE_FILL
 
-	col.add_child(UiTheme.heading("This week's food", 3))
+	var cur: float = float(m.stats.get(stat, 0.0))
+	var ceiling: float = _ceiling(m, stat)
+	col.add_child(UiTheme.stat_bar(stat, cur, maxf(ceiling, cur), UiTheme.GOLD, 34))
 
+	var apt: float = WeekLib.stat_training_bonus(m, stat)
+	var tag := "even going"
+	if apt > 1.05:
+		tag = "natural ×%.2f" % apt
+	elif apt < 0.95:
+		tag = "against the grain ×%.2f" % apt
+	var tag_lbl := UiTheme.body_text(tag, "muted")
+	tag_lbl.add_theme_color_override("font_color",
+		UiTheme.SAFE if apt > 1.05 else (UiTheme.CAUTION if apt < 0.95 else UiTheme.TEXT_MUTED))
+	col.add_child(tag_lbl)
+
+	for d in drills:
+		col.add_child(_drill_card(m, d))
+	return col
+
+
+## The week's food, as ONE pinned strip. Paid food costs gold; forage is free but costs stamina
+## AND happiness — hunger is never free, it is only ever paid differently
+## (`docs/CORE_LOOP_PORT.md` §3).
+##
+## ⚠️ THE TASTE IS ON THE BUTTON NOW, NOT ONLY IN THE TOOLTIP. Every monster has a `favourite_food`
+## and a `hated_food` and `docs/META_UI_DIRECTION.md` §2 slack point 2 found that **no screen in
+## the game showed either**, so the one thing that makes feeding a per-monster decision rather
+## than a bulk errand was invisible — which is why the capture showed all five monsters `ate
+## unfed`. `week.gd:food_happiness_delta` is the source; nothing here re-derives a taste rule.
+func _build_food_strip(m) -> void:
 	var plan: Dictionary = WeekPlan.plan_for(m.id)
 	var chosen: String = str(plan.get("food", ""))
 	var foraging: bool = bool(plan.get("forage", false))
 	var gold: int = Career.gold if has_node("/root/Career") else 0
 
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	food_box.add_child(head)
+	head.add_child(UiTheme.heading("This week's food", 3))
+
+	var fav_name: String = str(WeekLib.food_by_id(str(m.favourite_food)).get("name", ""))
+	var hate_name: String = str(WeekLib.food_by_id(str(m.hated_food)).get("name", ""))
+	var taste := ""
+	if fav_name != "" and hate_name != "":
+		taste = "loves %s · hates %s" % [fav_name, hate_name]
+	elif fav_name != "":
+		taste = "loves %s" % fav_name
+	elif hate_name != "":
+		taste = "hates %s" % hate_name
+	# ⚠️ NEITHER OF THESE MAY AUTOWRAP INSIDE THE HBOX. `UiTheme.body_text` turns wrapping ON by
+	# default, and an HBox hands a wrapping label whatever width is left after its siblings — which
+	# on the first build of this strip was about ten pixels, so the hunger warning rendered as a
+	# column of single letters down the right edge and forced the whole row ~90px tall. A label on
+	# one line of a header row must be told it is one line.
+	if taste != "":
+		var tl := UiTheme.body_text(taste, "secondary")
+		tl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		head.add_child(tl)
 	if chosen == "" and not foraging:
-		col.add_child(UiTheme.body_text("Nothing chosen — it will go hungry and lose heart.", "muted"))
+		var warn := UiTheme.body_text("— nothing chosen, it will go hungry and lose heart", "muted")
+		warn.autowrap_mode = TextServer.AUTOWRAP_OFF
+		warn.add_theme_color_override("font_color", UiTheme.CAUTION)
+		head.add_child(warn)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(spacer)
 
 	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_SM)
+	grid.columns = 6
+	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_XS)
 	grid.add_theme_constant_override("v_separation", UiTheme.SPACE_XS)
-	col.add_child(grid)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	food_box.add_child(grid)
 
 	for f in WeekLib.FOODS:
 		var fid: String = str(f["id"])
 		var price: int = WeekPlan.price_of(fid)
 		var btn := Button.new()
 		btn.focus_mode = Control.FOCUS_ALL
-		btn.custom_minimum_size = Vector2(0, 34)
+		btn.custom_minimum_size = Vector2(0, 30)
+		btn.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 		var boost: Array = f.get("boostStats", [])
-		var label := "%s · %dg" % [str(f["name"]), price]
+		# ⚠️ A monster's FAVOURITE and HATED foods differ per monster — that is exactly why feeding
+		# cannot be one bulk button (town.ts:advanceWeek feeds per-monster for this reason).
+		var delta: int = WeekLib.food_happiness_delta(m, fid)
+		var taste_mark := ""
+		if delta > 0:
+			taste_mark = "♥ "
+		elif delta < 0:
+			taste_mark = "✗ "
+		var label := "%s%s %dg" % [taste_mark, str(f["name"]), price]
 		if not boost.is_empty():
-			label += "  (+30%% %s)" % "/".join(PackedStringArray(boost))
+			label += " +30%% %s" % "/".join(PackedStringArray(boost))
 		if fid == chosen:
 			btn.text = "✓ " + label
 			btn.disabled = true
+			btn.tooltip_text = "Booked for this week."
 		elif price > gold:
-			btn.text = label + " — can't afford"
+			btn.text = label
 			btn.disabled = true
+			# rule 3 — a dead control says why, in the label as well as the tooltip.
+			btn.text = label + " — can't afford"
+			btn.tooltip_text = "Costs %dg; you have %dg." % [price, gold]
 		else:
 			btn.text = label
 			btn.pressed.connect(func():
 				WeekPlan.set_food(m.id, fid)
 				_refresh())
-		# ⚠️ A monster's FAVOURITE and HATED foods differ per monster — that is exactly why feeding
-		# cannot be one bulk button (town.ts:advanceWeek feeds per-monster for this reason).
-		var delta: int = WeekLib.food_happiness_delta(m, fid)
 		if delta > 0:
 			btn.tooltip_text = "Favourite — happiness +%d, and happier monsters roll higher gains." % delta
 		elif delta < 0:
@@ -257,7 +480,8 @@ func _food_card(m) -> Control:
 
 	var forage_btn := Button.new()
 	forage_btn.focus_mode = Control.FOCUS_ALL
-	forage_btn.custom_minimum_size = Vector2(0, 34)
+	forage_btn.custom_minimum_size = Vector2(0, 30)
+	forage_btn.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	forage_btn.text = "✓ Forage — free" if foraging else "Forage — free"
 	forage_btn.disabled = foraging
 	forage_btn.tooltip_text = "No gold, but −%d stamina and −%d happiness. Hunger is never free." % [
@@ -265,9 +489,7 @@ func _food_card(m) -> Control:
 	forage_btn.pressed.connect(func():
 		WeekPlan.set_forage(m.id)
 		_refresh())
-	col.add_child(forage_btn)
-
-	return panel
+	grid.add_child(forage_btn)
 
 
 func _refresh_plan_label(m) -> void:
@@ -353,20 +575,22 @@ func _drill_card(m, d: Dictionary) -> Control:
 	var deltas: Dictionary = pv.get("statDeltas", {})
 	var net := _net_of(deltas)
 
-	var title := UiTheme.heading("%s   → %+d net" % [str(d["name"]), int(round(net))], 3)
+	var title := UiTheme.body_text("%s  → %+d net" % [str(d["name"]), int(round(net))], "primary")
+	title.add_theme_color_override("font_color", UiTheme.GOLD if net > 0.0 else UiTheme.CAUTION)
 	col.add_child(title)
 
-	# The bar for the stat this drill actually raises, read against the LEAGUE CAP — never /100.
-	for stat in raised:
-		var cur: float = float(m.stats.get(stat, 0.0))
-		col.add_child(UiTheme.stat_bar(str(stat), cur, cap, UiTheme.GOLD, 34))
-
 	var live := _delta_text(deltas)
+	# ⚠️ THE WEEK'S REAL COST IS NOT STAMINA (§A5). Stamina comes back — `week.gd:stamina_malus`
+	# floors at 0.5 and never blocks a drill — but a week off this monster's career never does.
+	# `docs/META_UI_DIRECTION.md` §2 slack point 1: the screen printed everything a drill GAINS and
+	# nothing it SPENT, so "training and breeding are strategy, not maintenance" had no price to
+	# reason about. One drill = one of the weeks counted here.
+	var left: int = _weeks_left(m)
 	var live_lbl := UiTheme.body_text(
-		("%s  ·  −%d stamina" % [live, int(round(WeekLib.drill_stamina(kind)))]) if live != ""
-		else "No movement this week — −%d stamina for nothing." % int(round(WeekLib.drill_stamina(kind))),
-		"primary")
-	live_lbl.add_theme_color_override("font_color", UiTheme.GOLD if net > 0.0 else UiTheme.CAUTION)
+		("%s  ·  −%d stam  ·  1 of %d wks left" % [live, int(round(WeekLib.drill_stamina(kind))), left]) if live != ""
+		else "no movement — −%d stam and one of %d weeks, for nothing" % [
+			int(round(WeekLib.drill_stamina(kind))), left],
+		"secondary")
 	col.add_child(live_lbl)
 
 	# The face value stays on the card, quietly, so the player can SEE the gap between what the
@@ -376,31 +600,44 @@ func _drill_card(m, d: Dictionary) -> Control:
 		face.append("+%d %s" % [int(round(float(gains[stat]))), stat])
 	for stat in lowered:
 		face.append("−%d %s" % [int(round(absf(float(gains[stat])))), stat])
-	col.add_child(UiTheme.body_text("on paper: %s" % "  ".join(PackedStringArray(face)), "muted"))
+	var face_lbl := UiTheme.body_text("on paper %s" % " ".join(PackedStringArray(face)), "muted")
+	col.add_child(face_lbl)
 
-	# ⚠️ WHY the live number differs from the face value. Without this the preview is a magic
-	# number and the player learns nothing they can carry to the next monster — and "knowledge the
-	# player has earned" is the entire design bar for this screen.
+	# ⚠️ WHY the live number differs from the face value. TERSE ON THE CARD, FULL IN THE TOOLTIP —
+	# see the header note. Without this in some form the preview is a magic number and the player
+	# learns nothing they can carry to the next monster, and "knowledge the player has earned" is
+	# the entire design bar for this screen.
+	var short_bits: Array = []
+	var long_bits: Array = []
+	var any_penalty := false
+	var any_bonus := false
 	for stat in raised:
-		var reasons: Array = []
 		var bonus: float = WeekLib.stat_training_bonus(m, str(stat))
 		if bonus > 1.05:
-			reasons.append("natural aptitude ×%.2f" % bonus)
+			short_bits.append("×%.2f apt" % bonus); any_bonus = true
+			long_bits.append("%s: natural aptitude ×%.2f" % [stat, bonus])
 		elif bonus < 0.95:
-			reasons.append("trains against the grain ×%.2f" % bonus)
+			short_bits.append("×%.2f apt" % bonus); any_penalty = true
+			long_bits.append("%s: trains against the grain ×%.2f" % [stat, bonus])
 		var focus: float = WeekLib.focus_cost(m, str(stat))
 		if focus < 0.995:
-			reasons.append("%s already leads this build — focus cost ×%.2f" % [stat, focus])
+			short_bits.append("×%.2f focus" % focus); any_penalty = true
+			long_bits.append("%s already leads this build — focus cost ×%.2f" % [stat, focus])
 		var fmult: float = WeekLib.food_train_mult(str(WeekPlan.plan_for(m.id).get("food", "")), str(stat))
 		if fmult > 1.0:
-			reasons.append("this week's food ×%.2f" % fmult)
-		if float(m.stats.get(stat, 0.0)) >= cap - 0.5:
-			reasons.append("%s is AT the %s ceiling" % [stat, _league_name()])
-		if not reasons.is_empty():
-			var r := UiTheme.body_text("%s: %s" % [stat, "  ·  ".join(PackedStringArray(reasons))], "secondary")
-			r.add_theme_color_override("font_color",
-				UiTheme.SAFE if bonus > 1.05 and focus > 0.995 else UiTheme.CAUTION)
-			col.add_child(r)
+			short_bits.append("×%.2f food" % fmult); any_bonus = true
+			long_bits.append("this week's food ×%.2f on %s" % [fmult, stat])
+		# ⚠️ AGAINST `stat_ceiling`, NOT THE FLAT CAP — the same number the Book button gates on.
+		if float(m.stats.get(stat, 0.0)) >= _ceiling(m, str(stat)) - 0.5:
+			short_bits.append("%s AT ceiling" % stat); any_penalty = true
+			long_bits.append("%s is at this body's ceiling — promotion or a better bloodline moves it" % stat)
+	if not short_bits.is_empty():
+		var r := UiTheme.body_text("  ·  ".join(PackedStringArray(short_bits)), "muted")
+		r.add_theme_color_override("font_color",
+			UiTheme.CAUTION if any_penalty else (UiTheme.SAFE if any_bonus else UiTheme.TEXT_MUTED))
+		col.add_child(r)
+	if not long_bits.is_empty():
+		panel.tooltip_text = "\n".join(PackedStringArray(long_bits))
 
 	# drill_note's cap check must look at the RAISED stats only — a paired penalty stat sitting at
 	# the ceiling says nothing about whether this drill is still worth taking.
@@ -409,15 +646,21 @@ func _drill_card(m, d: Dictionary) -> Control:
 
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_ALL
-	btn.custom_minimum_size = Vector2(0, 36)
+	btn.custom_minimum_size = Vector2(0, 30)
+	btn.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	if not bool(note.get("allowed", true)):
 		btn.disabled = true
-		btn.text = str(note.get("note", "Unavailable"))
+		# ⚠️ RULE 3 — a dead control must say WHY, and at column width the full sentence will not
+		# fit on the button face. It goes on the tooltip AND stays legible on the button as a short
+		# form; never a bare greyed "Book".
+		btn.text = "At the ceiling"
+		btn.tooltip_text = str(note.get("note", "Unavailable"))
 	elif booked:
 		btn.disabled = true
-		btn.text = "✓ Booked for this week"
+		btn.text = "✓ Booked"
+		btn.tooltip_text = "This is the week's plan. Advance Week at the Stable to spend it."
 	else:
-		btn.text = "Book this drill"
+		btn.text = "Book"
 		btn.pressed.connect(func():
 			WeekPlan.set_activity(m.id, drill_id)
 			_refresh())
@@ -425,7 +668,7 @@ func _drill_card(m, d: Dictionary) -> Control:
 
 	var warn: String = str(note.get("note", ""))
 	if warn != "" and bool(note.get("allowed", true)):
-		var w := UiTheme.body_text(warn, "primary")
+		var w := UiTheme.body_text(warn, "muted")
 		w.add_theme_color_override("font_color", UiTheme.CAUTION)
 		col.add_child(w)
 

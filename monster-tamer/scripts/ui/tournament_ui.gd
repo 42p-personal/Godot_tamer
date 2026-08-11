@@ -15,6 +15,10 @@
 extends Control
 
 const UiTheme = preload("res://scripts/ui/theme.gd")
+## ⚠️ THE ARCHETYPE VOCABULARY IS READ FROM ITS OWNER, NOT RESTATED. The ladder board names each
+## rung's KIND with the same icon and name `tactics_ui.gd`'s scouting panel and `report_ui.gd`'s
+## counter line use — `UX_LEGIBILITY.md` §1 rule 1, one vocabulary, taken literally.
+const TacticsScript = preload("res://scripts/tactics.gd")
 
 ## Base purse for sweeping a cup at each league, scaling with the ladder. ⚠️ PROPOSED, NOT
 ## BALANCED — `CLAUDE.md` records that the balance baseline is SUSPENDED for the Godot rebuild,
@@ -49,6 +53,15 @@ const REWARD_BY_DROP := [1.0, 0.5, 0.2]
 var _list: VBoxContainer
 var _result_box: VBoxContainer
 var _header: Label
+var _ladder_box: VBoxContainer
+var _season_box: VBoxContainer
+
+## ⚠️ THE PACE MODEL IS READ, NEVER RE-DERIVED. `ending_ui.gd` is the ONE adapter onto
+## `Career`'s par curve and the Varra stable's schedule (its own header says so, and `town_ui.gd`
+## and `report_ui.gd` both already go through it). The ladder board below draws the rival marker
+## from `Pace.par_rung_at_week()` for exactly that reason — a second copy of the schedule here
+## would be a screen that can disagree with the ending screen about who is winning.
+const Pace = preload("res://scripts/ui/ending_ui.gd")
 
 
 func _ready() -> void:
@@ -102,6 +115,20 @@ func _build() -> void:
 	_result_box.add_theme_constant_override("separation", UiTheme.SPACE_SM)
 	body.add_child(_result_box)
 
+	## ⚠️ THE SEASON GOES ABOVE THE FIXTURES, AND IT IS THE THING THIS SCREEN WAS MISSING.
+	## `docs/META_UI_DIRECTION.md` §2 slack-point 3: "nothing accumulates between cups... this is a
+	## series of disconnected fixtures". Both answers below are drawn ENTIRELY from state the game
+	## already ships and no screen rendered — `Career.leagues_won`, `Career.champion_for()`,
+	## `Pace.par_rung_at_week()`, `CupRun.marquee_month()`. Nothing here is invented, and nothing
+	## here is a standings table: see the block comment on `_ladder_board()`.
+	_ladder_box = VBoxContainer.new()
+	_ladder_box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	body.add_child(_ladder_box)
+
+	_season_box = VBoxContainer.new()
+	_season_box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	body.add_child(_season_box)
+
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", UiTheme.SPACE_SM)
 	body.add_child(_list)
@@ -118,6 +145,12 @@ func _build() -> void:
 func _refresh() -> void:
 	for c in _list.get_children():
 		c.queue_free()
+	for c in _ladder_box.get_children():
+		c.queue_free()
+	for c in _season_box.get_children():
+		c.queue_free()
+	_ladder_board(_ladder_box)
+	_season_strip(_season_box)
 
 	## ⚠️ COUNT WHO CAN FIGHT, NOT WHO IS IN THE BARN. `roster.gd:126` states that a retiree cannot
 	## compete and nothing enforced it: this header, the short-handed warning and the entry button
@@ -131,6 +164,223 @@ func _refresh() -> void:
 
 	for idx in range(Career.league_index, -1, -1):
 		_list.add_child(_cup_card(idx))
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE LADDER BOARD — the season container, and the argument for why it is not a standings table
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ TEAMFIGHT MANAGER 2 LIVES IN ITS TABLE AND THIS GAME MUST NOT COPY IT. TFM2 is a ROUND-ROBIN:
+# everyone plays everyone, rivals accumulate results whether you watch or not, and the table is
+# therefore the season's true state. This game is a PROMOTION LADDER whose field is drawn FRESH
+# PER CUP (`Career.make_cup_field()`, seeded off `cup_field_seed()` and rolled every game-month).
+# There is no standing field to tabulate. A standings table here would have to either fabricate
+# rows nobody played — which is the project's rule (1) violation, a screen lying about the thing
+# it describes — or be a one-row log of your own history, which is a log, not a table.
+#
+# THE JOB THE TABLE DOES IS STILL REAL: persistent, named, comparative, lived-in. This game's own
+# structure serves it better, and every ingredient was already shipped and unrendered:
+#   * eleven rungs, each with an AUTHORED champion who has a name, a title and an archetype
+#     (`Career.CHAMPIONS` × `Tactics.ARCHETYPE_BY_LEAGUE`),
+#   * a live pace-setter — the Varra stable — on an authored schedule whose rung moves with the
+#     week (`Career.dynasty_rung_at_week()`, read through the one `Pace` adapter),
+#   * `leagues_won`, which already records every belt you hold.
+#
+# So: eleven rungs across the page, your marker and theirs on it, the champion named under each.
+# Every cell is a fact the game already owns. Nothing on this strip is fabricated.
+func _ladder_board(parent: VBoxContainer) -> void:
+	var leagues: Array = Career.leagues
+	var n: int = leagues.size()
+	if n == 0:
+		return
+	var won: Array = Career.leagues_won
+	var you: int = Career.league_index
+	var them: int = Pace.par_rung_at_week(Career.week)
+
+	parent.add_child(UiTheme.heading("The Ladder", 3))
+
+	var strip := HBoxContainer.new()
+	strip.add_theme_constant_override("separation", 3)
+	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(strip)
+
+	for i in range(n):
+		var taken: bool = i < won.size() and bool(won[i])
+		var lname: String = str((leagues[i] as Dictionary).get("name", "?"))
+		var champ: Dictionary = Career.champion_for(i)
+		var gp: Dictionary = TacticsScript.GAMEPLANS.get(str(champ.get("archetype", "")), {})
+
+		var cell := VBoxContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.add_theme_constant_override("separation", 1)
+		## ⚠️ RULE 3'S SPIRIT ON A NON-CONTROL: this strip is not clickable, so it owes its
+		## explanation in the tooltip AND in visible text. The visible line is the champion's name;
+		## the tooltip carries the read, which is the same string `tactics_ui.gd` will show when you
+		## actually face them — one source (`Tactics.champion_read`), never a second copy.
+		cell.tooltip_text = "%s — %s, %s\n%s %s: %s" % [lname,
+			str(champ.get("name", "")), str(champ.get("title", "")),
+			str(gp.get("icon", "")), str(gp.get("name", "?")), str(champ.get("read", ""))]
+		strip.add_child(cell)
+
+		cell.add_child(_ladder_cell_label(lname,
+			UiTheme.GOLD if i == you else UiTheme.TEXT_SECONDARY, UiTheme.SIZE_CAPTION))
+
+		var bar := PanelContainer.new()
+		bar.custom_minimum_size = Vector2(0, 12)
+		var sb := StyleBoxFlat.new()
+		# Three states, and they are three different facts: a belt you hold, the rung you are
+		# standing on, and a rung nobody has taken off its champion yet.
+		sb.bg_color = UiTheme.GOLD if taken else (UiTheme.CAUTION.darkened(0.45) if i == you else UiTheme.BORDER_FAINT)
+		sb.set_corner_radius_all(2)
+		bar.add_theme_stylebox_override("panel", sb)
+		cell.add_child(bar)
+
+		cell.add_child(_ladder_cell_label("%s %s" % [str(gp.get("icon", "")), _surname(str(champ.get("name", "")))],
+			UiTheme.TEXT_PRIMARY if not taken else UiTheme.TEXT_MUTED, UiTheme.SIZE_CAPTION))
+
+		var marks: Array = []
+		if i == you:
+			marks.append("▲ YOU")
+		if i == them:
+			marks.append("◆ VARRA")
+		cell.add_child(_ladder_cell_label("  ".join(marks),
+			UiTheme.SAFE if (i == you and you >= them) else UiTheme.CAUTION, UiTheme.SIZE_CAPTION))
+
+	var legend := UiTheme.body_text(
+		"A gold bar is a belt you hold. The name under each rung is its titleholder — hover for the read you will be given when you face them.",
+		"muted")
+	legend.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(legend)
+
+	# The pace sentence, in `Career`'s own words via the one adapter. This is the only line on the
+	# screen that says how the climb is GOING rather than what is on offer.
+	var snap: Dictionary = Pace.snapshot()
+	if not snap.is_empty():
+		var pace := UiTheme.body_text(Pace.pace_line(snap), "primary")
+		pace.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pace.add_theme_color_override("font_color", Pace.pace_color(snap))
+		parent.add_child(pace)
+
+
+func _ladder_cell_label(text: String, tint: Color, size: int) -> Label:
+	var l := Label.new()
+	l.text = text
+	## ⚠️ `AUTOWRAP_OFF` + `clip_text`, AND `ending_ui.gd:_climb_cell` CARRIES THE SAME ⚠️ FOR THE
+	## SAME REASON. An autowrapping Label reports a ~0 minimum width, so eleven of them in an
+	## expanding row collapse on top of each other — legible in code, unreadable on screen, and
+	## only ever caught by looking at the capture.
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.clip_text = true
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", tint)
+	return l
+
+
+## "Dunnal Bray" -> "Bray"; "The Dynast" -> "Dynast". Eleven cells across a strip cannot carry a
+## full name, and a truncated first name ("Dunna…") identifies nobody.
+func _surname(full: String) -> String:
+	var parts: PackedStringArray = full.strip_edges().split(" ", false)
+	return full if parts.size() == 0 else str(parts[parts.size() - 1])
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE SEASON — the calendar `cup_run.gd` has always shipped and no screen has ever drawn
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ AUTHORED AND UNREACHED, THE PROJECT'S SIGNATURE FAILURE, ELEVENTH INSTANCE. `cup_run.gd`
+# ships 13 months a game-year, five NAMED marquee events (`MARQUEE_LEAGUES`), a deterministic
+# month per league per year (`marquee_month()`), a 1.75× purse and a 2× fee — and until this
+# strip existed the ONLY way a player could learn any of it was to happen to open the tournament
+# screen in the right month and read a paragraph that had appeared from nowhere.
+#
+# ⚠️ AND THE DRAW'S OWN CLOCK IS ON IT TOO. `Career.cup_field_seed()` is keyed on `week / 4`, so
+# the field you scout holds for exactly this game-month and is a different field next month. That
+# is the rule that makes scouting mean anything ("scout it, go and train, come back to the same
+# opponents") and no screen said it.
+func _season_strip(parent: VBoxContainer) -> void:
+	var wpm: int = CupRun.WEEKS_PER_MONTH
+	var mpy: int = CupRun.MONTHS_PER_YEAR
+	var year: int = int(Career.week) / (wpm * mpy)
+	var month: int = int(int(Career.week) % (wpm * mpy)) / wpm
+
+	# Which league's marquee falls in which month THIS year — only the rungs you may enter, since
+	# `can_enter_league` forbids punching up and a calendar full of events you cannot attend is
+	# noise dressed as content.
+	var by_month: Dictionary = {}
+	for idx in range(0, Career.league_index + 1):
+		var mname: String = CupRun.marquee_name(idx)
+		if mname == "":
+			continue
+		var m: int = CupRun.marquee_month(idx)
+		if not by_month.has(m):
+			by_month[m] = []
+		(by_month[m] as Array).append({"idx": idx, "name": mname,
+			"league": str(Career.league_at(idx).get("name", "?"))})
+
+	parent.add_child(UiTheme.heading("The Season — year %d, month %d of %d" % [year + 1, month + 1, mpy], 3))
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 3)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(row)
+
+	for m in range(mpy):
+		var events: Array = by_month.get(m, [])
+		var is_now: bool = m == month
+		var cell := PanelContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = UiTheme.PANEL_RAISED if is_now else UiTheme.PANEL
+		sb.border_color = UiTheme.GOLD if is_now else (UiTheme.CAUTION if not events.is_empty() else UiTheme.BORDER_FAINT)
+		sb.set_border_width_all(2 if is_now else 1)
+		sb.set_corner_radius_all(UiTheme.RADIUS_SM)
+		sb.content_margin_top = 2; sb.content_margin_bottom = 2
+		cell.add_theme_stylebox_override("panel", sb)
+		var tips: Array = []
+		for e in events:
+			tips.append("%s — the %s marquee" % [str((e as Dictionary)["name"]), str((e as Dictionary)["league"])])
+		cell.tooltip_text = "Month %d of the season%s" % [m + 1,
+			("\n" + "\n".join(tips)) if not tips.is_empty() else " — no marquee falls here"]
+		row.add_child(cell)
+
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 0)
+		cell.add_child(col)
+		col.add_child(_ladder_cell_label("%d" % (m + 1),
+			UiTheme.GOLD if is_now else UiTheme.TEXT_MUTED, UiTheme.SIZE_CAPTION))
+		col.add_child(_ladder_cell_label("★" if not events.is_empty() else "·",
+			UiTheme.CAUTION if not events.is_empty() else UiTheme.BORDER, UiTheme.SIZE_CAPTION))
+
+	# ⚠️ SAY WHAT IS OPEN AND WHAT IS NOT, AND NEVER PRETEND A LOCKED THING IS COMING. The marquee
+	# leagues start at Silver; a Wood-to-Iron player has no marquee at all, and copy that implies
+	# one is "next" would be a screen promising something the rules forbid.
+	var lines: Array = []
+	for m2 in range(mpy):
+		for e2 in (by_month.get(m2, []) as Array):
+			var when: String = "THIS MONTH" if m2 == month else ("month %d" % (m2 + 1))
+			lines.append("★ %s — the %s marquee, %s" % [str((e2 as Dictionary)["name"]),
+				str((e2 as Dictionary)["league"]), when])
+	if lines.is_empty():
+		var none := UiTheme.body_text(
+			"No marquee is open to you yet — they begin at Silver (%s). Climb to one and the year gets a fixture worth planning around: a deeper draw, double entry, and a purse worth %d%% of a normal cup."
+			% [CupRun.MARQUEE_LEAGUES.get("Silver", "The Silver Assay"),
+				int(round(CupRun.MARQUEE_PURSE_MULT * 100.0))], "secondary")
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		parent.add_child(none)
+	else:
+		for ln in lines:
+			var l2 := UiTheme.body_text(str(ln), "primary")
+			l2.add_theme_color_override("font_color", UiTheme.CAUTION)
+			l2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			parent.add_child(l2)
+
+	var holds_until: int = (int(int(Career.week) / wpm) + 1) * wpm
+	var draw_note := UiTheme.body_text(
+		"The fields below were drawn for this month and hold until week %d (%d week%s away) — scout one, go and train against it, and the same teams will still be in the draw when you come back. Next month is a new draw."
+		% [holds_until, holds_until - int(Career.week), "" if holds_until - int(Career.week) == 1 else "s"], "muted")
+	draw_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(draw_note)
 
 
 ## ⚠️ `marquee` IS PASSED IN, NOT LOOKED UP, AND THAT IS A REAL BUG AVOIDED. The marquee is a
@@ -161,11 +411,30 @@ func _fee_for(idx: int, marquee: bool = false) -> int:
 	return fee
 
 
+## ONE CUP, AS A ROW THAT CAN BE COMPARED WITH THE ROW ABOVE IT.
+##
+## ⚠️ THIS CARD USED TO BE A COLUMN OF ELEVEN FULL-WIDTH SENTENCES AND THAT WAS THE WHOLE PROBLEM.
+## Every fact on it was true, sourced and worth knowing — and three of them stacked ran 1,300px, so
+## answering "which of these three cups is worth my week" meant reading forty lines and holding six
+## numbers in your head. `docs/META_UI_DIRECTION.md` C2: *"three tall text blocks cannot be
+## compared"*. NOTHING WAS DELETED HERE. The same values are laid out so the eye can run DOWN a
+## column of cups and compare one field at a time, which is what a management screen is for.
 func _cup_card(idx: int) -> Control:
-	var panel := PanelContainer.new()
 	var is_frontier: bool = idx == Career.league_index
-	panel.add_theme_stylebox_override("panel",
-		UiTheme.panel_style("raised", UiTheme.GOLD) if is_frontier else UiTheme.panel_style("default"))
+	## ⚠️ A CLEARED RUNG IS A DIFFERENT DECISION AND IT GETS A DIFFERENT AMOUNT OF SCREEN.
+	## `REWARD_BY_DROP` pays a cleared league 50% and one below that 20% — this file's own header
+	## says it plainly: *"farming a league you have already cleared is a safety net, not a
+	## strategy."* Rendering the safety net at the same size as the frontier cup pushed the frontier
+	## cup and its bracket off the fold, which inverted the screen: the decision you cannot make
+	## anywhere else got the same weight as the one you make when the real one is out of reach.
+	## The collapsed row still carries every number the fallback decision needs — size, entry,
+	## purse, the punch-down rate, the week cost and who holds it — so nothing is hidden, only
+	## ranked. See `_cleared_cup_row()`.
+	if not is_frontier:
+		return _cleared_cup_row(idx)
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.GOLD))
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
@@ -179,125 +448,118 @@ func _cup_card(idx: int) -> Control:
 	var have: int = Roster.fieldable_count()   ## ⚠️ fieldable, not present — see _refresh()
 	var fee: int = _fee_for(idx, marquee)
 	var weeks: int = CupRun.weeks_for_cup(idx, rounds)
+	var purse: int = _purse_for(idx, marquee)
 
-	col.add_child(UiTheme.heading("%s Cup%s" % [lname, "  ·  your league" if is_frontier else ""], 3))
+	# ── TITLE ROW ─────────────────────────────────────────────────────────────
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	col.add_child(title_row)
+	title_row.add_child(UiTheme.heading("%s Cup" % lname, 3))
+	## ⚠️ `AUTOWRAP_OFF` ON ANYTHING PUT IN AN HBOX. `UiTheme.body_text()` autowraps by default,
+	## which gives a Label a ~0 minimum width — in a row it then wraps to two or three lines and
+	## drags the whole card taller. "your league" rendered as "your / league" in the first capture
+	## of this rework. `ending_ui.gd:_climb_cell` and `_ladder_cell_label()` above carry the same ⚠️.
+	var yours := UiTheme.body_text("· your league · the only rung that promotes you", "secondary")
+	yours.autowrap_mode = TextServer.AUTOWRAP_OFF
+	yours.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title_row.add_child(yours)
 
 	# ── THE MARQUEE — the one week a year this rung is an EVENT ───────────────
 	# ⚠️ The build had no calendar at all: every cup at every rung was identical and available
 	# forever, so "which cup, and when" was never a question. Once a year, at each senior league,
-	# it is. See `cup_run.gd:MARQUEE_LEAGUES`.
+	# it is. See `cup_run.gd:MARQUEE_LEAGUES` — and `_season_strip()` above, which is where a
+	# player now learns the event exists BEFORE the month it lands in.
 	if marquee:
-		var m := UiTheme.heading("%s — the marquee, this month only" % CupRun.marquee_name(idx), 3)
-		m.add_theme_color_override("font_color", UiTheme.GOLD)
-		col.add_child(m)
-		col.add_child(UiTheme.body_text(
-			"A deeper draw (%d teams, one more than usual) and a purse worth %d%% of a normal cup. "
-			% [rounds, int(round(CupRun.MARQUEE_PURSE_MULT * 100.0))]
-			+ "Double entry, and one more team to sweep — the placing money is easier, the title is harder.",
-			"secondary"))
+		var spacer := Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title_row.add_child(spacer)
+		var m := UiTheme.heading("★ %s — THIS MONTH ONLY" % CupRun.marquee_name(idx), 3)
+		m.add_theme_color_override("font_color", UiTheme.CAUTION)
+		m.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		title_row.add_child(m)
 
+	# ── THE TERMS, IN ONE COMPARABLE LINE ─────────────────────────────────────
+	# ⚠️ THE STANDINGS ARE HALF THE WAGER (`career.gd:PLACEMENT_REWARD_FRACTION` pays 100/65/40/0)
+	# and they used to be a separate sentence below the bracket. Placement money and the winner's
+	# purse are the same decision, so they are the same line.
+	var pays: Array = []
+	for place in [1, 2, 3]:
+		if place > rounds + 1:
+			break
+		pays.append("%s %dg" % [Career.placement_label(place),
+			int(round(float(purse) * Career.placement_reward_fraction(place)))])
+	# ⚠️ THE TRIP IS THE PRICE AND IT MUST BE ON THE CARD. `docs/META_GAME_REVIEW.md` E2: the cup
+	# path never touched `Career.week`, so gold per week of game time was infinite and the weekly
+	# tick — the entire stable half — could be skipped by the one activity the game is about. It
+	# now sits IN the terms rather than in its own paragraph, and is repeated on the button and its
+	# tooltip, because it is the cost players systematically fail to price.
 	col.add_child(UiTheme.body_text(
-		"%dv%d  ·  %d teams in the draw  ·  stat ceiling %d  ·  entry %dg  ·  winner's purse %dg" % [
-			team_size, team_size, rounds, cap, fee, _purse_for(idx, marquee)], "secondary"))
+		"%dv%d  ·  %d rounds  ·  stat ceiling %d  ·  entry %dg  ·  %s  ·  anything lower pays nothing  ·  costs %d week%s of your stable's life"
+		% [team_size, team_size, rounds, cap, fee, "  ·  ".join(pays),
+			weeks, "" if weeks == 1 else "s"], "secondary"))
 
-	# ⚠️ SHORT-HANDED ENTRY MUST BE BILLED, NOT DISCOVERED. Entering a body down is now allowed
-	# (`Career.SHORT_ENTRY_ALLOWANCE`) because being locked out was an invisible economy wall, but
-	# a penalty the player only meets in the arena is not a decision — it is an ambush.
+	# ── THE DRAW, ROUND BY ROUND, SIDE BY SIDE ────────────────────────────────
+	# ⚠️ THIS IS THE DECISION. `CLAUDE.md`: "Preparation is the skill; observation is the reward".
+	# None of that is true if the player cannot see what they are training FOR. The field is drawn
+	# off `Career.cup_field_seed()` — stable for the game-month — so the arc shown here is the arc
+	# actually fought: scout it, go and train, come back to the same opponents.
+	#
+	# ⚠️ AND IT IS A BRACKET, NOT A HEADLINE. This used to print the opener and the final and
+	# nothing between, an honest summary of a cup whose middle rounds did not matter: measured at a
+	# 65%-filled roster, round one won 100% at all eleven leagues. `CupRun.round_fill` redistributes
+	# the draw so every round is a fight; showing every round is what makes that legible.
+	#
+	# ⚠️ HORIZONTAL, AND THE FILLS ARE A DRAWN BAR NOW. `[##·-]` was an ASCII chart, which is a
+	# chart that lies about its precision — five buckets rendered as if they were a measurement.
+	var drawn: Array = Career.make_cup_field(idx, rounds)
+	var bracket := HBoxContainer.new()
+	bracket.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	col.add_child(bracket)
+	for r in range(rounds):
+		bracket.add_child(_round_chip(r, rounds, idx, lname, drawn))
+
+	# ── WHO HOLDS IT ──────────────────────────────────────────────────────────
+	var champ: Dictionary = Career.champion_for(idx)
+	var beaten: bool = Career.has_beaten_champion(idx)
+	var gp: Dictionary = TacticsScript.GAMEPLANS.get(str(champ.get("archetype", "")), {})
+	var champ_line := UiTheme.body_text("%s %s, %s — %s. %s%s" % [
+		"↺" if beaten else "♛",
+		str(champ.get("name", "")), str(champ.get("title", "")), str(gp.get("name", "?")),
+		str(champ.get("read", "")),
+		"  (you have taken this title off them before — they have trained since)" if beaten else ""],
+		"primary")
+	champ_line.add_theme_color_override("font_color", UiTheme.GOLD if not beaten else UiTheme.TEXT_SECONDARY)
+	champ_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(champ_line)
+
+	# ⚠️ SHORT-HANDED ENTRY MUST BE BILLED, NOT DISCOVERED. Entering a body down is allowed
+	# (`Career.SHORT_ENTRY_ALLOWANCE`) because being locked out was an invisible economy wall, but a
+	# penalty the player only meets in the arena is not a decision — it is an ambush.
 	## ⚠️ ONLY WHEN ENTRY IS ACTUALLY POSSIBLE. Below the minimum the card already carries
 	## `entry_block_reason()`, and "you will fight 0 v 5" underneath "every monster has retired" is
 	## two sentences competing to explain one state — the player reads the weaker one.
 	if have < team_size and have >= Career.min_team_to_enter(idx) and have > 0:
 		var short_line := UiTheme.body_text(
-			"You will fight %d v %d — a body down, and outnumbered every round. The draw does not shrink to match you."
+			"⚠ You will fight %d v %d — a body down, and outnumbered every round. The draw does not shrink to match you."
 			% [mini(have, team_size), team_size], "primary")
 		short_line.add_theme_color_override("font_color", UiTheme.CAUTION)
 		short_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(short_line)
 
-	# ⚠️ THE TRIP IS THE PRICE, AND IT MUST BE ON THE CARD. `docs/META_GAME_REVIEW.md` E2: the cup
-	# path never touched `Career.week`, so gold per week of game time was infinite and the weekly
-	# tick — the entire stable half — could be skipped by the one activity the game is about. A
-	# cup now costs weeks, and a cost the player cannot see before paying is not a decision.
-	var trip := UiTheme.body_text(
-		"The trip costs %d week%s of game time — your stable ages, eats and rests on the road, but nobody trains."
-		% [weeks, "" if weeks == 1 else "s"], "primary")
-	trip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(trip)
-
-	# ── THE SCOUT REPORT — THE BRACKET, ROUND BY ROUND ────────────────────────
-	# ⚠️ THIS IS THE DECISION. `CLAUDE.md`: "Preparation is the skill; observation is the reward"
-	# and "training and breeding are strategy, not maintenance". None of that is true if the
-	# player cannot see what they are training FOR. The field is drawn off `Career.cup_field_seed()`
-	# — stable for the game-month — so the arc shown here is the arc actually fought: scout it, go
-	# and train against it, come back to the same opponents.
-	#
-	# ⚠️ AND IT IS A BRACKET NOW, NOT A HEADLINE. This used to print the opener and the final and
-	# nothing between, which was an honest summary of a cup whose middle rounds did not matter:
-	# measured at a 65%-filled roster, round one won 100% at all eleven leagues. `CupRun.round_fill`
-	# redistributes the draw so every round is a fight; showing every round is what makes that
-	# redistribution legible instead of merely true.
-	# ⚠️ AND THE BRACKET NOW SAYS WHAT KIND OF TEAM EACH ROUND IS, NOT JUST HOW STRONG. Until this
-	# round every rival came out of one generator and differed only by a fill fraction, so the
-	# eleven authored champion reads were decoration and "knowing WHICH monster to make" had one
-	# answer. A drawn field carries an archetype per round now (`Career.make_cup_field`), and the
-	# strength bar alone would hide the only new information on the card.
-	var drawn: Array = Career.make_cup_field(idx, rounds)
-	for r in range(rounds):
-		var f: float = CupRun.round_fill(r, rounds, idx)
-		var is_last: bool = r == rounds - 1
-		var who: String = "THE TITLE BOUT" if is_last else "Round %d" % (r + 1)
-		var kind: String = String(drawn[r].get("archetype", "")) if r < drawn.size() else ""
-		var line := UiTheme.body_text("   %-14s  %-9s  %3d%% of the %s ceiling   %s" % [
-			who, kind, int(round(f * 100.0)), lname, _strength_bar(f)], "secondary")
-		if is_last:
-			line.add_theme_color_override("font_color", UiTheme.GOLD)
-		col.add_child(line)
-
-	var champ: Dictionary = Career.champion_for(idx)
-	var beaten: bool = Career.has_beaten_champion(idx)
-	var champ_line := UiTheme.body_text("Title held by %s, %s. %s" % [
-		str(champ.get("name", "")), str(champ.get("title", "")), str(champ.get("read", ""))], "primary")
-	champ_line.add_theme_color_override("font_color", UiTheme.GOLD if not beaten else UiTheme.TEXT_SECONDARY)
-	champ_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(champ_line)
-	if beaten:
-		col.add_child(UiTheme.body_text(
-			"You have taken this title off them before — they have trained since.", "muted"))
-
-	# ⚠️ THE STANDINGS ARE THE OTHER HALF OF THE WAGER. Placement pays 100/65/40/0 (`career.gd:
-	# PLACEMENT_REWARD_FRACTION`) and the screen never said so before entry, so a player weighing a
-	# cup could only see the win. Now that entry costs gold AND weeks, "what does second pay" is
-	# part of the decision, not a surprise on the way out.
-	var ladder: Array = []
-	for place in [1, 2, 3]:
-		if place > rounds + 1:
-			break
-		ladder.append("%s %dg" % [Career.placement_label(place),
-			int(round(float(_purse_for(idx, marquee)) * Career.placement_reward_fraction(place)))])
-	col.add_child(UiTheme.body_text(
-		"Standings pay: %s  ·  anything lower pays nothing." % "  ·  ".join(ladder), "secondary"))
-
-	# ⚠️ State the sweep rule BEFORE entry. Promotion on a sweep is a hard gate and the player
-	# must be able to weigh it, not discover it by losing.
-	if is_frontier:
-		## ⚠️ SAY THE NUMBER BEFORE THE FEE, NOT AFTER THE LOSS. This card used to promise "beat
-		## all N", which was the old sweep gate; the rank and the title separated this round and a
-		## sign-up screen that states the wrong gate is worse than one that states none — the
-		## player prices the wager wrong and reads a promotion they DID earn as luck. Read from
-		## `Career.wins_needed_to_advance()`, the same function the outcome uses, so there is one
-		## rule and no copy of it.
-		var need: int = Career.wins_needed_to_advance(idx, rounds)
-		var promo_text: String = "Beat all %d and the title — and the rank — are yours." % rounds if need >= rounds \
-			else "Win %d of the %d rounds and the RANK is yours; take all %d and so is the TITLE." % [need, rounds, rounds]
-		var promo := UiTheme.body_text(
-			promo_text + " Fall short and you place, and are paid to place.", "primary")
-		promo.add_theme_color_override("font_color", UiTheme.GOLD)
-		promo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		col.add_child(promo)
-	else:
-		col.add_child(UiTheme.body_text(
-			"Already cleared — pays %d%% for punching down." % int(REWARD_BY_DROP[
-				clampi(Career.league_index - idx, 0, REWARD_BY_DROP.size() - 1)] * 100.0), "muted"))
+	# ⚠️ State the sweep rule BEFORE entry. Promotion is a hard gate and the player must be able to
+	# weigh it, not discover it by losing.
+	## ⚠️ SAY THE NUMBER BEFORE THE FEE, NOT AFTER THE LOSS. This card used to promise "beat all
+	## N", which was the old sweep gate; the rank and the title separated and a sign-up screen
+	## that states the wrong gate is worse than one that states none — the player prices the
+	## wager wrong and reads a promotion they DID earn as luck. Read from
+	## `Career.wins_needed_to_advance()`, the same function the outcome uses.
+	var need: int = Career.wins_needed_to_advance(idx, rounds)
+	var promo_text: String = "Beat all %d and the title — and the rank — are yours." % rounds if need >= rounds \
+		else "Win %d of the %d rounds and the RANK is yours; take all %d and so is the TITLE." % [need, rounds, rounds]
+	var promo := UiTheme.body_text(promo_text + " Fall short and you place, and are paid to place.", "primary")
+	promo.add_theme_color_override("font_color", UiTheme.GOLD)
+	promo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(promo)
 
 	## ⚠️ A LOCKED DOOR MUST SAY WHY, AND "you have 4" WHEN THE PLAYER CAN SEE FOUR MONSTERS IS A
 	## LIE. `UI_LAYOUT_RULES.md` rule 2 forbids a dead control with no explanation, and the retiree
@@ -314,6 +576,11 @@ func _cup_card(idx: int) -> Control:
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 38)
 	btn.focus_mode = Control.FOCUS_ALL
+	# The full sentence the card no longer spends four lines on lives here, where it is read at the
+	# exact moment it is paid.
+	btn.tooltip_text = ("Entering costs %dg and %d week%s of game time. Your stable ages, eats and rests on the road, "
+		+ "but nobody trains. The field is the one shown above — it will not re-roll at the door.") % [
+			fee, weeks, "" if weeks == 1 else "s"]
 	if blocked != "":
 		btn.disabled = true
 		btn.text = "Cannot enter — %d of %d can still compete" % [have, Roster.monsters.size()]
@@ -321,20 +588,182 @@ func _cup_card(idx: int) -> Control:
 		btn.disabled = true
 		btn.text = "Entry is %dg — you have %dg" % [fee, Career.gold]
 	elif fee <= 0:
-		btn.text = "Enter the %s Cup  ·  entry waived  ·  %d week%s" % [lname, weeks, "" if weeks == 1 else "s"]
+		btn.text = "Enter the %s Cup  ·  entry waived  ·  costs %d week%s of your stable's life" % [
+			lname, weeks, "" if weeks == 1 else "s"]
 		btn.pressed.connect(_on_enter.bind(idx))
 	else:
-		btn.text = "Enter the %s Cup  ·  %dg  ·  %d week%s" % [lname, fee, weeks, "" if weeks == 1 else "s"]
+		btn.text = "Enter the %s Cup  ·  %dg  ·  costs %d week%s of your stable's life" % [
+			lname, fee, weeks, "" if weeks == 1 else "s"]
 		btn.pressed.connect(_on_enter.bind(idx))
+	if is_frontier and not btn.disabled:
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			btn.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
+		btn.add_theme_stylebox_override("focus", UiTheme.button_stylebox("primary", "focus"))
 	col.add_child(btn)
 	return panel
 
 
-## A five-cell bar so the bracket reads as a shape at a glance, not as seven percentages. Scaled
-## against the ceiling the fills are already expressed in, so it needs no second unit.
-func _strength_bar(fill: float) -> String:
-	var cells: int = clampi(int(round(fill * 5.0)), 1, 5)
-	return "[%s%s]" % ["#".repeat(cells), "·".repeat(5 - cells)]
+## A RUNG YOU HAVE ALREADY TAKEN — the fallback, priced in one row.
+##
+## ⚠️ NOTHING IS HIDDEN, ONLY RANKED. Every number that decides "should I farm this instead" is on
+## the row: the field size, the entry, what first pays after the punch-down multiplier, the week
+## cost and who still holds the belt. What is dropped is the per-round bracket and the counter-read
+## — the scouting apparatus, which exists to help you beat a rung you have NOT beaten. Keeping it
+## here cost 220px per cleared league and pushed the frontier cup's own bracket below the fold.
+func _cleared_cup_row(idx: int) -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	panel.add_child(col)
+
+	var lname: String = Career.league_at(idx).get("name", "?")
+	var team_size: int = Career.team_size_for_league(idx)
+	var marquee: bool = CupRun.is_marquee(idx)
+	var rounds: int = CupRun.rounds_for(idx)
+	var fee: int = _fee_for(idx, marquee)
+	var weeks: int = CupRun.weeks_for_cup(idx, rounds)
+	var purse: int = _purse_for(idx, marquee)
+	var drop_pct: int = int(REWARD_BY_DROP[
+		clampi(Career.league_index - idx, 0, REWARD_BY_DROP.size() - 1)] * 100.0)
+	var champ: Dictionary = Career.champion_for(idx)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	col.add_child(row)
+
+	var name_lbl := UiTheme.body_text("%s Cup" % lname, "primary")
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	name_lbl.custom_minimum_size = Vector2(150, 0)
+	name_lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
+	row.add_child(name_lbl)
+
+	var terms := UiTheme.body_text(
+		"cleared — pays %d%%  ·  %dv%d  ·  %d rounds  ·  entry %dg  ·  1st %dg  ·  %d week%s  ·  ♛ %s"
+		% [drop_pct, team_size, team_size, rounds, fee, purse, weeks,
+			"" if weeks == 1 else "s", str(champ.get("name", ""))], "muted")
+	terms.autowrap_mode = TextServer.AUTOWRAP_OFF
+	terms.clip_text = true
+	terms.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(terms)
+
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(230, 32)
+	btn.focus_mode = Control.FOCUS_ALL
+	btn.tooltip_text = ("A rung you have already taken. It cannot promote you and it pays %d%% of its own purse, "
+		+ "but it still costs %dg and %d week%s. %s still holds the belt and has trained since you took it.") % [
+			drop_pct, fee, weeks, "" if weeks == 1 else "s", str(champ.get("name", ""))]
+	var blocked: String = Roster.entry_block_reason(Career.min_team_to_enter(idx))
+	if blocked != "":
+		btn.disabled = true
+		## ⚠️ THE REASON GOES ON ITS OWN WRAPPED LINE, NOT INSIDE A 230px BUTTON. `entry_block_reason`
+		## returns a whole sentence; Godot's Button clips text with no ellipsis, so putting it in the
+		## label would have produced a dead control whose explanation was cut off mid-word — rule 3
+		## satisfied on paper and broken on screen. The button says the state, the line says why, and
+		## the tooltip carries it too for anyone hovering.
+		btn.text = "Cannot enter"
+		btn.tooltip_text = blocked
+		var why := UiTheme.body_text(blocked, "primary")
+		why.add_theme_color_override("font_color", UiTheme.CAUTION)
+		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(why)
+	elif Career.gold < fee:
+		btn.disabled = true
+		btn.text = "Entry is %dg — you have %dg" % [fee, Career.gold]
+		btn.tooltip_text = "You cannot afford this rung's entry fee."
+	else:
+		btn.text = "Farm the %s Cup  ·  %dg" % [lname, fee]
+		btn.pressed.connect(_on_enter.bind(idx))
+	row.add_child(btn)
+	return panel
+
+
+## ONE ROUND OF THE DRAW: which round, what KIND of team, and how filled it is — three facts
+## stacked in a fixed-width chip so the whole bracket reads left to right as an escalation.
+##
+## ⚠️ THE KIND IS THE NEW INFORMATION AND IT MUST NOT BE HIDDEN BEHIND THE BAR. Until the archetype
+## workstream every rival came out of one generator and differed only by a fill fraction, so the
+## eleven authored champion reads were decoration and "knowing WHICH monster to make" had one
+## answer. A drawn field carries an archetype per round now (`Career.make_cup_field`), and a
+## strength bar alone would show only the half that was already there.
+func _round_chip(r: int, rounds: int, idx: int, lname: String, drawn: Array) -> Control:
+	var f: float = CupRun.round_fill(r, rounds, idx)
+	var is_last: bool = r == rounds - 1
+	var kind: String = String(drawn[r].get("archetype", "")) if r < drawn.size() else ""
+	var gp: Dictionary = TacticsScript.GAMEPLANS.get(kind, {})
+
+	var chip := PanelContainer.new()
+	chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UiTheme.PANEL_RAISED if is_last else UiTheme.PANEL
+	sb.border_color = UiTheme.GOLD if is_last else UiTheme.BORDER_FAINT
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(UiTheme.RADIUS_SM)
+	sb.content_margin_left = UiTheme.SPACE_SM; sb.content_margin_right = UiTheme.SPACE_SM
+	sb.content_margin_top = 3; sb.content_margin_bottom = 3
+	chip.add_theme_stylebox_override("panel", sb)
+	## The read the player will be handed on the tactics screen when they meet this team — same
+	## string, same source (`Tactics.read_for` / `champion_read`), so the scout and the fight cannot
+	## describe the opponent differently.
+	chip.tooltip_text = "%s\n%s\n\nCounter-read: %s" % [
+		str(drawn[r].get("label", "")) if r < drawn.size() else "",
+		str(drawn[r].get("read", "")) if r < drawn.size() else "",
+		TacticsScript.counter_for(kind)]
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	chip.add_child(v)
+
+	var who := Label.new()
+	who.text = "THE TITLE BOUT" if is_last else "Round %d" % (r + 1)
+	who.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	who.add_theme_color_override("font_color", UiTheme.GOLD if is_last else UiTheme.TEXT_SECONDARY)
+	v.add_child(who)
+
+	var what := Label.new()
+	what.text = "%s %s" % [str(gp.get("icon", "")), str(gp.get("name", kind))]
+	what.clip_text = true
+	what.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	what.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
+	v.add_child(what)
+
+	v.add_child(_fill_bar(f, lname))
+	return chip
+
+
+## A drawn strength bar with its number printed on the row — never fill colour alone
+## (`theme.gd`'s own standing rule, and `docs/ACCESSIBILITY.md` §0 finding #2).
+func _fill_bar(f: float, lname: String) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = clampf(f, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 8)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = UiTheme.CAUTION if f >= 0.75 else UiTheme.GOLD
+	fg.set_corner_radius_all(2)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = UiTheme.SURFACE
+	bg.set_corner_radius_all(2)
+	bar.add_theme_stylebox_override("fill", fg)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.tooltip_text = "%d%% of the %s stat ceiling" % [int(round(f * 100.0)), lname]
+	row.add_child(bar)
+
+	var pct := Label.new()
+	pct.text = "%d%%" % int(round(f * 100.0))
+	pct.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	pct.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
+	row.add_child(pct)
+	return row
+
 
 
 ## Starts a LIVE cup: `CupRun` pre-generates each round's rival team, then this screen hands off

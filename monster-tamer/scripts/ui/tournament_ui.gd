@@ -55,6 +55,7 @@ var _result_box: VBoxContainer
 var _header: Label
 var _ladder_box: VBoxContainer
 var _season_box: VBoxContainer
+var _gaps_box: VBoxContainer
 
 ## ⚠️ THE PACE MODEL IS READ, NEVER RE-DERIVED. `ending_ui.gd` is the ONE adapter onto
 ## `Career`'s par curve and the Varra stable's schedule (its own header says so, and `town_ui.gd`
@@ -62,6 +63,14 @@ var _season_box: VBoxContainer
 ## from `Pace.par_rung_at_week()` for exactly that reason — a second copy of the schedule here
 ## would be a screen that can disagree with the ending screen about who is winning.
 const Pace = preload("res://scripts/ui/ending_ui.gd")
+
+## ⚠️ THE GAP SENTENCE IS FORMATTED IN ONE PLACE, FOR THE SAME REASON `Pace` EXISTS ABOVE. Round
+## 20 put the gap panel on three more screens; the analysis is `Roster.stable_gaps()` and the
+## PHRASING is `town_ui.gd:gap_sentence()`. Two screens formatting the same dictionary their own
+## way is how one truth becomes two — the failure this file's own `Pace` note describes.
+## Structurally it belongs on `UiTheme` beside `monster_card()`; that file was owned by another
+## workstream this round, so the move is a note to the integrator, not a silent second copy.
+const GapVoice = preload("res://scripts/ui/town_ui.gd")
 
 
 func _ready() -> void:
@@ -115,6 +124,19 @@ func _build() -> void:
 	_result_box.add_theme_constant_override("separation", UiTheme.SPACE_SM)
 	body.add_child(_result_box)
 
+	## ⚠️ THE SHORTFALL GOES HERE, NOT AT THE GATE, AND THAT IS THE WHOLE POINT OF THIS PANEL.
+	## Round 19's capture of this screen showed the header reading "2 able to compete" beside a cup
+	## that fields 3, and — eleven rows further down, under the bracket — a separate warning that
+	## "you will fight 2 v 3". One fact, two voices, and the one a player could act on was the
+	## buried one. A shortfall discovered at the sign-up button is not a decision; it is the bill
+	## for a decision that was made four weeks ago at the Market.
+	##
+	## So the stable's gaps are stated ABOVE the draw, in `Roster.stable_gaps()`'s own words — the
+	## same words the Market, the Town and the Lab print. See THE GAP VOICE in `town_ui.gd`.
+	_gaps_box = VBoxContainer.new()
+	_gaps_box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	body.add_child(_gaps_box)
+
 	## ⚠️ THE SEASON GOES ABOVE THE FIXTURES, AND IT IS THE THING THIS SCREEN WAS MISSING.
 	## `docs/META_UI_DIRECTION.md` §2 slack-point 3: "nothing accumulates between cups... this is a
 	## series of disconnected fixtures". Both answers below are drawn ENTIRELY from state the game
@@ -149,8 +171,15 @@ func _refresh() -> void:
 		c.queue_free()
 	for c in _season_box.get_children():
 		c.queue_free()
+	for c in _gaps_box.get_children():
+		c.queue_free()
 	_ladder_board(_ladder_box)
 	_season_strip(_season_box)
+	## ⚠️ RE-READ ON EVERY REFRESH, NEVER CACHED. `_refresh()` runs again after a cup resolves and
+	## after promotion, and both change the answer — a gap panel showing the roster you had before
+	## the cup, above a cup card showing the rung you are on after it, is the same screen printing
+	## two different weeks.
+	_gaps_panel(_gaps_box)
 
 	## ⚠️ COUNT WHO CAN FIGHT, NOT WHO IS IN THE BARN. `roster.gd:126` states that a retiree cannot
 	## compete and nothing enforced it: this header, the short-handed warning and the entry button
@@ -164,6 +193,63 @@ func _refresh() -> void:
 
 	for idx in range(Career.league_index, -1, -1):
 		_list.add_child(_cup_card(idx))
+
+
+## WHAT THIS STABLE CANNOT YET DO — above the draw, in the gap vocabulary, once.
+##
+## ⚠️ THE ANALYSIS IS `Roster.stable_gaps()` AND NOTHING HERE RECOMPUTES ANY PART OF IT. This
+## screen already owns `fieldable_count()` and `team_size_for_league()` and could trivially write
+## its own "you are a body short" — which is precisely how the 400-vs-540 ceiling contradiction
+## reached a third screen. One function; this panel only renders it.
+##
+## ⚠️ AND IT NAMES THE GAP WITHOUT NAMING THE FIX. No cup is recommended, no purchase is scored;
+## the panel states what the roster lacks and leaves the wager to the player.
+func _gaps_panel(parent: VBoxContainer) -> void:
+	if not has_node("/root/Roster"):
+		return
+	var gaps: Array = Roster.stable_gaps()
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default", UiTheme.BORDER))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	panel.add_child(col)
+	parent.add_child(panel)
+
+	var head := UiTheme.body_text("What your stable lacks", "primary")
+	head.add_theme_color_override("font_color", UiTheme.GOLD)
+	col.add_child(head)
+
+	if gaps.is_empty():
+		## ⚠️ A RESULT, NOT A BLANK — the same four questions, all four passed. Rendering nothing
+		## here would let a player read the absence as "the screen has not checked".
+		col.add_child(UiTheme.body_text(
+			"Nothing this screen can name. You field enough bodies for this rung and the next, you "
+			+ "hold damage and support, part of the answer to this league's champion, and bodies "
+			+ "that can still train. Every cup below is a wager you can actually make.", "muted"))
+		return
+
+	for gv in gaps:
+		var g: Dictionary = gv
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+		col.add_child(row)
+
+		## Severity carried by GLYPH as well as colour — never hue alone. `▲`/`•` are the two the
+		## rest of the UI already renders; `▸` is not in the packaged font and falls back to tofu.
+		var blocking: bool = int(g["severity"]) >= 2
+		var mark := UiTheme.body_text("▲" if blocking else "•", "primary")
+		mark.autowrap_mode = TextServer.AUTOWRAP_OFF
+		mark.add_theme_color_override("font_color",
+			UiTheme.CAUTION if blocking else UiTheme.TEXT_SECONDARY)
+		row.add_child(mark)
+
+		var line := UiTheme.body_text(GapVoice.gap_sentence(g), "secondary")
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if blocking:
+			line.add_theme_color_override("font_color", UiTheme.CAUTION)
+		row.add_child(line)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -544,9 +630,15 @@ func _cup_card(idx: int) -> Control:
 	## ⚠️ ONLY WHEN ENTRY IS ACTUALLY POSSIBLE. Below the minimum the card already carries
 	## `entry_block_reason()`, and "you will fight 0 v 5" underneath "every monster has retired" is
 	## two sentences competing to explain one state — the player reads the weaker one.
+	## ⚠️ AND IT IS THE TERMS OF *THIS ENTRY*, NOT A SECOND DIAGNOSIS. Round 19's capture had this
+	## line stating "a body down" eleven rows under a header that had already counted the bodies,
+	## and it read as the screen arguing with itself. The SHORTFALL is now named once, up top, in
+	## the gap panel's words; what belongs on the ticket is what the ticket buys — the shape of
+	## the sheet you are entering with. Same arithmetic, one source (`fieldable_count()` ×
+	## `team_size_for_league()`, which is what `stable_gaps()` reads too), two different facts.
 	if have < team_size and have >= Career.min_team_to_enter(idx) and have > 0:
 		var short_line := UiTheme.body_text(
-			"⚠ You will fight %d v %d — a body down, and outnumbered every round. The draw does not shrink to match you."
+			"⚠ Entering short-handed: you field %d against %d, every round. The draw does not shrink to match you."
 			% [mini(have, team_size), team_size], "primary")
 		short_line.add_theme_color_override("font_color", UiTheme.CAUTION)
 		short_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

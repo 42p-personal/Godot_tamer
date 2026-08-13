@@ -761,7 +761,13 @@ func _agenda_panel() -> Control:
 		var line := UiTheme.body_text(("➤ " if i == 0 else "· ") + str(it["text"]),
 			"primary" if i == 0 else "secondary")
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		if i == 0:
+		## ⚠️ RANK IS THE EMPHASIS CHANNEL HERE AND IT STAYS THAT WAY — only the top prompt is
+		## tinted, or the panel becomes a wall of amber and the ranking stops meaning anything.
+		## `emphasise` is the one deliberate exception: the gap row is appended LAST on purpose
+		## (it is about the stable's shape, not about this week) but a BLOCKING gap still has to
+		## be visible from the doorway. It is the only key that sets it, and it never sets it for
+		## a severity-1 gap — see `_agenda_items()` item 7 and THE GAP VOICE below it.
+		if i == 0 or bool(it.get("emphasise", false)):
 			line.add_theme_color_override("font_color", it["tint"])
 		col.add_child(line)
 		# Only the top prompt gets a button. Five buttons is a second navigation grid, and the
@@ -881,7 +887,91 @@ func _agenda_items() -> Array:
 	if out.is_empty():
 		out.append({"text": "Nothing is urgent. Every body is planned, rested and housed — this is the week to spend on the ladder.",
 			"action": "Go to the Tournament →", "scene": "res://scenes/tournament.tscn", "tint": UiTheme.SAFE})
+
+	# LAST — WHAT THIS STABLE CANNOT YET DO. Every prompt above is about THIS WEEK; this one is the
+	# only line on the panel about the stable's SHAPE, and it is what makes "the single best thing
+	# to do this week" an honest naming rather than a checklist of chores. `Roster.stable_gaps()` —
+	# see THE GAP VOICE block below this function, and never a second copy of the analysis here.
+	#
+	# ⚠️ APPENDED AFTER THE EMPTY-CHECK ABOVE, AND ALWAYS. Two reasons, and the first one was found
+	# by tracing the capture fixture rather than by reading the code: at the probe's mid-career
+	# Bronze stable `stable_gaps()` returns EMPTY (5 fieldable against a team of 3, Iron also 3,
+	# damage and support both held, two of the four rushdown classes owned, all five still
+	# training), so a row that only appears when there IS a gap would have shipped invisible and
+	# been captured as "no change". Second and larger: an empty gap list is a RESULT — the four
+	# questions were asked and all four passed — and a panel that silently drops the question it
+	# just asked leaves the player unable to tell "nothing missing" from "never checked". That is
+	# the same defect as a blank capture passing for a good one.
+	#
+	# ⚠️ ONE FACT, ONE ROW. `block` above is the bodies shortfall said as a GATE ("this cup needs 3
+	# — you have 2"); gap #1 is the same arithmetic said as a lack. Printing both is the exact
+	# defect this round was sent to fix on the Tournament screen, so the gap yields to the gate.
+	var gaps: Array = Roster.stable_gaps()
+	var shown := false
+	for gv in gaps:
+		var g: Dictionary = gv
+		if str(g["kind"]) == "bodies" and block != "":
+			continue
+		# ⚠️ THE GLYPH GOES WHERE THE COLOUR GOES, AND ONLY THERE. A blocking gap is tinted CAUTION,
+		# so it carries `▲` too — hue is never the only channel. A severity-1 gap is left in the
+		# panel's ordinary secondary colour, which encodes nothing, so it needs no mark.
+		out.append({"text": ("▲ " if int(g["severity"]) >= 2 else "") + gap_sentence(g),
+			"action": "Go to the Market →", "scene": "res://scenes/market.tscn",
+			"tint": UiTheme.CAUTION if int(g["severity"]) >= 2 else UiTheme.TEXT_SECONDARY,
+			"emphasise": int(g["severity"]) >= 2})
+		shown = true
+		break
+	if not shown:
+		## The Market's all-clear, word for word — the one vocabulary, taken literally. It names the
+		## four questions so the answer is legible as an answer.
+		out.append({"text": "Nothing your stable lacks: enough bodies for this rung and the next, damage and support both held, part of the answer to this league's champion, and every body still able to train.",
+			"action": "", "scene": "", "tint": UiTheme.SAFE})
 	return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE GAP VOICE — decided round 20, applied on FOUR screens, written down here because it was
+# invented once and must not be re-invented three more times.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# `Roster.stable_gaps()` was built screen-agnostic and called from exactly one screen (the
+# Market). Three more want it, and the reason round 19 did not wire them is that each is a real
+# decision about what its prompt should SAY — three screens inventing three phrasings at the end
+# of an integration round is how this project ended up in four registers the round before.
+#
+# THE RULE, in three parts:
+#
+#   1. THE WORDS ARE `stable_gaps()`'s WORDS. Every screen prints `headline` VERBATIM — a noun
+#      phrase naming a lack ("2 more bodies that can compete", "no support body at all"). Never a
+#      paraphrase, because a paraphrase is a second copy of the analysis in prose, and never a
+#      recommendation, because ⚠️ NAMING THE GAP IS THE JOB AND NAMING THE PURCHASE IS NOT — a
+#      screen that thinks for the player fails the same test as a training week that is an
+#      obvious click. Sentence-case is applied where a headline starts a sentence; that is
+#      capitalisation, not rewording.
+#   2. SEVERITY IS THE MARKET'S TWO GLYPHS, `▲` (blocks something today) and `•` (bites at the
+#      next step), paired with CAUTION / TEXT_SECONDARY. Never hue alone (docs/ACCESSIBILITY.md),
+#      and never `▸` — it is not in the packaged font and renders as a tofu dot. The precise rule
+#      is THE GLYPH GOES WHERE THE COLOUR GOES: a list that tints both severities carries both
+#      glyphs (Market, Tournament); the Town shows one gap in a ranked prompt list and tints only
+#      the blocking case, so only that case is marked. An unmarked line there encodes nothing.
+#   3. WHAT DIFFERS PER SCREEN IS DEPTH AND THE LEAD-IN, NEVER THE VOCABULARY:
+#        Market      "What your stable lacks"   — every gap, headline + detail, the full panel.
+#        Town        the TOP gap only, as one agenda prompt, behind the door that fixes it.
+#        Tournament  every gap, above the draw — said ONCE, before the cup, not at the gate.
+#        Lab         "The stable would then lack:" — the headlines a preservation would OPEN.
+#
+# ⚠️ AN EMPTY GAP LIST IS A RESULT AND MUST RENDER AS ONE. "Nothing this screen can name" is
+# information; manufacturing a gap to fill a panel, or silently rendering nothing, are both the
+# screen lying about the thing it describes.
+
+
+## One gap as one sentence — the Town's and the Tournament's shared form. The headline is
+## sentence-cased for its position and otherwise untouched; the detail follows it whole.
+static func gap_sentence(g: Dictionary) -> String:
+	var head: String = str(g.get("headline", ""))
+	if head == "":
+		return str(g.get("detail", ""))
+	return "%s%s. %s" % [head.substr(0, 1).to_upper(), head.substr(1), str(g.get("detail", ""))]
 
 
 ## `forced_disabled`/`forced_reason` let a location that IS built (e.g. Tournament) be temporarily

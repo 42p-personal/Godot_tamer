@@ -639,6 +639,20 @@ static func read_verdict(graded: Array, winner: String, team_a: Array, team_b: A
 			"broke": broke += 1
 	var judged: int = held + partly + broke
 	var won: bool = winner == "A"
+	# ⚠️ NOT-A-WIN IS NOT THE SAME AS A LOSS, AND THE HEADLINE ASSERTED THE WRONG ONE.
+	# `sim.gd:414` writes THREE outcomes — "A", "B" and "draw" — plus a fourth, the empty string,
+	# when the fight hits `MAX_TICKS`. `_result_line()` on this very screen already renders "DRAW"
+	# as its own banner at 34px. Every non-win branch below then hard-coded the word LOST underneath
+	# it: a mutual wipe printed "▲ DRAW" and, two lines down, "YOUR READ WAS RIGHT. YOU LOST
+	# ANYWAY." That is the screen contradicting itself about the single fact the player already
+	# knows, on the sentence the observe half exists to deliver — the same class of defect as the
+	# 400-vs-540 ceiling and the "an even spread would be 100%" evidence line, and the reason those
+	# two are quoted at the top of every brief.
+	#
+	# The GRADE is unchanged: a draw is still not a win, so it still cannot reach the "and it won
+	# it" copy. Only the word for what happened changes.
+	var drawn: bool = not won and winner != "B"
+	var lost_word: String = "DID NOT WIN IT" if drawn else "LOST"
 
 	# ⚠️ TWO DIFFERENT ZEROES, AND THE FIRST DRAFT CONFLATED THEM. "You claimed nothing" and "your
 	# claims could not be measured" look identical from here and are opposite messages: one is the
@@ -657,7 +671,7 @@ static func read_verdict(graded: Array, winner: String, team_a: Array, team_b: A
 		if won:
 			return {"headline": "YOUR READ WAS RIGHT — AND IT WON IT.", "tone": "good",
 				"sub": "%s. This is the fight to remember: you predicted it and it happened." % score}
-		return {"headline": "YOUR READ WAS RIGHT. YOU LOST ANYWAY.", "tone": "warn",
+		return {"headline": "YOUR READ WAS RIGHT. YOU %s ANYWAY." % lost_word, "tone": "warn",
 			"sub": "%s, and it still was not enough. %s" % [score, _strength_line(team_a, team_b)]}
 	if held + partly == judged and held > 0:
 		return {"headline": "MOST OF THE READ HELD." if won else "THE READ HALF HELD.", "tone": "mixed",
@@ -683,7 +697,9 @@ static func read_verdict(graded: Array, winner: String, team_a: Array, team_b: A
 			return {"headline": "THE READ ALMOST HELD, AND ALMOST WAS NOT ENOUGH.", "tone": "bad",
 				"sub": "%s — but %d of %d landed most of the way. Read the evidence under each: you are closer than the score looks. %s" % [
 					score, partly, judged, _strength_line(team_a, team_b, false)]}
-		return {"headline": "THE READ BROKE, AND IT COST YOU.", "tone": "bad",
+		var broke_head: String = "THE READ BROKE, AND YOU COULD NOT CLOSE IT." if drawn \
+			else "THE READ BROKE, AND IT COST YOU."
+		return {"headline": broke_head, "tone": "bad",
 			"sub": "%s. Every claim you committed to failed. %s" % [score, _strength_line(team_a, team_b, false)]}
 	return {"headline": "PART OF THE READ HELD." if won else "PART OF THE READ HELD, AND IT WAS NOT ENOUGH.",
 		"tone": "mixed", "sub": "%s." % score}

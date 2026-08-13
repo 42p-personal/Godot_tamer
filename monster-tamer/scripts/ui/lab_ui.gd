@@ -476,6 +476,39 @@ func _barn_row(mi) -> Control:
 	col.add_child(UiTheme.body_text(_stats_line(mi), "primary"))
 	col.add_child(UiTheme.body_text("%s · %s" % [_age_line(mi), mi.lineage_label()], "secondary"))
 
+	## ⚠️ THE OTHER HALF OF THE PRICE, AND THE SCREEN HAS NEVER STATED IT. The header ⚠️ already
+	## says preserving costs *racing years surrendered* and `_age_line()` prints them — but the
+	## years are the cost to the MONSTER. Preserving also takes the body out of `Roster.fieldable()`
+	## the moment the button is pressed, so it is a cost to the STABLE: the cup sheet loses a slot,
+	## and it can lose the last support pick, the last body that can still train, or the only
+	## classes that answer the rung's champion. A player who finds that out at the tournament gate
+	## has been ambushed by a transaction that quoted them a weekly bill and nothing else.
+	##
+	## ⚠️ THE COUNTERFACTUAL IS ASKED, NOT DERIVED. `Roster.gaps_opened_by_releasing()` runs the gap
+	## analysis over the stable MINUS this body and returns only what is NEW — so this line can
+	## never re-state a gap that was already true, which is the failure its own ⚠️ in `roster.gd`
+	## was written about. It returns [] for a retiree by construction (a retiree is not fieldable,
+	## so removing it changes no gap), which is exactly right: enshrining a retiree costs the stable
+	## nothing and the line correctly does not appear.
+	##
+	## ⚠️ THE FUNCTION NAME IS A NOTE TO THE INTEGRATOR, NOT A BUG. It reads "releasing" and this is
+	## the PRESERVE path; both are "this body leaves the fieldable set", which is the question it
+	## actually answers. `gaps_opened_by_removing()` is the honest name — one rename, no behaviour.
+	## See THE GAP VOICE in `town_ui.gd` for why the words below are `stable_gaps()`'s own.
+	##
+	## ⚠️ AND NOT WHEN THE BUTTON CANNOT BE PRESSED. `Roster.preserve()` refuses the last active
+	## body, and the button below already says so — pricing an action the screen is about to
+	## forbid is a cost quoted for a transaction that cannot happen.
+	var can_preserve: bool = mi.retired or Roster.monsters.size() > 1
+	var opens: Array = Roster.gaps_opened_by_releasing(mi) if can_preserve else []
+	if not opens.is_empty():
+		var cost := UiTheme.body_text(
+			"▲ It leaves the fieldable count the moment you preserve it — the stable would then "
+			+ ("lack: %s." % " · ".join(PackedStringArray(opens))), "primary")
+		cost.add_theme_color_override("font_color", UiTheme.CAUTION)
+		cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.add_child(cost)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	col.add_child(row)
@@ -488,7 +521,7 @@ func _barn_row(mi) -> Control:
 	# cup, and the player would then be paying rent to get back to a playable state. A retiree is
 	# the exception: a barn holding only retirees is already stuck, and preserving the last one is
 	# how the player gets out of it (`Roster.preserve` enforces the same rule).
-	if Roster.monsters.size() <= 1 and not mi.retired:
+	if not can_preserve:
 		btn.disabled = true
 		btn.text = "Your only monster — the barn cannot be left empty"
 	else:

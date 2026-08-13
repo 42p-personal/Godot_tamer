@@ -2,19 +2,24 @@
 ## visible. Implements `docs/UX_DEPLOYMENT.md` for `tactics_ui.gd`'s "YOUR TEAM" column, replacing
 ## the old team-wide Formation: Tight/Loose dropdown.
 ##
-## ⚠️ HONESTY NOTE, READ BEFORE TRUSTING WHAT THIS WIDGET "DOES": as of this build,
-## `spatial_sim.gd::_deploy()` always computes starting positions from `Spatial.deploy_positions()`
-## and has no hook to accept custom ones, and `spatial_ai.gd` only reads `tactics.formation`
-## ("tight"/"loose") — it has no concept of per-monster POSITIONAL INTENT or a real starting
-## coordinate. So: dragging a chip here does NOT yet move that monster's actual starting position
-## in a fight. What DOES reach the sim, today, through the existing `tactics.gd` plumbing
-## (`aura_coverage`/`aoe_coverage`, and `spatial_ai.gd`'s own leash-radius read of `formation`) is
-## the derived TIGHT/LOOSE bucket this board computes live from your placement. So arranging a
-## wide spread genuinely does something real (a looser aura/AoE trade), while the exact shape you
-## draw is a planning tool and a forward-compatible save format, not yet a literal battle
-## start point. See the report for the two integration hooks (`spatial_sim._deploy`,
-## `spatial_ai.desired_position`) that would need extending to make free placement and positional
-## intent fully real — NOT this stream's file to change (build-contract ownership).
+## ⚠️ THE HONESTY NOTE THAT USED TO SIT HERE IS RETIRED — IT WENT STALE AND A STALE "IT DOESN'T
+## WORK YET" IS WORSE THAN NONE. It said dragging a chip did not move a real start position and
+## that no engine read positional intent, naming `spatial_sim.gd`/`spatial_ai.gd` as the two hooks
+## that would have to change. Both statements were true against the LEGACY spatial sim and are
+## false against the stack the game actually fights on now:
+##
+##   • START POSITION — `arena_3d.gd::_new_sim_inputs()` reads `committed["deployA"]`, clamps it
+##     to `Sp.deploy_zone()` sim-side and hands it to `sim/sim.gd` as that unit's real `pos`.
+##     A dragged chip IS the monster's start.
+##   • POSITIONAL INTENT — `arena_3d.gd::_new_sim_tactics()` translates `positionalIntent`
+##     (camelCase, this board's vocabulary) into `tactics.positional` (snake_case, the tree's),
+##     and `ai/combat_tree.gd::_positional_node()` implements all five — hold / push / wings /
+##     dive / guard — plus `kite`, which this board does not offer. `guardedAlly` becomes
+##     `tactics.guard_ally`, which `sim/sim.gd` publishes to the blackboard as `guard_id`.
+##
+## What is still only a PLAN is the arrow art in `_draw_intent_hint()`: those are illustrations of
+## the posture, not a preview of the path the tree will actually walk. The caption under the board
+## says exactly that and no more.
 extends VBoxContainer
 
 const Sp = preload("res://scripts/spatial.gd")
@@ -59,7 +64,41 @@ var placements: Dictionary = {}   # MonsterInstance -> Vector2 (world, only DEPL
 var intents: Dictionary = {}      # MonsterInstance -> String, only OVERRIDDEN chips
 var guard_target: Dictionary = {} # MonsterInstance -> MonsterInstance, only when intent == "guard"
 var aura_flags: Dictionary = {}   # MonsterInstance -> bool
-var team_default_intent: String = "hold"
+## ⚠️ THIS SAID "hold" AND THE FIGHT RAN "push". READ THE WHOLE NOTE BEFORE CHANGING IT BACK.
+##
+## The chain is: this board -> `tactics_ui.gd::_on_board_changed()` -> `orders_a[m]
+## ["positionalIntent"]` -> `arena_3d.gd::_new_sim_tactics()` -> `tactics.positional` ->
+## `combat_tree.gd::_positional_node()`. Every link works. The DEFAULT did not, for two reasons
+## that only bite together:
+##
+##   1. `current_intents()` used to export ONLY the chips the player had explicitly overridden,
+##      so on the default path `orders_a[m]` carried no `positionalIntent` at all.
+##   2. `tactics_ui.gd::_build_order_selector()` SELECTS its default index but never calls its
+##      `on_change` callback, so `team_a_plan["positionalIntent"]` is also unset until the player
+##      touches the dropdown.
+##
+## With both keys absent, `arena_3d.gd` fell through its whitelist to its own literal fallback,
+## `"push"`. So the tactics dropdown read "⚓ Hold", this board drew a hold ring under every chip,
+## and all five monsters pushed. A screen lying about the thing it describes — the exact defect
+## class this project has now paid for four times.
+##
+## THE VALUE HERE IS "push" ON PURPOSE, AND IT IS NOT A DESIGN VERDICT. It is the value that makes
+## the screens tell the truth about what the engine has been doing all along, at ZERO behaviour
+## change: explicit "push" is byte-identical to the implicit "push" every fight already ran, so
+## determinism, the goldens and the ladder cannot move on this commit.
+##
+## ⚠️ "hold" IS PROBABLY THE BETTER DESIGN DEFAULT AND IT IS DELIBERATELY NOT SHIPPED HERE. The
+## board's own caption promises "where you drop a chip is where that monster starts the fight —
+## its station", and `push` abandons that station on tick one, which makes free placement mean
+## less than the screen claims. But flipping this constant changes who wins fights and this
+## project's standing rule is that a behaviour change is measured, not assumed harmless — see
+## `combat_tree.gd`'s BOARD SCALE block for what `hold` measured before it was board-scaled
+## (advance 0.04 of the way to the fight: a spectator). Flip it, then run `_probe_ladder_slope
+## --seeds 96` and `_probe_shape --pol` and report the movement. It is one word of work and one
+## afternoon of measurement, in that order.
+const DEFAULT_INTENT := "push"
+
+var team_default_intent: String = DEFAULT_INTENT
 
 var _covered: Dictionary = {}     # MonsterInstance -> bool (inside at least one aura ring)
 var _clusters: Array = []         # Array[[MonsterInstance, MonsterInstance]]
@@ -603,6 +642,17 @@ func _cycle_intent(m, forward: bool) -> void:
 		intents[m] = ids[idx]
 		if ids[idx] != "guard":
 			guard_target.erase(m)
+		elif not guard_target.has(m):
+			# ⚠️ GUARD WITH NOBODY TO GUARD WAS A SILENT NO-OP, AND IT LOOKED LIKE A WORKING ORDER.
+			# `current_guard_targets()` only exports a charge the player picked, and
+			# `arena_3d.gd::_new_sim_tactics()` downgrades a charge-less guard to "hold" — so
+			# cycling to 🛡 Guard and stopping there set a posture, drew no hint arrow (the guard
+			# branch of `_draw_intent_hint` needs a target to draw a line TO) and fought as hold.
+			# Seeding the first placed ally makes the order mean something the moment it is
+			# chosen; `_cycle_guard_target()` is still how the player changes their mind.
+			var allies: Array = team_a.filter(func(u): return u != m and placements.has(u))
+			if not allies.is_empty():
+				guard_target[m] = allies[0]
 	_recompute()
 
 
@@ -677,7 +727,7 @@ func _on_save_new() -> void:
 	var fname := _name_edit.text.strip_edges()
 	if fname == "":
 		fname = "Formation %s" % Time.get_datetime_string_from_system().replace("T", " ")
-	FormationsScript.save(fname, team_size, zone_a, current_placements(), intents)
+	FormationsScript.save(fname, team_size, zone_a, current_placements(), overridden_intents())
 	_loaded_name = fname
 	_refresh_gallery()
 	_summary_label.text = "Saved \"%s\"." % fname
@@ -687,7 +737,7 @@ func _on_update_loaded() -> void:
 	if _loaded_name == "" or _loaded_formation.get("preset", false):
 		_on_save_new()
 		return
-	FormationsScript.update(_loaded_name, team_size, zone_a, current_placements(), intents)
+	FormationsScript.update(_loaded_name, team_size, zone_a, current_placements(), overridden_intents())
 	_refresh_gallery()
 	_summary_label.text = "Updated \"%s\"." % _loaded_name
 
@@ -700,7 +750,32 @@ func current_placements() -> Array:
 	return out
 
 
+## THE POSTURE EVERY MONSTER WILL ACTUALLY FIGHT WITH — one entry per monster on the team, never
+## a partial dictionary.
+##
+## ⚠️ IT USED TO EXPORT ONLY THE OVERRIDDEN CHIPS, AND THAT IS WHAT MADE THE DEFAULT A LIE. Its
+## one consumer, `tactics_ui.gd::_on_board_changed()`, ERASES `positionalIntent` for any monster
+## missing here — so "inherit the team default" was expressed as an ABSENT key, and an absent key
+## is indistinguishable, downstream, from "this player never had an opinion". `arena_3d.gd` then
+## applied its own fallback rather than the board's. Exporting the resolved value makes the
+## board's displayed default and the engine's default the same object instead of two literals in
+## two files that happened to disagree. See the `DEFAULT_INTENT` note above.
+##
+## ⚠️ EVERY MONSTER, NOT EVERY PLACED MONSTER, ON PURPOSE. `_on_board_changed()` iterates `team_a`;
+## an undeployed chip still fights (`arena_3d.gd` falls back to `Sp.deploy_positions()` for it),
+## so an entry it cannot find would leave exactly the hole this function was fixed to close.
 func current_intents() -> Dictionary:
+	var out := {}
+	for m in team_a:
+		out[m] = str(intents.get(m, team_default_intent))
+	return out
+
+
+## The chips the player EXPLICITLY overrode — what a saved formation stores, and the only thing
+## `_cycle_intent()` writes. Kept separate from `current_intents()` because a formation must
+## record an opinion, not a resolved default: reloading it under a different team default should
+## follow the new default, exactly as it does on the board.
+func overridden_intents() -> Dictionary:
 	return intents.duplicate()
 
 
@@ -724,9 +799,21 @@ func zone_rect() -> Rect2:
 	return zone_a
 
 
+## ⚠️ THIS MUST EMIT `changed`, AND IT DID NOT. `tactics_ui.gd`'s "Positional intent — team
+## default" dropdown calls this and then only refreshes the read text; nothing re-ran
+## `_on_board_changed()`, so the orders dictionary the fight is built from kept whatever it last
+## held. That was survivable while `current_intents()` exported nothing on the default path (the
+## dropdown reached the engine by the OTHER route, `team_a_plan["positionalIntent"]`) — it is not
+## survivable now that this board exports a resolved per-monster value, because the per-monster
+## key WINS over the plan in `arena_3d.gd::_new_sim_tactics()`. Without this signal the team
+## dropdown would have become the dead control, which is trading one lie for another.
 func set_team_default_intent(id: String) -> void:
+	if team_default_intent == id:
+		return
 	team_default_intent = id
-	_board_area.queue_redraw()
+	if _board_area != null:
+		_board_area.queue_redraw()
+	emit_signal("changed")   # file style: `_recompute()` emits the same way
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -977,6 +1064,13 @@ func _draw_intent_hint(m, intent: String) -> void:
 			var target = guard_target.get(m)
 			if target != null and placements.has(target):
 				_board_area.draw_line(origin, _world_to_px(placements[target]), Color(0.4, 0.65, 0.95, 0.5), 1.5)
+			else:
+				# DRAW WHAT THE FIGHT WILL DO, NOT WHAT THE ICON SAYS. A guard with no live charge
+				# is downgraded to "hold" by `arena_3d.gd::_new_sim_tactics()` ("a guard with
+				# nobody to guard is a posture with no meaning"), so the board shows the hold
+				# ring. Drawing nothing here is what let the charge-less guard read as a working
+				# order for as long as it did.
+				_board_area.draw_arc(origin, 10.0, 0, TAU, 20, col, 1.0)
 
 
 func _draw_dashed_circle(center: Vector2, radius: float, color: Color) -> void:

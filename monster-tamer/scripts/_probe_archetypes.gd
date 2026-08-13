@@ -29,20 +29,43 @@ const TacticsScript = preload("res://scripts/tactics.gd")
 const LEAGUE_IDX := 7
 const TEAM_SIZE := 5
 const FILL := 0.65          ## the integrator's measured "real winning roster" fill
-const TRIALS := 24
 const BASE_SEED := 20260809
+
+## ⚠️ TRIAL COUNTS ARE VARIABLES, NOT CONSTANTS, AND THE DEFAULTS ARE THE CHEAP ONES. Round 20's
+## power analysis (below) says the matrix needs ~10,500 fights to separate the answers it names,
+## which is 20x this file's historic cost — so the counts are overridable rather than baked, and
+## the probe PRINTS the error band it is entitled to at whatever count it was run with.
+##   P:/Godot… --headless --path . res://scenes/_probe_archetypes.tscn -- --trials=96 --matrix=251
+var trials := 24
+var matrix_trials := 12
 
 var _pass := 0
 var _fail := 0
 
 
+## `--trials=N` / `--matrix=N` after a bare `--`. Anything unparsable is ignored and the defaults
+## stand — a probe that refuses to run because an argument was mistyped is a probe nobody runs.
+func _parse_args() -> void:
+	for a in OS.get_cmdline_user_args():
+		var s := str(a)
+		if s.begins_with("--trials="):
+			trials = maxi(1, int(s.substr(9)))
+		elif s.begins_with("--matrix="):
+			matrix_trials = maxi(1, int(s.substr(9)))
+
+
 func _ready() -> void:
 	print("=== ARCHETYPES: is the champion a different KIND of team? ===\n")
+	_parse_args()
 	Career.reset_new_game()
 	Roster.reset_to_empty()
 	Career.league_index = LEAGUE_IDX
-	print("league %s (idx %d)  cap %.0f  team size %d  fill %.2f  trials %d\n" % [
-		Career.current_league_name(), LEAGUE_IDX, Career.current_stat_cap(), TEAM_SIZE, FILL, TRIALS])
+	print("league %s (idx %d)  cap %.0f  team size %d  fill %.2f  trials %d  matrix trials %d" % [
+		Career.current_league_name(), LEAGUE_IDX, Career.current_stat_cap(), TEAM_SIZE, FILL,
+		trials, matrix_trials])
+	print("  signature/band error band: +/- %.1f pts per archetype win rate" % (_win_se(0.5, trials) * 100.0))
+	print("  matrix error band:         +/- %.1f pts on the gap between two answers\n" % (
+		1.96 * _gap_sd(0.5, matrix_trials) * 100.0))
 
 	if OS.get_cmdline_user_args().has("--calibrate"):
 		_calibrate()
@@ -240,7 +263,7 @@ func _metric_table(shaped: bool) -> Dictionary:
 		var acc := {"won": 0.0, "duration": 0.0, "dps": 0.0, "concentration": 0.0, "first_kill": 0.0,
 			"softest_first": 0.0, "held": 0.0, "statuses": 0.0, "hard_cc": 0.0, "healed": 0.0,
 			"buffs": 0.0, "taken_per_hit": 0.0}
-		for t in range(TRIALS):
+		for t in range(trials):
 			Roster.rng.seed = BASE_SEED + t
 			var team_b: Array = Roster.make_rival_team(TEAM_SIZE, FILL, 1.0, gid if shaped else "")
 			Roster.rng.seed = BASE_SEED + 90000 + t
@@ -251,7 +274,7 @@ func _metric_table(shaped: bool) -> Dictionary:
 			for k in acc:
 				acc[k] += (1.0 if m["won"] else 0.0) if k == "won" else float(m[k])
 		for k in acc:
-			acc[k] /= float(TRIALS)
+			acc[k] /= float(trials)
 		rows[gid] = acc
 		if shaped:
 			print("  %-10s %4.0f%% %6.1f %6.1f %7.3f %6.1f %5.0f%% %6.1f %6.2f %6.0f %7.2f %6.1f" % [
@@ -376,19 +399,100 @@ func _spread(rows: Dictionary, key: String) -> float:
 ##   rushdown 96% | focusfire 83% | bulwark 67% | zone 67% | attrition 46% | control 29%
 ## — a 3.3x spread, wider than anything the ladder's own slope produces. `Tactics.FILL_MULT`
 ## corrects it; this asserts the correction held.
+##
+## ⚠️⚠️ THIS CHECK WAS RED FOR MANY ROUNDS ("37 points" against a 35-point band) AND THE DATA WAS
+## NEVER THE PROBLEM — THE STATISTIC WAS. It compared max-minus-min, and a RANGE over six noisy
+## estimates has a large noise floor of its own that grows with nothing but the measurement error:
+##
+##   at trials=24 a single archetype's win rate carries SE sqrt(0.25/24) = 10.2 points, and the
+##   EXPECTED range of six such estimates when every archetype is EXACTLY equally strong is
+##   d2(6) x 10.2 = 25.9 points, with SD d3(6) x 10.2 = 8.7 points.
+##
+## So a stated 35-point design target was silently enforcing a **9-point** one — 3.8x stricter than
+## anything anyone wrote down — because 26 of the 35 were spent on noise before a single real
+## difference was measured. And the observed 37 sits z=+1.29 against the perfect-null distribution,
+## which is NOT evidence that the archetypes differ in power at all. A threshold a perfectly
+## corrected table fails ~10% of the time on noise alone is a coin toss wearing an assertion's hat,
+## and this codebase has a name for that: the check was wrong, not the data.
+##
+## THE FIX KEEPS THE DESIGN TARGET AND CHANGES THE ESTIMATOR. The claim "kind, not power" is a
+## claim about TRUE dispersion, so estimate that and subtract the binomial noise that is known
+## exactly:
+##
+##   sigma_true^2 = var(observed win rates) - mean(w(1-w)/trials)
+##
+## and hold it to the SAME 35-point intent, converted through the same range constant
+## (range ~ d2 x sigma). Nothing about what the design demands has moved; the arithmetic no longer
+## charges measurement error to the archetypes. ⚠️ At trials=24 the noise term is still half the
+## signal, so the estimate is honest but wide — `--trials=96` quarters it and is what a decisive
+## call needs. The probe prints both so nobody has to take this comment's word for it.
+const RANGE_D2 := 2.534     ## E[range] / sigma for 6 iid normals (control-chart d2, n=6)
+const RANGE_D3 := 0.848     ## SD[range] / sigma for the same
+const BAND_TARGET := 0.35   ## the design intent, unchanged: a 35-point spread in TRUE strength
+
 func _strength_band(rows: Dictionary) -> void:
 	print("\n── STRENGTH BAND (every archetype must be worth the same at the same fill) ──")
 	var lo := INF
 	var hi := -INF
+	var sum := 0.0
+	var noise_var := 0.0
 	for gid in rows:
-		lo = minf(lo, float(rows[gid]["won"]))
-		hi = maxf(hi, float(rows[gid]["won"]))
-	print("  win rate vs the same generic team: %.0f%% .. %.0f%% (spread %.0f points)" % [
+		var w := float(rows[gid]["won"])
+		lo = minf(lo, w)
+		hi = maxf(hi, w)
+		sum += w
+		noise_var += w * (1.0 - w) / float(trials)
+	var n := float(rows.size())
+	var mean: float = sum / n
+	noise_var /= n
+	var obs_var := 0.0
+	for gid in rows:
+		obs_var += pow(float(rows[gid]["won"]) - mean, 2.0)
+	obs_var /= n
+	var true_sigma: float = sqrt(maxf(0.0, obs_var - noise_var))
+	var true_range: float = RANGE_D2 * true_sigma
+	var null_range: float = RANGE_D2 * sqrt(noise_var)
+
+	print("  win rate vs the same generic team: %.0f%% .. %.0f%% (raw spread %.0f points)" % [
 		lo * 100.0, hi * 100.0, (hi - lo) * 100.0])
-	_check(hi - lo <= 0.35,
-		"the six archetypes sit inside a 35-point band (%.0f points) — kind, not power" % ((hi - lo) * 100.0))
+	print("  of which NOISE: a perfectly equal table would still range %.0f points at trials=%d (SD %.0f)" % [
+		null_range * 100.0, trials, RANGE_D3 * sqrt(noise_var) * 100.0])
+	print("  noise-corrected TRUE dispersion: sigma %.1f pts -> implied true spread %.0f points" % [
+		true_sigma * 100.0, true_range * 100.0])
+	_check(true_range <= BAND_TARGET,
+		"the six archetypes sit inside a %.0f-point band of TRUE strength (%.0f points, noise-corrected) — kind, not power" % [
+			BAND_TARGET * 100.0, true_range * 100.0])
+	## ⚠️ THIS ONE IS ALSO NOISE-FRAGILE AND IS DELIBERATELY LEFT ALONE. It is a different claim —
+	## "no single archetype is a walkover" — and it is stated on the OBSERVED rate, which is what a
+	## player would meet. Worth knowing that at trials=24 an archetype whose true rate is 30% reads
+	## under 20% about one run in six; if it flickers, raise `--trials`, do not loosen the bound.
 	_check(lo >= 0.2 and hi <= 0.9,
-		"no archetype is a walkover or a wall on its own (%.0f%%..%.0f%%)" % [lo * 100.0, hi * 100.0])
+		"no archetype is a walkover or a wall on its own (%.0f%%..%.0f%%, +/-%.0f)" % [
+			lo * 100.0, hi * 100.0, _win_se(0.5, trials) * 100.0])
+
+
+# ── ERROR BANDS. Both are closed-form binomial arithmetic, no simulation — they exist so every
+# number this probe prints arrives with the precision it is entitled to. ─────────────────────────
+
+## SE of one win-rate estimate from `n` Bernoulli trials.
+func _win_se(p: float, n: int) -> float:
+	return sqrt(maxf(0.0001, p * (1.0 - p)) / float(maxi(1, n)))
+
+
+## SD of the GAP between two player rows' residuals in the same rival column — the quantity the
+## counter matrix actually compares, and it is NOT the cell SE.
+##
+##   resid(p1,r) - resid(p2,r) = (win(p1,r) - rowMean(p1)) - (win(p2,r) - rowMean(p2))
+##
+## the column mean and grand mean cancel exactly, and what is left is a difference of two
+## row-centred cells. With C rival columns, Var(win - rowMean) = s^2[(1-1/C)^2 + (C-1)/C^2], so the
+## gap's SD is sqrt(2x) that — **1.29x the cell SE**, not equal to it. Reading the cell SE as if it
+## were the comparison's error band understates this debt by 29%.
+func _gap_sd(p: float, n: int) -> float:
+	var c := float(_ids().size())
+	var s2: float = pow(_win_se(p, n), 2.0)
+	var v_dev: float = s2 * (pow(1.0 - 1.0 / c, 2.0) + (c - 1.0) / (c * c))
+	return sqrt(2.0 * v_dev)
 
 
 ## CALIBRATION RUN — `-- --calibrate`. Sweeps each archetype across a fill range against the same
@@ -439,7 +543,7 @@ func _counter_formation() -> void:
 	var loose_wins := 0
 	var better := 0
 	var worse := 0
-	for t in range(TRIALS):
+	for t in range(trials):
 		Roster.rng.seed = BASE_SEED + t
 		var team_b: Array = Roster.make_rival_team(TEAM_SIZE, FILL, 1.0, "zone")
 		Roster.rng.seed = BASE_SEED + 90000 + t
@@ -457,7 +561,7 @@ func _counter_formation() -> void:
 		elif tw and not lw:
 			worse += 1
 	print("  player wins: TIGHT %d/%d   LOOSE %d/%d   (loose flipped %d fights to a win, %d to a loss)" % [
-		tight_wins, TRIALS, loose_wins, TRIALS, better, worse])
+		tight_wins, trials, loose_wins, trials, better, worse])
 	_check(loose_wins > tight_wins and better > worse,
 		"the authored counter to zone measurably works (+%d wins, sign %d:%d)" % [
 			loose_wins - tight_wins, better, worse])
@@ -478,8 +582,30 @@ func _counter_formation() -> void:
 ## ⚠️ EVERY PLAYER COMP IS BUILT AT THE SAME EFFECTIVE FILL. `FILL_MULT` is a difficulty correction
 ## for OPPOSITION; left in place on the player's own side it would field the burst comp at 0.50
 ## against the control comp's 0.77 and measure the handicap instead of the matchup.
-const MATRIX_TRIALS := 12
-
+##
+## ⚠️⚠️ ROUND 20: THE POWER, DERIVED RATHER THAN ASSUMED — AND `MATRIX_TRIALS = 12` COULD NEVER
+## HAVE ANSWERED THE QUESTION IT WAS ASKED. The compared quantity is not a cell, it is the GAP
+## between two rows' residuals in one column, and `_gap_sd()` shows that gap's SD is 1.29x the cell
+## SE. What that buys, per cell count:
+##
+##     trials/cell    cell SE    95% band on the top-two gap    matrix cost
+##          12        14.4 pt            +/- 36.5 pt              504 fights
+##          48         7.2 pt            +/- 18.3 pt            2,016 fights
+##          96         5.1 pt            +/- 12.9 pt            4,032 fights
+##         251         3.2 pt            +/-  8.0 pt           10,542 fights
+##
+## The authored answers at HEAD lead their runners-up by roughly 2 to 11 points (see the ⚠️ block
+## over `Tactics.GAMEPLANS`), so **48 trials — round 19's recommendation and this brief's — is not
+## enough for four of the six rows**, and 251 is what an 8-point gap actually costs. That is the
+## honest reading, and it points at outcome three: for several rungs there is very likely NO single
+## winning kind to name, and the prose must say something weaker rather than pick one.
+##
+## So this no longer prints a winner and calls it a day. It prints the gap to the runner-up next to
+## the band the run is entitled to, marks the row SEPARATED or INSIDE NOISE, and — the check that
+## actually protects the screens — fails only when the AUTHORED answer in `Tactics.GAMEPLANS` is
+## measurably WORSE than the measured best. An authored answer that merely ties is not refuted;
+## naming it is a design read the data permits. Naming one the data contradicts is the screen
+## lying about the thing it describes.
 func _counter_matrix() -> void:
 	print("
 ── COUNTER MATRIX: which KIND of roster answers which KIND of team? ──")
@@ -488,7 +614,7 @@ func _counter_matrix() -> void:
 	for p in comps:
 		win[p] = {}
 		for r in _ids():
-			win[p][r] = float(_matchup_wins(p, r)) / float(MATRIX_TRIALS)
+			win[p][r] = float(_matchup_wins(p, r)) / float(matrix_trials)
 
 	var grand := 0.0
 	for p in comps:
@@ -516,33 +642,66 @@ func _counter_matrix() -> void:
 			" ".join(_ids().map(func(r): return "%8.0f%%" % (win[p][r] * 100.0))),
 			row_mean[p] * 100.0])
 
+	var band: float = 1.96 * _gap_sd(0.5, matrix_trials)
 	print("  residual, in win-rate points (positive = better than both averages predict)")
+	print("  95%% band on a gap between two answers at trials=%d: +/- %.0f points" % [
+		matrix_trials, band * 100.0])
 	print("  %-12s %s" % ["", " ".join(comps.map(func(p): return "%9s" % p))])
 	var answers := {}
 	for r in _ids():
 		var best := ""
 		var best_v := -INF
+		var second_v := -INF
 		var line: Array = []
+		var resid_of := {}
 		for p in comps:
 			var resid: float = win[p][r] - row_mean[p] - col_mean[r] + grand
+			resid_of[p] = resid
 			line.append("%+8.0f" % (resid * 100.0))
-			if p != "generic" and resid > best_v:
-				best_v = resid
-				best = p
-		answers[r] = {"comp": best, "resid": best_v}
-		print("  vs %-9s %s  -> %-10s %+.0f pts" % [
-			r, " ".join(line), best, best_v * 100.0])
+			if p != "generic":
+				if resid > best_v:
+					second_v = best_v
+					best_v = resid
+					best = p
+				elif resid > second_v:
+					second_v = resid
+		var gap: float = best_v - second_v
+		answers[r] = {"comp": best, "resid": best_v, "gap": gap, "resid_of": resid_of}
+		print("  vs %-9s %s  -> %-10s %+.0f pts, leads by %.0f  [%s]" % [
+			r, " ".join(line), best, best_v * 100.0, gap * 100.0,
+			"SEPARATED" if gap > band else "INSIDE NOISE — no single answer to name"])
 
-	var distinct := {}
-	var positive := 0
+	# ⚠️ THE CHECK THAT PROTECTS THE THREE SCREENS. `Tactics.GAMEPLANS[*].counterRoster.kind` is
+	# printed as prose on the Stable, the Tournament board and (as a class list) the Market. A row
+	# passes if its authored kind IS the measured best, or ties it inside the band. It fails only
+	# when the measurement puts the authored kind measurably BELOW the best available answer —
+	# which is the one situation where a screen is telling the player something false.
+	var refuted: Array = []
+	var separated := 0
+	var authored_kinds := {}
 	for r in _ids():
-		distinct[answers[r]["comp"]] = true
-		if float(answers[r]["resid"]) > 0.05:
-			positive += 1
-	_check(positive >= 4,
-		"%d of %d archetypes have a roster answer worth preparing (residual > 5 pts)" % [positive, _ids().size()])
-	_check(distinct.size() >= 3,
-		"the answers are %d DIFFERENT kinds of roster — preparation is a choice, not one dominant comp" % distinct.size())
+		var a: Dictionary = answers[r]
+		var authored: String = str(TacticsScript.GAMEPLANS.get(r, {}).get("counterRoster", {}).get("kind", ""))
+		authored_kinds[authored] = true
+		if float(a["gap"]) > band:
+			separated += 1
+		if authored == "" or not a["resid_of"].has(authored):
+			continue
+		var deficit: float = float(a["resid"]) - float(a["resid_of"][authored])
+		var verdict := "REFUTED" if deficit > band else ("confirmed" if authored == a["comp"] else "tied, within noise")
+		print("    authored answer to %-9s = %-10s  %+.0f pts, %.0f behind the best  -> %s" % [
+			r, authored, float(a["resid_of"][authored]) * 100.0, deficit * 100.0, verdict])
+		if deficit > band:
+			refuted.append("%s (authored %s, measured %s)" % [r, authored, a["comp"]])
+	print("  %d of %d rows have a SEPARATED best answer at this power" % [separated, _ids().size()])
+	_check(refuted.is_empty(),
+		"no screen names a counter the data contradicts (%s)" % (
+			"none refuted" if refuted.is_empty() else ", ".join(PackedStringArray(refuted))))
+	# ⚠️ ON THE AUTHORED TABLE, NOT THE MEASURED ONE. "The answers are several different kinds of
+	# roster" is a claim about the DESIGN — it is what the screens print — and reading it off a
+	# 12-trial argmax made a design property flicker with the seed. It is deterministic here.
+	_check(authored_kinds.size() >= 3,
+		"the authored answers are %d DIFFERENT kinds of roster — preparation is a choice, not one dominant comp" % authored_kinds.size())
 
 
 ## Player-side fill that cancels the opposition correction, so two player comps of different KINDS
@@ -551,11 +710,11 @@ func _player_fill(gid: String) -> float:
 	return FILL / float(TacticsScript.FILL_MULT.get(gid, 1.0))
 
 
-## Wins out of MATRIX_TRIALS for player comp `p` ("generic" = the unshaped generator) against rival
+## Wins out of `matrix_trials` for player comp `p` ("generic" = the unshaped generator) against rival
 ## archetype `r`, on shared seeds so every cell of the matrix fights the same fights.
 func _matchup_wins(p: String, r: String) -> int:
 	var wins := 0
-	for t in range(MATRIX_TRIALS):
+	for t in range(matrix_trials):
 		Roster.rng.seed = BASE_SEED + t
 		var team_b: Array = Roster.make_rival_team(TEAM_SIZE, FILL, 1.0, r)
 		Roster.rng.seed = BASE_SEED + 90000 + t

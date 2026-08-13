@@ -62,15 +62,18 @@ extends RefCounted
 static var committed: Dictionary = {}
 
 
-## ⚠️ `deploy_a`/`intents_a` ARE FORWARD-COMPATIBLE PLUMBING, NOT A LIVE HOOK YET. `tactics_ui.gd`'s
-## deployment board (`docs/UX_DEPLOYMENT.md`) computes a real per-monster start position and a
-## positional-intent choice — but `spatial_sim.gd::_deploy()` still always calls
-## `Spatial.deploy_positions()` and has no override, and `spatial_ai.gd` has no concept of
-## positional intent at all. Recording the real data here now means the day someone extends those
-## two functions (stream A's files, not this one's), the data is already flowing rather than
-## needing a second pass through this screen. Until then these two keys are written and read by
-## nobody but a future consumer — same status as `statScale` being "FIELD-ONLY" for a stretch
-## before the field engine read it.
+## ⚠️ `deploy_a` IS LIVE — `arena_3d.gd:803-806` folds it into `orders[m]["deployPos"]` and
+## `arena_3d.gd:931` reads it again for the start positions. This block used to call it
+## "FORWARD-COMPATIBLE PLUMBING, NOT A LIVE HOOK YET" and name `spatial_sim.gd`/`spatial_ai.gd`;
+## that was true of the LEGACY sim and became false when the arena path landed on 2026-08-08.
+##
+## ⚠️ `intents_a` IS THE ONE GENUINELY DEAD KEY, AND IT IS PROBE-ONLY BY DECISION.
+## Written here, and the only reader in the tree is `_probe_career_loop.gd:495`, which asserts
+## the key EXISTS and nothing more. It is a DUPLICATE of the per-monster `positionalIntent` that
+## `ordersA` already carries, and `ordersA` is the copy `arena_3d._new_sim_tactics()` reads.
+## It is kept rather than deleted because SAVE_VERSION 4 files and that probe both name it, and
+## deleting a key from a serialised dictionary is a save-compat change for zero gameplay gain.
+## Do not add a second consumer: if a screen wants a monster's posture, read `ordersA`.
 ## ⚠️ `team_a`/`team_b` ARE THE EXACT ROSTER ARRAYS "The Read" SHOWED THE PLAYER — pass them so
 ## whichever screen fights the battle next (arena_3d.gd) uses THESE, not a freshly regenerated
 ## rival team. `arena_3d.gd` used to call `Roster.make_rival_team()` a second time with its own
@@ -115,18 +118,41 @@ const FORMATION_INFO := [
 ]
 
 ## `docs/AUTOBATTLER_DESIGN.md` §2B's positional-intent axis — *where do I want to be*, distinct
-## from *who do I attack* (`TARGET_PRIORITY_INFO`). ⚠️ NOT YET CONSUMED BY THE ENGINE: neither
-## `spatial_sim.gd` nor `spatial_ai.gd` reads a per-monster intent today (checked directly —
-## `spatial_ai.gd` only reads `tactics.formation`). `deployment_board.gd` still shows and stores
-## it, honestly labelled as a hint rather than a simulated behaviour, per this file's own standing
-## doctrine (see the header comment above): don't build a control implying a mechanic the engine
-## doesn't run, but a PLANNING tool with truthful copy is not that failure mode.
+## from *who do I attack* (`TARGET_PRIORITY_INFO`).
+##
+## ⚠️ THIS BLOCK SAID "NOT YET CONSUMED BY THE ENGINE" UNTIL 2026-08-13 AND IT WAS FALSE.
+## It described `spatial_sim.gd`/`spatial_ai.gd` — the LEGACY sim, superseded on 2026-08-08 and
+## now reached only from the Sandbox screen. The live path consumes every one of these ids:
+##   `tactics_ui._on_board_changed()` → `ordersA[m]["positionalIntent"]`
+##   → `arena_3d.gd:1001-1013 _new_sim_tactics()` → `t["positional"]` (+ `t["guard_ally"]`)
+##   → `combat_tree.gd:565 _positional_node()` → five posture branches (hold/push/wings/dive/guard)
+##   → `sim.gd:497 bb.set_value("guard_id", ...)` for the guard charge.
+## The order is REAL. Note the deliberate camelCase→snake_case rename at the arena boundary:
+## grepping for `positional_intent` finds only the legacy tree and reads as "nothing uses it",
+## which is exactly the wrong conclusion two separate reviewers drew from this comment.
+##
+## ⚠️ AND THE LESSON THIS COST: a "NOT YET WIRED" note needs the file whose change retires it
+## named in the note, or it outlives the thing it describes and becomes the misinformation the
+## comment style exists to prevent. This one outlived its subject by five days and produced a
+## round-20 brief whose central claim was refuted.
 const POSITIONAL_INTENT_INFO := [
 	{"id": "hold", "icon": "⚓", "name": "Hold", "desc": "Keep the line near where you deployed."},
 	{"id": "push", "icon": "➡", "name": "Push", "desc": "Advance on the enemy line, take ground."},
 	{"id": "wings", "icon": "↗", "name": "Wings", "desc": "Work wide, approach from the flank."},
 	{"id": "dive", "icon": "⤴", "name": "Dive", "desc": "Go around or through for the enemy back line."},
 	{"id": "guard", "icon": "🛡", "name": "Guard", "desc": "Stay near a named ally and intercept threats to it."},
+]
+
+## ⚠️ `guard` IS INHERENTLY PER-MONSTER AND MUST NOT BE OFFERED AS A TEAM DEFAULT — it is the
+## mirror image of `formation`, which this file already excludes from the per-monster keys for
+## the same reason. A whole team ordered to guard has no charges to guard: every body would name
+## an ally, `arena_3d.gd:1013` downgrades a charge-less guard to `hold`, and the player would have
+## picked a posture that silently became a different one. Five dead controls in one dropdown.
+const TEAM_POSITIONAL_INTENT_INFO := [
+	{"id": "hold", "icon": "⚓", "name": "Hold", "desc": "Keep the line near where you deployed."},
+	{"id": "push", "icon": "➡", "name": "Push", "desc": "Advance on the enemy line, take ground."},
+	{"id": "wings", "icon": "↗", "name": "Wings", "desc": "Work wide, approach from the flank."},
+	{"id": "dive", "icon": "⤴", "name": "Dive", "desc": "Go around or through for the enemy back line."},
 ]
 
 
@@ -185,14 +211,66 @@ const POSITIONAL_INTENT_INFO := [
 # rows is smaller than that. Both tables are under-powered, not one wrong and one right. The rung's
 # ARCHETYPE and the SHAPE of each answer are what the screens are allowed to state; the point
 # figures are not, until someone re-measures at 48+ trials. See round 20's list.
+#
+# ⚠️⚠️ ROUND 20 DERIVED THE POWER AND "48+ TRIALS" IS NOT ENOUGH — THE DEBT IS BIGGER THAN THE
+# NOTE ABOVE SAYS, BY 29%. The 14-point figure is the standard error of a CELL, but nothing on any
+# screen quotes a cell: what is quoted is which kind WINS, and that is a comparison between two
+# rows' residuals in one column. The column and grand means cancel in that difference, leaving a
+# difference of two row-centred cells whose SD is **1.29x the cell SE** — 18.6 points at 12 trials,
+# not 14. (`_probe_archetypes.gd:_gap_sd()` carries the derivation and computes it at run time.)
+#
+#     trials/cell    95% band on the top-two gap    matrix cost
+#          12                +/- 36.5 pt              504 fights
+#          48                +/- 18.3 pt            2,016 fights
+#          96                +/- 12.9 pt            4,032 fights
+#         251                +/-  8.0 pt           10,542 fights
+#
+# The leads in the rows above run about 2 to 11 points, so 48 trials would settle NONE of the four
+# disputed rows and would hand back a fresh set of confident-looking numbers with a band twice the
+# effect — the same debt, one round newer, which is exactly what the ⚠️ above was written to stop.
+# 251 trials/cell is what an 8-point gap costs at 95%; a 2-point gap (control +9 vs rushdown +7,
+# vs zone) costs ~4,000 trials/cell and is not worth buying at any price.
+#
+# ⚠️ SO THE POINT FIGURES ARE GONE FROM THE PROSE, AND THAT DELETION NEEDED NO NEW RUN.
+# Asserting a DIFFERENT winner requires a measurement; DELETING a claim requires only the proof
+# that no measurement supports it, and the table above is that proof — both runs are at 12 trials
+# with a ±36.5 pt band on gaps of 2..11 pts. Eight numeric claims were shipping verbatim to the
+# player (`+24`, `+3`, `+20`, `+13`, `+27`, `+13`, `+25`, and zone's "six wins in twenty-four"),
+# in GOLD body text on the Stable screen (`stable_ui.gd:_frontier_brief`) and in the Tournament
+# board's chip tooltip (`tournament_ui.gd`). Every one is now removed. What each row states is the
+# KIND, framed as "the authored answer" — a design read, which is what `roster.gd:counter_gap()`
+# already treats it as — plus the MECHANISM, which is reasoning about how guard/CC-resist/area
+# coverage work and needs no trial count to be true.
+#
+# ⚠️ THE ONE CLAIM THAT KEPT ITS EVIDENCE IS ZONE'S FORMATION ORDER, and the reason is the design
+# of the test, not its size: `_counter_formation()` is PAIRED (identical teams, identical seeds,
+# one order changed) and judged on a sign test, so it cancels the roster variance that swamps the
+# matrix. Do not "tidy" it into the same hedge as the rest — see the note on the zone entry.
+#
+# ⚠️ AND `counterRoster` LOST ITS `residual` KEY, WHICH NOTHING HAD EVER READ. It was authored six
+# times and consumed nowhere (`roster.gd:counter_gap()` reads `.kind` and only `.kind`) — a stale
+# number kept alive with no consumer is a number that gets quoted by the next screen that wants
+# one, which is precisely how this debt started.
+#
+# ⚠️ AND ROUND 20 COULD NOT RUN THE MEASUREMENT: the Godot binary
+# (`P:/Godot_v4.7.1-stable_win64.exe`) is not present on the build machine — `run_contract.sh`
+# exits 127 and the only trace left is a broken shortcut to a deleted `.zip`. Nothing below was
+# re-measured, so nothing below was changed. The arithmetic above is closed-form binomial and
+# needed no engine; the numbers in the strings still need one.
 const GAMEPLANS := {
 	"rushdown": {
 		"name": "Rushdown", "icon": "🔥",
 		"tell": "Fast, aggressive, no support — all pressure.",
 		"read": "Comes straight down the middle and hits first. Nothing clever, and nothing held back.",
-		## MEASURED ANSWER: an area/ZONE roster, +24 residual points (`_probe_archetypes.tscn`).
-		"counter": "They come as one block with no healer and no wall. AREA damage is what punishes that — a zone roster measures +24 points better against them than its own record predicts. Out-tanking the opening is NOT the answer; a wall roster measures +3.",
-		"counterRoster": {"kind": "zone", "residual": 24},
+		## AUTHORED ANSWER: an area/ZONE roster. ⚠️ THE OLD LINE HERE WAS THE WORST SENTENCE IN THE
+		## TABLE AND IT SHIPPED IN GOLD ON THE STABLE SCREEN: "Out-tanking the opening is NOT the
+		## answer; a wall roster measures +3." The HEAD run recorded in the ⚠️ block above measured
+		## the WALL as the best answer to rushdown (+16) with zone down at +5 — so the screen was
+		## steering the player away from what the most recent measurement named as the best. Neither
+		## run can settle it (both 12 trials, ±36.5 pt band), and a NEGATIVE claim is the least
+		## supportable form there is, so it is deleted rather than reversed.
+		"counter": "They come as one block with no healer and no wall — every body of theirs is in range of the same cast. AREA damage is the authored answer to that shape, so a zone roster is what to build toward.",
+		"counterRoster": {"kind": "zone"},
 		"winCon": "Kill something in the first few exchanges and snowball the numbers advantage.",
 		"signature": "front-loaded damage — the highest damage-per-second of any archetype, and the shortest fights",
 		"classes": ["Warrior", "Skirmisher", "Captain", "Warrior", "Rogue"],
@@ -202,9 +280,10 @@ const GAMEPLANS := {
 		"name": "Bulwark", "icon": "🛡",
 		"tell": "Tanks and guardians around a protected carry.",
 		"read": "Will not break. Brings guards and wards and expects you to run out of patience.",
-		## MEASURED ANSWER: a BURST/focus-fire roster, +20 residual points.
-		"counter": "Guard is FLAT reduction per hit, so chip damage is worth nothing against them: you need few big blows, not many small ones. A burst roster measures +20 points better here than its own record predicts.",
-		"counterRoster": {"kind": "focusfire", "residual": 20},
+		## AUTHORED ANSWER: a BURST/focus-fire roster. The MECHANISM below is design reasoning about
+		## how guard works and survives the deletion; only the point figure went.
+		"counter": "Guard is FLAT reduction per hit, so chip damage is worth nothing against them: you need few big blows, not many small ones. A burst roster is the authored answer.",
+		"counterRoster": {"kind": "focusfire"},
 		"winCon": "Keep one carry alive behind a wall until it out-damages everything you have left.",
 		"signature": "protective buffs — ward/guard mods applied on its own side, and the lowest damage taken per landed hit",
 		## ⚠️ SLOT 4 IS A CAPTAIN, NOT A SHAMAN, AND THAT WAS MEASURED. With a Shaman here the
@@ -219,14 +298,16 @@ const GAMEPLANS := {
 		"name": "Attrition", "icon": "☠",
 		"tell": "Poison and stall, with a mender behind it — out-lasts you.",
 		"read": "Stalls. Heals what you break and wins on the clock unless you make the fight happen.",
-		## MEASURED ANSWER: a BURST/focus-fire roster, +13 residual points. ⚠️ AND THE FIRST VERSION
-		## OF THIS LINE WAS AN UNTESTED GUESS THAT MEASURED AS ONE. "Burst it down" looked confirmed
-		## at +8 wins over a generic roster — until the same burst roster measured +13 against the
-		## WALL, which it does not counter at all. Burst is a strong roster; only the residual
-		## separates that from an answer. It is still the right call here, by a smaller margin
-		## than the straight comparison claimed.
-		"counter": "Healing is throughput and only wins a long fight. Kill one of them faster than the mender can refill it — a burst roster measures +13 points better here than its own record predicts.",
-		"counterRoster": {"kind": "focusfire", "residual": 13},
+		## AUTHORED ANSWER: a BURST/focus-fire roster. ⚠️ THE METHODOLOGICAL LESSON ON THIS ROW IS
+		## THE PART WORTH KEEPING, AND IT IS NOT A NUMBER. The first version of this line was an
+		## untested guess that then "measured as one": burst looked confirmed at +8 wins over a
+		## generic roster — until the same burst roster gained MORE against the WALL, which it does
+		## not counter at all. Burst is simply a strong roster, and only the two-way residual
+		## separates that from an answer. Round 20 added the second half of the lesson: the residual
+		## itself needs ~20x the trials anyone has ever run before it can name a winner either. The
+		## figures are gone; the reasoning is why this row is still focus-fire.
+		"counter": "Healing is throughput and only wins a long fight. Kill one of them faster than the mender can refill it — a burst roster is the authored answer.",
+		"counterRoster": {"kind": "focusfire"},
 		"winCon": "Out-heal the damage you can sustain and outlive the clock.",
 		"signature": "healing — real HP restored to its own side, and the longest fights on the ladder",
 		"classes": ["Mystic", "Stalker", "Sage", "Shaman", "Stalker"],
@@ -236,9 +317,11 @@ const GAMEPLANS := {
 		"name": "Focus-Fire", "icon": "🎯",
 		"tell": "High burst — the whole team piles onto one target.",
 		"read": "Focuses one target down and moves on. Your softest body dies first.",
-		## MEASURED ANSWER: a CONTROL roster, +27 residual points — the strongest counter on the board.
-		"counter": "They man-mark your LOWEST-CON monster and delete it in under three seconds. Taking their turns away is what breaks that: a control roster measures +27 points better against them than its own record predicts, the largest counter effect in the game. Spreading durability so there is no soft body to pick is the roster-building version of the same answer.",
-		"counterRoster": {"kind": "control", "residual": 27},
+		## AUTHORED ANSWER: a CONTROL roster. ⚠️ "the largest counter effect in the game" went with
+		## the number — it was a RANKING across the six rows, which needs every row measured to the
+		## same precision to mean anything, and no run has ever had that.
+		"counter": "They man-mark your LOWEST-CON monster and delete it in under three seconds. Taking their turns away is what breaks that, so a control roster is the authored answer. Spreading durability so there is no soft body to pick is the roster-building version of the same answer.",
+		"counterRoster": {"kind": "control"},
 		"winCon": "Mark one monster and delete it before it acts twice.",
 		"signature": "concentration — the largest share of its damage landing on one enemy, and the fastest first kill",
 		"classes": ["Rogue", "Skirmisher", "Ranger", "Rogue", "Swashbuckler"],
@@ -248,9 +331,12 @@ const GAMEPLANS := {
 		"name": "Control", "icon": "🔗",
 		"tell": "Hexers and orators — they take your turns away before they take your HP.",
 		"read": "Controls. You will be stunned, silenced and blinded on purpose, and your supports go first.",
-		## MEASURED ANSWER: a WALL/bulwark roster, +13 residual points.
-		"counter": "Control lands through the CC-resist meter, which saturates with CON — a high-CON line shrugs off the second stun and cleanses the first. A wall roster measures +13 points better against them than its own record predicts.",
-		"counterRoster": {"kind": "bulwark", "residual": 13},
+		## AUTHORED ANSWER: a WALL/bulwark roster. ⚠️ THIS IS THE ROW MOST LIKELY TO BE WRONG — the
+		## HEAD run put bulwark at −0 here and named ATTRITION (+25) instead. It is kept as the
+		## authored design read (CON saturating the CC-resist meter is a real mechanism, stated
+		## below) and NOT as a measurement, which is the only claim the evidence supports.
+		"counter": "Control lands through the CC-resist meter, which saturates with CON — a high-CON line shrugs off the second stun and cleanses the first. A wall roster is the authored answer.",
+		"counterRoster": {"kind": "bulwark"},
 		"winCon": "Take enough turns away that the fight is five-on-three whether or not anything has died.",
 		"signature": "status application — far more landed statuses than any other archetype, hard control included",
 		## ⚠️ NO SAGE HERE, AND THE POOL IS THE REASON. Sage draws Mender/Siphon/Hexer and carries
@@ -268,11 +354,20 @@ const GAMEPLANS := {
 		"name": "Zone", "icon": "🌩",
 		"tell": "Heralds and evokers — everything they throw lands on your whole team at once.",
 		"read": "Opens wide. Everything hits everyone, so a tight formation gives them the whole team for free.",
-		## MEASURED ANSWER, TWO OF THEM — the only archetype with both an ORDER and a ROSTER answer.
-		## Formation LOOSE: 8/24 -> 14/24 player wins on identical teams and seeds, sign 6:0.
-		## A rushdown roster: +25 residual points.
-		"counter": "Area damage is gated by YOUR formation, not theirs: order LOOSE and roughly half your side falls out of the blanket — worth six wins in twenty-four on identical teams. The price is your own buffs and heals thinning out too. On the roster side, closing fast measures +25 points.",
-		"counterRoster": {"kind": "rushdown", "residual": 25},
+		## TWO ANSWERS — the only archetype with both an ORDER and a ROSTER answer, and they do NOT
+		## rest on the same quality of evidence. ⚠️ KEEP THAT DISTINCTION.
+		##   • The FORMATION answer is the best-evidenced claim in this whole table:
+		##     `_probe_archetypes.gd:_counter_formation()` is a PAIRED test — identical teams,
+		##     identical seeds, one order changed — judged on a sign test (8/24 -> 14/24, sign 6:0,
+		##     which is p≈0.03 two-sided on its own). A paired design cancels the roster variance
+		##     that makes the counter matrix so noisy, which is exactly why it can say something the
+		##     matrix cannot. Only the exact COUNT was dropped (the run drifts 6..9 of 24); the
+		##     DIRECTION stands and is asserted by the probe every run.
+		##   • The ROSTER answer comes from the same under-powered matrix as every other row and is
+		##     an authored read, nothing more. The HEAD run put rushdown at +7 and control at +9 —
+		##     a 2-point gap that would cost ~4,000 trials/cell to call, and is not worth buying.
+		"counter": "Area damage is gated by YOUR formation, not theirs: order LOOSE and roughly half your side falls out of the blanket. That one is measured on identical teams and seeds, and it wins fights a tight formation loses — the price is your own buffs and heals thinning out too. On the roster side, closing fast is the authored answer.",
+		"counterRoster": {"kind": "rushdown"},
 		"winCon": "Blanket the whole team in area damage and never trade one-for-one.",
 		"signature": "breadth — area casts that touch every living enemy, and the flattest damage spread of any archetype",
 		"classes": ["Herald", "Evoker", "Orator", "Evoker", "Ranger"],

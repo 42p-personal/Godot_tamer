@@ -267,7 +267,13 @@ func _grade_block() -> Control:
 	var tier := Label.new()
 	tier.text = str(grade.get("tier", "?"))
 	tier.autowrap_mode = TextServer.AUTOWRAP_OFF
-	tier.add_theme_font_size_override("font_size", 40)
+	## ⚠️ WAS A TYPED `40` — one of the project's last two off-scale labels, and the one the round-20
+	## brief called "the ending headline". It is not the headline: `_title_block()` above has taken
+	## `SIZE_DISPLAY` from the token since it was written. This is the GRADE TIER, and it is the
+	## label that was off the scale. Now on it. `IMMORTAL` and `UNDISPUTED` are the longest tiers
+	## (`career.gd:GRADE_TIERS`) and the column is 230px wide, so the drop from 40 to 32 buys margin
+	## rather than spending it.
+	tier.add_theme_font_size_override("font_size", UiTheme.SIZE_DISPLAY)
 	tier.add_theme_color_override("font_color", UiTheme.GOLD)
 	tier_col.add_child(tier)
 
@@ -432,23 +438,35 @@ func _summary_block() -> Control:
 	var titles: int = int(grade.get("titles", 0))
 	var scraped: int = int(grade.get("scraped", 0))
 
-	var stable: Array = []
+	var stable: Array = _barn()
+	var kept: Array = _freezer()
 	var retired_n: int = 0
-	if has_node("/root/Roster"):
-		stable = Roster.monsters
-		for m in stable:
-			if bool(m.retired):
-				retired_n += 1
+	for m in stable:
+		if bool(m.retired):
+			retired_n += 1
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", UiTheme.SPACE_XL)
 	v.add_child(row)
 	row.add_child(_stat_tile("%d" % int(grade.get("week", int(c.get("week")))), "weeks"))
 	row.add_child(_stat_tile("%d / %d" % [titles, won.size()], "titles taken"))
-	row.add_child(_stat_tile("%d" % scraped, "rungs scraped"))
+	row.add_child(_stat_tile("%d" % scraped, "rung scraped" if scraped == 1 else "rungs scraped"))
 	row.add_child(_stat_tile("%d" % int(c.get("gold")), "gold in hand"))
 	row.add_child(_stat_tile("%d" % stable.size(), "in the stable"))
-	row.add_child(_stat_tile("%d" % retired_n, "retired to the barn"))
+	## ⚠️ "of those, retired" — NOT "retired to the barn". `retired_n` is counted BY SCANNING
+	## `stable`, so a retired body is inside the previous tile's number too. The old wording read
+	## as a separate population and the tiles summed to more bodies than the career owned:
+	## the round-19 capture shows `3 in the stable` + `1 retired to the barn` for a barn of three,
+	## one of whom (Rosewing, and the card grid beside it says `retired` on her face) is both.
+	## Same class as the 400-vs-540 ceiling: two true numbers, one false total.
+	row.add_child(_stat_tile("%d" % retired_n, "of those, retired"))
+	## ⚠️ THE SIXTH TILE USED TO BE THE LAST ONE, AND THE TILES DID NOT ADD UP TO THE STABLE.
+	## `Roster.preserve()` MOVES a monster out of `monsters` and into `frozen` (roster.gd:128), so a
+	## player who put two founders in the freezer — the decision `lab_ui.gd` calls "the decision at
+	## the centre of the meta-game" — reached the ending and found the game counting three bodies
+	## where they owned five, with no line saying where the other two went. The round-19 capture
+	## shows exactly that: `3 in the stable` under a fixture that preserved two.
+	row.add_child(_stat_tile("%d" % kept.size(), "kept as bloodline"))
 	return v
 
 
@@ -473,26 +491,101 @@ func _stat_tile(value: String, label: String) -> Control:
 ## ⚠️ THE MONSTERS ARE HALF THE SCREEN, NOT A FOOTNOTE. `CLAUDE.md`: "you run a STABLE; the stable
 ## produces the PARTY." An ending that prints a grade and no bodies has scored the player's
 ## calendar and ignored everything they actually made.
+##
+## ⚠️ AND IT SHOWED ONLY HALF OF THEM. `Roster.frozen` — the founders the player pays 12g a week
+## forever to keep — was rendered nowhere on this screen, so the generational half of the game
+## ended without being mentioned once. That is signature failure #2 on the screen whose entire job
+## is to say what the career was worth. The freezer now gets its own section, using the same card,
+## and it only appears when there is something in it (an empty "The Bloodline" heading would be a
+## region that looks like it failed to load).
 func _roster_block() -> Control:
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", UiTheme.SPACE_SM)
-	v.add_child(UiTheme.heading("The Ones Who Did It", 3))
+	v.add_theme_constant_override("separation", UiTheme.SPACE_LG)
 
-	if not has_node("/root/Roster") or Roster.monsters.is_empty():
-		v.add_child(UiTheme.body_text("The stable is empty.", "muted"))
-		return v
+	var barn: Array = _barn()
+	var racing := VBoxContainer.new()
+	racing.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	racing.add_child(UiTheme.heading("The Ones Who Did It", 3))
+	if barn.is_empty():
+		racing.add_child(UiTheme.body_text("The stable is empty.", "muted"))
+	else:
+		racing.add_child(stable_grid(barn))
+	v.add_child(racing)
 
-	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_MD)
-	grid.add_theme_constant_override("v_separation", UiTheme.SPACE_MD)
-	v.add_child(grid)
-	for m in Roster.monsters:
-		grid.add_child(_monster_card(m))
+	var kept: Array = _freezer()
+	if not kept.is_empty():
+		var line := VBoxContainer.new()
+		line.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+		line.add_child(UiTheme.heading("The Bloodline", 3))
+		line.add_child(UiTheme.body_text(
+			"Preserved in the Lab rather than raced — the founders this stable leaves behind.",
+			"muted"))
+		line.add_child(stable_grid(kept))
+		v.add_child(line)
 	return v
 
 
-func _monster_card(m) -> Control:
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE STABLE GRID — the one place in the game the stable is shown as portrait + class + age +
+# stats, published as a STATIC builder so it is not stuck on the screen after the player stopped
+# playing.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+##
+## ⚠️ ROUND 18 CALLED THIS GRID THE SECOND-BEST THING IN THE META-GAME AND NOTED IT EXISTS ONCE, AT
+## THE END. The round-20 brief asked whether it belongs somewhere reachable mid-career. It does —
+## and the cheapest honest way to get it there is NOT a new screen and NOT a copy: this file is
+## already the one other screens preload (`town_ui.gd:35` and `report_ui.gd:52` both hold
+## `const Pace = preload("res://scripts/ui/ending_ui.gd")` for the pace adapter), so publishing the
+## grid here costs the caller one line and zero new dependencies:
+##
+##     town_col.add_child(Pace.stable_grid(Roster.monsters, 3))
+##
+## ⚠️ AND THAT CALL SITE IS NOT MINE TO ADD — `town_ui.gd` belongs to another stream this round, so
+## it is an integrator note, and it is the honest risk of this change: a published builder with one
+## caller is one step from being authored-and-unreached, this project's signature failure. It is
+## reached twice on THIS screen (the barn and the freezer), so it is not dead today; if the town
+## call never lands, this is a refactor and not a promotion, and should be reported as such.
+##
+## Deliberately NOT `UiTheme.monster_card()`: that component is a ROW (portrait · name · subtitle ·
+## note · chips · trailing) built for lists and pickers. This is a TILE — a fixed 360x108 card sized
+## to grid three-across at the base viewport — and it carries the three top stats, which is the
+## thing the row shape has no slot for. Both shapes are right for their job; folding them together
+## would give the pickers a tile they cannot list and this screen a row it cannot grid.
+static func stable_grid(monsters: Array, columns: int = 3) -> Control:
+	var grid := GridContainer.new()
+	grid.columns = maxi(1, columns)
+	grid.add_theme_constant_override("h_separation", UiTheme.SPACE_MD)
+	grid.add_theme_constant_override("v_separation", UiTheme.SPACE_MD)
+	for m in monsters:
+		grid.add_child(stable_card(m))
+	return grid
+
+
+## ⚠️ `has_node()` IS A Node METHOD AND THE BUILDERS ABOVE ARE STATIC, so the autoloads are reached
+## the same way `_career()` already reaches `Career` — through the main loop's root. Same guard,
+## same degradation (no autoload = an empty Array, so a caller gets an empty grid rather than a
+## crash), one mechanism.
+static func _roster() -> Node:
+	var loop := Engine.get_main_loop()
+	if loop == null:
+		return null
+	var root := (loop as SceneTree).get_root()
+	return null if root == null else root.get_node_or_null("Roster")
+
+
+static func _barn() -> Array:
+	var r := _roster()
+	return [] if r == null else (r.get("monsters") as Array)
+
+
+## The freezer, read through `Roster.frozen` — the same array `roster.gd:breeding_stock()` returns
+## and `save_game.gd` persists under "frozen". Not a second notion of "preserved".
+static func _freezer() -> Array:
+	var r := _roster()
+	return [] if r == null else (r.get("frozen") as Array)
+
+
+static func stable_card(m) -> Control:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(360, 108)
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.BORDER))

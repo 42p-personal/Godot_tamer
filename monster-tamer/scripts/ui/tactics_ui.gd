@@ -365,7 +365,19 @@ func _build_team_column(parent: HBoxContainer) -> void:
 			_refresh_plan_compare(),
 		true, 260)
 
-	_build_order_selector(team_controls, "Positional intent — team default", TacticsScript.POSITIONAL_INTENT_INFO, "hold",
+	# ⚠️ THE DEFAULT HERE MUST BE THE ONE THE ENGINE ACTUALLY RUNS, AND IT WAS NOT.
+	# This selector displayed "⚓ Hold" while `arena_3d._new_sim_tactics()` fell through its
+	# whitelist to the literal "push" — because `_build_order_selector` calls `opt.select()`
+	# without ever invoking `on_change`, so `team_a_plan["positionalIntent"]` was UNSET until
+	# the player touched the dropdown. Two surfaces (this label and the board's hold rings)
+	# agreed with each other and disagreed with the fight. Sourcing it from
+	# `DeploymentBoardScript.DEFAULT_INTENT` makes the three agree at zero behaviour change.
+	# ⚠️ DO NOT "FIX" THIS BY SEEDING on_change AT BUILD TIME instead — that would commit
+	# "hold", which IS a gameplay change and this project measures those. If `hold` is the
+	# better design default (the board's own caption argues it is), flip DEFAULT_INTENT and
+	# measure with `_probe_sim_quality` per-posture advance; the ladder probes run
+	# `battle_sim.gd`, which has no positions and is structurally blind to it.
+	_build_order_selector(team_controls, "Positional intent — team default", TacticsScript.TEAM_POSITIONAL_INTENT_INFO, DeploymentBoardScript.DEFAULT_INTENT,
 		func(id):
 			team_a_plan["positionalIntent"] = id
 			if deployment_board != null:

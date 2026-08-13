@@ -21,6 +21,14 @@
 ##   T3  no font size below the 14px floor this theme ever hands out
 ##   C1  measured CONTRAST floors — the AA floors and the elevation ladder            (craft round)
 ##   C2  interactive-state DISTINCTNESS — hover/pressed/disabled separated from rest  (craft round)
+##   G1  GLYPH COVERAGE — every non-ASCII codepoint in every rendered Label/Button is asked of the
+##       label's ACTUAL font with `Font.has_char()`; ANY miss FAILS the probe          (font round)
+##
+## ⚠️ G1 IS THE CHECK THAT WOULD HAVE CAUGHT ROUND 19's TOFU BEFORE IT SHIPPED. The project ran
+## with NO packaged font until 2026-08-13: 178 glyph occurrences rendered only because a Windows
+## system font outside the export silently supplied them, so every capture "passed" while the same
+## build was tofu on any other platform. `has_char()` asks the packaged face itself and ignores the
+## OS fallback, which converts "works on my machine" into a measured invariant.
 ##
 ## ⚠️ C1/C2 WERE ADDED BECAUSE A CRAFT ROUND CAN ONLY LOSE IN WAYS T1–T3 CANNOT SEE. T1–T3 count
 ## labels: they answer "did someone invent a sixth grey" and "is anything under 14px". Neither can
@@ -79,6 +87,7 @@ var _view_h: int = 1080
 var _rows: Array = []
 var _off_sizes: Dictionary = {}     # font size -> count, across every screen
 var _off_colours: Dictionary = {}   # "r,g,b" -> count, across every screen
+var _glyph_misses: Dictionary = {}  # "U+XXXX" -> {"count": int, "sample": String} across screens
 
 
 func _ready() -> void:
@@ -96,7 +105,48 @@ func _ready() -> void:
 
 	_report()
 	var craft_ok := _report_craft()
-	get_tree().quit(0 if craft_ok else 1)
+	var glyphs_ok := _report_glyphs()
+	get_tree().quit(0 if (craft_ok and glyphs_ok) else 1)
+
+
+# ── G1 — THE GLYPH TRIPWIRE ───────────────────────────────────────────────────────────────────
+#
+# ⚠️ THE FONT IS ASKED, NEVER A COVERAGE TABLE. Round 19 shipped tofu by trusting that a glyph
+# "obviously" existed; the polish-round audit then verified coverage against the actual packaged
+# face and found 21 of 26 sampled marks missing. `_glyph_check` reads the font the Control will
+# actually render with (`get_theme_font`), which after the font round is packaged Inter — and
+# `Font.has_char()` does not consult the OS fallback chain, so a pass here is a pass on every
+# export target, not just this Windows machine.
+func _report_glyphs() -> bool:
+	print("")
+	print("=== G1 GLYPH COVERAGE (every non-ASCII codepoint in a rendered Label/Button, has_char() against its actual font) ===")
+	if _glyph_misses.is_empty():
+		print("  0 misses — every rendered glyph exists in the packaged face")
+		return true
+	var keys: Array = _glyph_misses.keys()
+	keys.sort()
+	for k in keys:
+		var m: Dictionary = _glyph_misses[k]
+		print("  MISS %-8s x%-4d e.g. [%s] on %s" % [k, int(m["count"]), str(m["sample"]).left(48), str(m["screen"])])
+	print("  ⚠ %d codepoint(s) NOT IN THE PACKAGED FONT — latent tofu on any non-Windows machine. FAIL." % keys.size())
+	return false
+
+
+func _glyph_check(text: String, font: Font, r: Dictionary, sample_owner: String) -> void:
+	if font == null:
+		return
+	for i in text.length():
+		var cp: int = text.unicode_at(i)
+		if cp <= 0x7F:
+			continue
+		if font.has_char(cp):
+			continue
+		r["glyph_miss"] = int(r["glyph_miss"]) + 1
+		var key := "U+%04X" % cp
+		if _glyph_misses.has(key):
+			_glyph_misses[key]["count"] = int(_glyph_misses[key]["count"]) + 1
+		else:
+			_glyph_misses[key] = {"count": 1, "sample": text.strip_edges(), "screen": str(r["n"]) + "/" + sample_owner}
 
 
 # ── C1/C2 — THE CRAFT TRIPWIRES ───────────────────────────────────────────────────────────────
@@ -193,9 +243,9 @@ func _report_craft() -> bool:
 func _report() -> void:
 	print("")
 	print("=== HOUSE STYLE (window %dx%d, base viewport %d tall) ===" % [WINDOW.x, WINDOW.y, _view_h])
-	print("                     R1     R2   |------- R3 disabled -------|   R5      T1/T3     T2      C3")
-	print("screen             scroll pinned  n  tooltip  maybe  SILENT   nest   off-scale off-token  lifted")
-	var tot := {"r1": 0, "r2": 0, "r3": 0, "maybe": 0, "r5": 0, "t1": 0, "t2": 0, "lift": 0, "lift_max": 0}
+	print("                     R1     R2   |------- R3 disabled -------|   R5      T1/T3     T2      C3      G1")
+	print("screen             scroll pinned  n  tooltip  maybe  SILENT   nest   off-scale off-token  lifted  glyphs")
+	var tot := {"r1": 0, "r2": 0, "r3": 0, "maybe": 0, "r5": 0, "t1": 0, "t2": 0, "lift": 0, "lift_max": 0, "glyph": 0}
 	for r in _rows:
 		if not r["scrolls"]:
 			tot["r1"] += 1
@@ -209,7 +259,8 @@ func _report() -> void:
 		tot["t2"] += int(r["off_colour"])
 		tot["lift"] += int(r["lifted"])
 		tot["lift_max"] = maxi(int(tot["lift_max"]), int(r["lifted"]))
-		print("%-18s %5s %6s %4d %6d %7d %7d %6d %9d %8d %7d" % [
+		tot["glyph"] += int(r["glyph_miss"])
+		print("%-18s %5s %6s %4d %6d %7d %7d %6d %9d %8d %7d %7d" % [
 			r["n"],
 			"yes" if r["scrolls"] else "NO",
 			"yes" if r["pinned_action"] else "NO",
@@ -219,6 +270,7 @@ func _report() -> void:
 			int(r["off_size"]),
 			int(r["off_colour"]),
 			int(r["lifted"]),
+			int(r["glyph_miss"]),
 		])
 	print("")
 	print("TOTALS  R1 screens that do not scroll: %d · R2 screens with no pinned action: %d"
@@ -232,6 +284,8 @@ func _report() -> void:
 	# intended; a screen at 5+ is claiming five primary things and needs a human to read its capture.
 	print("        C3 panels claiming top elevation (\"raised\"): %d across %d screens · max on one screen: %d"
 		% [tot["lift"], _rows.size(), tot["lift_max"]])
+	print("        G1 rendered glyphs missing from their own font: %d  (any non-zero FAILS — see the G1 block)"
+		% tot["glyph"])
 
 	print("")
 	print("--- OFF-SCALE FONT SIZES (theme hands out %s) ---" % [UiTheme.TOKEN_FONT_SIZES])
@@ -350,7 +404,7 @@ func _capture(scene_path: String, screen_name: String) -> void:
 	var r := {
 		"n": screen_name, "scrolls": false, "pinned_action": false,
 		"disabled": 0, "reason_tip": 0, "reason_maybe": 0, "silent_disabled": 0,
-		"max_nest": 0, "off_size": 0, "off_colour": 0, "lifted": 0,
+		"max_nest": 0, "off_size": 0, "off_colour": 0, "lifted": 0, "glyph_miss": 0,
 	}
 	_walk(node, r, 0)
 	_rows.append(r)
@@ -381,6 +435,9 @@ func _walk(n: Node, r: Dictionary, scroll_depth: int) -> void:
 
 	if n is Button:
 		var b := n as Button
+		# G1 — a Button's label renders through the same TextServer as a Label's; the marks the
+		# UI actually leans on (▶ Play, ✓ Booked, ↺) sit on Buttons as often as on Labels.
+		_glyph_check(b.text, b.get_theme_font("font"), r, "Button")
 		if b.disabled:
 			r["disabled"] += 1
 			# R3 — TWO CHANNELS, COUNTED SEPARATELY, AND NEITHER FOLDED INTO A SINGLE PASS/FAIL.
@@ -430,6 +487,9 @@ func _walk(n: Node, r: Dictionary, scroll_depth: int) -> void:
 
 	if n is Label:
 		var l := n as Label
+		# G1 — asked of the font THIS label resolves to (override → theme chain → project default),
+		# i.e. the face it will actually render with, never a coverage table copied from the web.
+		_glyph_check(l.text, l.get_theme_font("font"), r, "Label")
 		if l.has_theme_font_size_override("font_size"):
 			var fs: int = l.get_theme_font_size("font_size")
 			if not UiTheme.TOKEN_FONT_SIZES.has(fs):

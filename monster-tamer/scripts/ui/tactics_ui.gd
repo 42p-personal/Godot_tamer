@@ -359,7 +359,7 @@ func _refresh_read() -> void:
 		var gradeable: bool = bool(claim.get("gradeable", true))
 		var sub := Label.new()
 		sub.text = "    %s" % (str(claim.get("test", "")) if gradeable
-			else "⚠ NOT SIMULATED YET — %s, so this claim cannot be graded." % str(claim.get("why_ungradeable", "")))
+			else "NOT SIMULATED YET — %s, so this claim cannot be graded." % str(claim.get("why_ungradeable", "")))
 		sub.autowrap_mode = TextServer.AUTOWRAP_WORD
 		sub.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 		sub.add_theme_color_override("font_color", UiTheme.TEXT_MUTED if gradeable else UiTheme.CAUTION)
@@ -433,7 +433,14 @@ func _build_team_column(parent: HBoxContainer) -> void:
 	# read keep working unmodified — the board just computes that bucket from real placement
 	# instead of asking the player to pick it blind.
 	deployment_board = DeploymentBoardScript.new()
-	deployment_board.setup(team_a, TEAM_SIZE)
+	# ⚠️ THE MATCH'S SIZE, NOT THE CONSTANT — this call hard-coded TEAM_SIZE (5), so in a smaller
+	# cup the board drew a 5v5 ground and zone while `arena_3d.gd::_new_sim_inputs()` sizes the sim
+	# by `maxi(team_a.size(), team_b.size())` and clamps every start into THAT zone. A monster
+	# placed in the board's wider zone silently moved at fight start — the board lying about the
+	# one thing it exists to state. Same formula as the sim, so the two cannot disagree.
+	# The league's own ground art rides along so the board is painted with the floor the fight
+	# will actually be fought on (null degrades to bare earth inside the board).
+	deployment_board.setup(team_a, maxi(maxi(team_a.size(), team_b.size()), 1), _ground_texture())
 	team_a_plan["formation"] = deployment_board.formation_bucket()
 	deployment_board.changed.connect(_on_board_changed)
 	team_controls.add_child(deployment_board)
@@ -539,7 +546,9 @@ func _add_team_monster_row(parent: VBoxContainer, m) -> void:
 	# team plan means NOT WRITING the key at all, which is different from explicitly choosing ""
 	# (force lowest-HP even if the team plan says otherwise). Prepending it here, in the UI, keeps
 	# that inherit/override distinction out of the engine-facing vocabulary in tactics.gd.
-	var per_monster_priority: Array = [{"id": "__inherit__", "icon": "↕", "name": "Team default", "desc": ""}] + TacticsScript.TARGET_PRIORITY_INFO
+	# ⚠️ The inherit entry's icon is "·" (U+00B7, IN the packaged font — one of its five verified
+	# marks), not the "↕" it used to be (U+2195, not packaged, rendered only by Windows fallback).
+	var per_monster_priority: Array = [{"id": "__inherit__", "icon": "·", "name": "Team default", "desc": ""}] + TacticsScript.TARGET_PRIORITY_INFO
 	_build_order_selector(ctl_row, "Target", per_monster_priority, "__inherit__",
 		func(id):
 			if id == "__inherit__":
@@ -621,7 +630,7 @@ func _refresh_order_rows() -> void:
 			warn.visible = true
 			warn.text = ("Marked: %s. If it dies, this one goes back to picking the lowest-HP enemy."
 				% marked.species_name) if marked != null \
-				else "⚠ Nothing is marked yet — click a rival in the scouted column, or this order falls back to the lowest-HP enemy."
+				else "Nothing is marked yet — click a rival in the scouted column, or this order falls back to the lowest-HP enemy."
 		else:
 			warn.visible = false
 
@@ -651,7 +660,9 @@ func _build_rival_column(parent: HBoxContainer) -> void:
 	var entry2: Dictionary = _cup.current_round_entry() if (_cup != null and _cup.active) else {}
 	if not entry2.is_empty():
 		var who := Label.new()
-		who.text = "%s%s" % ["♛  " if bool(entry2.get("champion", false)) else "",
+		# "♛" was a font glyph the packaged face lacks — the WORD carries the rank now, and the
+		# gold ink below already set the champion row apart.
+		who.text = "%s%s" % ["TITLEHOLDER — " if bool(entry2.get("champion", false)) else "",
 			str(entry2.get("label", ""))]
 		who.autowrap_mode = TextServer.AUTOWRAP_WORD
 		who.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
@@ -787,7 +798,10 @@ func _add_rival_row(parent: VBoxContainer, m) -> void:
 	var mark_lbl := Label.new()
 	mark_lbl.name = "MarkHint"
 	mark_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mark_lbl.text = "🎯 mark"
+	# ⚠️ WORDS, NOT A GLYPH — this read "🎯 mark", and U+1F3AF is not in the packaged font
+	# (POLISH_DIRECTION §2's live tofu list). The word IS the affordance; the state change at
+	# `_style_rival_panel` is a word change too, so nothing here can tofu.
+	mark_lbl.text = "click to mark"
 	mark_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mark_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mark_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -820,8 +834,27 @@ func _style_rival_panel(panel: PanelContainer, accent: Color, marked: bool) -> v
 	# The row's own affordance follows its state — never colour alone, the WORD changes too.
 	var hint := panel.find_child("MarkHint", true, false) as Label
 	if hint != null:
-		hint.text = "🎯 MARKED" if marked else "🎯 mark"
+		hint.text = "MARKED" if marked else "click to mark"
 		hint.add_theme_color_override("font_color", UiTheme.GOLD if marked else UiTheme.TEXT_MUTED)
+
+
+## The league's floor art for the deployment board — the board renders it, THIS screen reads the
+## career, keeping the "a component renders, it never derives" split. Cup rounds use the cup's
+## league; standalone uses the career's current league; a missing autoload returns null and the
+## board falls back to its bare-earth tone.
+func _ground_texture() -> Texture2D:
+	var career := get_node_or_null("/root/Career")
+	if career == null:
+		return null
+	var lname: String
+	if _cup != null and _cup.active:
+		lname = str(career.league_at(_cup.league_idx).get("name", ""))
+	else:
+		lname = str(career.current_league_name())
+	var names: Array = []
+	for l in career.leagues:
+		names.append(l.get("name", ""))
+	return Art.ground_for(lname, names)
 
 
 ## Syncs the board's live state (spread bucket + per-monster positional-intent overrides) into

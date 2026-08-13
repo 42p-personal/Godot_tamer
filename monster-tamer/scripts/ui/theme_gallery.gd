@@ -116,11 +116,11 @@ func _build_ui() -> void:
 	_section(col, "13. Empty state + a dead control that says why", _build_empty_section())
 	_section(col, "14. Commit bar — the affordance that pins itself outside the scroll", _build_commit_section())
 	_section(col, "15. THE ACCEPTANCE TEST — the same monster, three screens", _build_three_screens_section())
-	_section(col, "16. ⚠️ THE ELEVATION LADDER — the measured reason the game reads flat", _build_elevation_section())
-	_section(col, "17. ⚠️ INTERACTIVE STATES, DRAWN SIDE BY SIDE", _build_states_section())
+	_section(col, "16. ⚠ THE ELEVATION LADDER — the measured reason the game reads flat", _build_elevation_section())
+	_section(col, "17. ⚠ INTERACTIVE STATES, DRAWN SIDE BY SIDE", _build_states_section())
 	_section(col, "18. THE 141 ABILITY ICONS — the asset exactly one file loads", _build_icons_section())
 	_section(col, "19. THE SIX STAT HUES — and the GOLD collision", _build_stathue_section())
-	_section(col, "20. ⚠️ GLYPH COVERAGE — what the packaged font does NOT contain", _build_glyph_section())
+	_section(col, "20. ⚠ GLYPH COVERAGE — what the packaged font does NOT contain", _build_glyph_section())
 
 
 func _section(parent: VBoxContainer, title: String, body: Control) -> void:
@@ -537,7 +537,7 @@ func _build_three_screens_section() -> Control:
 	col.add_child(after)
 
 	col.add_child(UiTheme.body_text(
-		"⚠️ The components exist; the three screens do not call them yet, and converting them is " +
+		"⚠ The components exist; the three screens do not call them yet, and converting them is " +
 		"not this stream's file to touch. The measurable target is _probe_house.gd's last two " +
 		"columns reaching zero on report_ui / tactics_ui / market_ui.", "muted"))
 	return col
@@ -622,8 +622,8 @@ func _today_report() -> Control:
 	hbox.add_child(col)
 	_label(col, "Terrock  (fallen)", 16, Color(0.9, 0.9, 0.93))
 	_label(col, "dealt 130 · took 399", 12, Color(0.7, 0.75, 0.7))
-	_label(col, "◆ Hold · ⚑ Team default", 12, Color(0.82, 0.78, 0.62))
-	_label(col, "▸ Orders & decision log", 11, Color(0.6, 0.6, 0.68))
+	_label(col, "● Hold · ○ Team default", 12, Color(0.82, 0.78, 0.62))
+	_label(col, "▶ Orders & decision log", 11, Color(0.6, 0.6, 0.68))  # ▶ is packaged; ▸ (U+25B8) is not
 	return parts[0]
 
 

@@ -482,9 +482,18 @@ func _phase_tactics_commit() -> void:
 		_ok(placements.size() == team_a.size(),
 			"deployment: every monster has a start position (%d of %d)" % [placements.size(), team_a.size()])
 		var zone: Rect2 = board.call("zone_rect")
+		# ⚠️ EDGE-INCLUSIVE ON PURPOSE (round 22). `Rect2.has_point()` excludes the far edges, but
+		# the zone's forward edge IS legal: `Spatial.deploy_positions()` seats the front rank at
+		# exactly x = cx − half_sep, which is the zone's right edge, and `_settle_valid` clamps
+		# dragged chips onto that same edge. An edge-exclusive check therefore fails the sim's own
+		# canonical start positions. It passed for 21 rounds only because the board was hard-sized
+		# to 5v5, where the 0.5 grid snap happened to round the front rank 24.2 → 24.0, just
+		# inside; the round-22 board is sized by the match (1v1 here) and exposed it.
 		var all_in := true
 		for p in placements:
-			if not zone.has_point(p["pos"]):
+			var pos: Vector2 = p["pos"]
+			if pos.x < zone.position.x or pos.x > zone.position.x + zone.size.x \
+					or pos.y < zone.position.y or pos.y > zone.position.y + zone.size.y:
 				all_in = false
 		_ok(all_in, "deployment: every placement is inside the legal deploy zone")
 

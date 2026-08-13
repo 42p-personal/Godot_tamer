@@ -128,7 +128,9 @@ func _build_ui() -> void:
 	## ⚠️ AND IT MUST STAY ONE LABEL. The obvious alternative — one Label per letter in an HBox with
 	## a separation constant — would give tracking too, and would take `_probe_house.gd`'s
 	## off-scale count from 1 to 13 for a single unchanged wordmark. The round's tripwire is ≤1.
-	word.add_theme_font_override("font", UiTheme.display_font(8))
+	## Round 22: the packaged face landed, so the wordmark takes the DISPLAY register — Inter Bold —
+	## per theme.gd §1b's weight map ("the title wordmark and nothing else yet"). Tracking unchanged.
+	word.add_theme_font_override("font", UiTheme.display_font(8, "bold"))
 	_ink_over_art(word)
 	vbox.add_child(word)
 

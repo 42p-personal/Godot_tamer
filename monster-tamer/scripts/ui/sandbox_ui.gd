@@ -393,7 +393,7 @@ func _build_center_panel() -> Control:
 	run_row.add_child(seed_spin)
 
 	var rand_seed_btn := Button.new()
-	rand_seed_btn.text = "🎲"
+	rand_seed_btn.text = "↺"  # was 🎲, which is not in the packaged Inter face; ↺ (reroll) is
 	rand_seed_btn.tooltip_text = "Randomize the seed (UI convenience only — the sim itself stays deterministic per seed)"
 	rand_seed_btn.pressed.connect(func(): seed_spin.value = randi() % 999999999)
 	run_row.add_child(rand_seed_btn)
@@ -712,7 +712,7 @@ func _on_play_pause_pressed() -> void:
 
 func _update_play_button() -> void:
 	if play_btn != null:
-		play_btn.text = "⏸ Pause" if playing else "▶ Play"
+		play_btn.text = "Pause" if playing else "▶ Play"  # ⏸ is not in the packaged Inter face
 
 
 func _apply_display_frame() -> void:

@@ -640,7 +640,7 @@ func _build_unit_node(m, side: String, team_index: int, slot_index: int, team_co
 	pv.add_child(status_row)
 
 	var dead_mark := Label.new()
-	dead_mark.text = "✖"
+	dead_mark.text = "✗"  # U+2717 is in the packaged Inter face; U+2716 ✖ is not
 	dead_mark.add_theme_font_size_override("font_size", 34)
 	dead_mark.add_theme_color_override("font_color", Color(0.9, 0.2, 0.2, 0.9))
 	dead_mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

@@ -86,6 +86,10 @@ Tutorial="*res://scripts/tutorial.gd"
 TutorialOverlay="*res://scripts/ui/tutorial_overlay.gd"
 SaveGame="*res://scripts/save_game.gd"
 
+[gui]
+
+theme/custom_font="res://assets/fonts/Inter-Regular.ttf"
+
 [display]
 
 window/size/viewport_width=1920

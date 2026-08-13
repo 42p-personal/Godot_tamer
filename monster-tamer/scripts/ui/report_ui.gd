@@ -1316,13 +1316,13 @@ func _unit_report_row(m, uid: int, unit_stats: Dictionary, tint: Color, is_team_
 	details.visible = false
 
 	var toggle := Button.new()
-	toggle.text = "▸ Orders & decision log"
+	toggle.text = "▶ Orders & decision log"
 	toggle.flat = true
 	toggle.focus_mode = Control.FOCUS_ALL
 	toggle.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	toggle.pressed.connect(func():
 		details.visible = not details.visible
-		toggle.text = "▾ Orders & decision log" if details.visible else "▸ Orders & decision log"
+		toggle.text = "▼ Orders & decision log" if details.visible else "▶ Orders & decision log"
 	)
 	outer.add_child(toggle)
 	outer.add_child(details)

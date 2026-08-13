@@ -799,7 +799,7 @@ func _agenda_panel() -> Control:
 
 	for i in range(items.size()):
 		var it: Dictionary = items[i]
-		var line := UiTheme.body_text(("➤ " if i == 0 else "· ") + str(it["text"]),
+		var line := UiTheme.body_text(("→ " if i == 0 else "· ") + str(it["text"]),
 			"primary" if i == 0 else "secondary")
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		## ⚠️ RANK IS THE EMPHASIS CHANNEL HERE AND IT STAYS THAT WAY — only the top prompt is

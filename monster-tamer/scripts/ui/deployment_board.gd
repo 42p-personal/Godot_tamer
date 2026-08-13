@@ -33,10 +33,11 @@ const FormationsScript = preload("res://scripts/formations.gd")
 ## as the tactics screen's debt when they were never its file. Every LABEL below now takes a
 ## `UiTheme` size and a token colour.
 ##
-## ⚠️ THE `draw_string` CALLS ARE A DIFFERENT PROBLEM AND ARE DELIBERATELY LEFT. They paint into a
-## canvas, not the label tree, so no probe scores them and none of them is a Label a screen reader
-## or a font-scale setting can reach. Sizing them off tokens would look tidy and would fix nothing
-## measurable; the real fix is that the chips stop being drawn text, and that is board surgery.
+## ⚠️ ROUND 22: THE BOARD SURGERY THE NOTE BELOW ASKED FOR HAPPENED. Chips are portraits standing
+## in team-livery ground rings (the arena's own vocabulary, same HSV lift as
+## `arena_3d.gd::_add_team_ring`), the board paints the league's ground art, and the remaining
+## `draw_string` calls are ASCII only ("YOU"/"RIVAL"/an initial/a "?") — the "⚠" the cluster
+## warning typed is now a drawn mark, because U+26A0 is not in the packaged font.
 const UiTheme = preload("res://scripts/ui/theme.gd")
 
 signal changed
@@ -50,11 +51,30 @@ const FINE_SNAP := 0.1
 ## `ARENA_BLUEPRINT.md` §3 — "body spacing doesn't change because the world did"). Do not ship a
 ## real balance reading off this number; it is a legibility placeholder pending an authored figure.
 const CLUSTER_RADIUS := 5.5
-const CHIP_SIZE := 24.0
+const CHIP_SIZE := 32.0
 const FLASH_MS := 260
+## What the board paints where the league's ground art is missing — a bare-earth tone, so the
+## board still reads as GROUND rather than as a black debug canvas. Canvas paint, not a Label
+## colour, so it is outside `_probe_house`'s token audit by that probe's own scoring rules.
+const GROUND_FALLBACK := Color(0.16, 0.145, 0.12)
+
+
+## The livery colour raised for a dark floor — THE SAME LIFT `arena_3d.gd::_add_team_ring()`
+## applies to the ring it draws under every fighting body (keep hue and saturation, raise value),
+## so the ring under a chip here and the ring under the monster in the arena are one colour.
+## ⚠️ Duplicating the two `maxf` calls rather than the function: the arena file is not this
+## stream's to edit, and the lift is two clamps, not a system. If a shared home appears
+## (`theme.gd` or `art.gd`), fold both call sites onto it.
+func _lifted_team(index: int) -> Color:
+	var col: Color = Art.team_colour(index)
+	return Color.from_hsv(col.h, maxf(col.s, 0.62), maxf(col.v, 0.86))
 
 var team_a: Array = []
 var team_size: int = 5
+## The league's own ground art, PASSED IN by the screen that knows the league (`tactics_ui.gd`) —
+## this widget renders it, it never reads `Career`. Null degrades to a flat earth tone, the same
+## null-degrades-visibly contract as every `Art` getter.
+var ground_tex: Texture2D = null
 var ground: Vector2 = Vector2.ZERO
 var zone_a: Rect2 = Rect2()
 var zone_b: Rect2 = Rect2()
@@ -152,7 +172,7 @@ func _ready() -> void:
 	if not _pending_setup.is_empty():
 		var p := _pending_setup
 		_pending_setup = {}
-		setup(p["team"], p["team_size"])
+		setup(p["team"], p["team_size"], p.get("ground_tex"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -163,13 +183,14 @@ func _ready() -> void:
 ## exists (docs/UX_DEPLOYMENT.md §7 #1 — "the screen opens with the last-used formation already
 ## loaded"); otherwise auto-arranges. `rival_preview` is the ghost-zone dot set (already-scouted,
 ## per this mockup's standing "rival is fully scouted" assumption).
-func setup(team: Array, team_size_: int) -> void:
+func setup(team: Array, team_size_: int, ground_tex_: Texture2D = null) -> void:
 	# See the note on `_ready()` — a caller may legitimately reach us before the controls exist.
 	if not _ui_built:
-		_pending_setup = {"team": team, "team_size": team_size_}
+		_pending_setup = {"team": team, "team_size": team_size_, "ground_tex": ground_tex_}
 		return
 	team_a = team
 	team_size = maxi(1, team_size_)
+	ground_tex = ground_tex_
 	ground = Sp.ground_size(team_size)
 	enemy_ghost = Sp.deploy_positions(team_size, "B")
 	_compute_zones()
@@ -248,6 +269,12 @@ func _compute_aura_flags() -> void:
 # UI — HEADER / GALLERY / TRAY / READOUT / LEGEND
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 
+## ⚠️ `HFlowContainer`, NOT `HBoxContainer` — the round-19 legend fix, applied to the row that had
+## the same disease. An HBox holding a 140px LineEdit plus four buttons reports ~620px as its
+## minimum width; the board hands that upward, the team column squeezes its children instead, and
+## the LineEdit clips its own placeholder to "Formation nam" while the help line below is cut at
+## the panel edge — both named in the round-21 captures. A flow row's minimum is its WIDEST CHILD,
+## not their sum, so the column can be honest about its width and nothing clips.
 func _build_header_row() -> void:
 	var header := Label.new()
 	header.text = "Formation — free placement, your half only"
@@ -256,38 +283,48 @@ func _build_header_row() -> void:
 	header.add_theme_color_override("font_color", UiTheme.GOLD)
 	add_child(header)
 
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 6)
+	row.add_theme_constant_override("v_separation", 4)
 	add_child(row)
 
 	_name_edit = LineEdit.new()
 	_name_edit.placeholder_text = "Formation name"
-	_name_edit.custom_minimum_size = Vector2(140, 0)
+	# Wide enough for its own placeholder at the body size — the clipped "Formation nam" was this
+	# control at 140px. ⚠️ Sized generously rather than to today's glyph widths on purpose: the
+	# font is changing under this round (Inter), so a to-the-pixel fit would be stale on landing.
+	_name_edit.custom_minimum_size = Vector2(180, 0)
+	_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_name_edit)
+	_header_buttons.append(_name_edit)
 
 	var save_btn := Button.new()
 	save_btn.text = "Save as new"
 	save_btn.tooltip_text = "Save the current arrangement as a new named formation."
 	save_btn.pressed.connect(_on_save_new)
 	row.add_child(save_btn)
+	_header_buttons.append(save_btn)
 
 	var update_btn := Button.new()
 	update_btn.text = "Update"
 	update_btn.tooltip_text = "Overwrite the loaded formation with the current arrangement."
 	update_btn.pressed.connect(_on_update_loaded)
 	row.add_child(update_btn)
+	_header_buttons.append(update_btn)
 
 	var auto_btn := Button.new()
 	auto_btn.text = "Auto-arrange"
 	auto_btn.tooltip_text = "Fill every undeployed monster into a sensible default line."
 	auto_btn.pressed.connect(func(): auto_arrange(); _recompute())
 	row.add_child(auto_btn)
+	_header_buttons.append(auto_btn)
 
 	var reset_btn := Button.new()
 	reset_btn.text = "Reset to loaded"
 	reset_btn.tooltip_text = "Undo in-progress dragging — reload the formation this screen opened with."
 	reset_btn.pressed.connect(reset_to_loaded)
 	row.add_child(reset_btn)
+	_header_buttons.append(reset_btn)
 
 
 func _build_gallery_row() -> void:
@@ -299,7 +336,7 @@ func _build_gallery_row() -> void:
 	add_child(lbl)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 56)
+	scroll.custom_minimum_size = Vector2(0, 84)
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
 	_gallery_box = HBoxContainer.new()
@@ -316,30 +353,40 @@ func _refresh_gallery() -> void:
 		_gallery_box.add_child(_make_gallery_entry(f))
 
 
+## A saved formation reads as WHAT IT IS — a named plan: shape preview at a legible size, the name
+## under it, the size it was saved at when that differs from today's match. Styled as the theme's
+## own button so a preset is visibly a button, not floating text (the round-21 finding).
 func _make_gallery_entry(f: Dictionary) -> Control:
 	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(78, 52)
+	btn.custom_minimum_size = Vector2(96, 76)
 	btn.focus_mode = Control.FOCUS_ALL
-	var is_mismatch := int(f.get("teamSize", team_size)) != team_size
-	var suffix := "" if not is_mismatch else " (%dv%d)" % [int(f.get("teamSize", 0)), int(f.get("teamSize", 0))]
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		btn.add_theme_stylebox_override(state, UiTheme.button_stylebox("secondary", state))
+	btn.add_theme_stylebox_override("focus", UiTheme.button_stylebox("secondary", "focus"))
+	var saved_size := int(f.get("teamSize", team_size))
+	var is_mismatch := saved_size != team_size
+	var suffix := "" if not is_mismatch else " (saved at %dv%d)" % [saved_size, saved_size]
 	btn.tooltip_text = "%s%s%s" % [f.get("name", "?"), suffix, "" if not f.get("preset", false) else " — starter preset"]
 
 	var vb := VBoxContainer.new()
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_theme_constant_override("separation", 2)
 	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
 	btn.add_child(vb)
 
 	var thumb := Control.new()
-	thumb.custom_minimum_size = Vector2(70, 34)
+	thumb.custom_minimum_size = Vector2(86, 40)
+	thumb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	thumb.draw.connect(func(): _draw_thumb(thumb, f))
 	vb.add_child(thumb)
 
 	var name_lbl := Label.new()
-	name_lbl.text = f.get("name", "?")
+	name_lbl.text = f.get("name", "?") + ("" if not is_mismatch else " · %dv%d" % [saved_size, saved_size])
 	name_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	name_lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(name_lbl)
 
@@ -351,14 +398,23 @@ func _make_gallery_entry(f: Dictionary) -> Control:
 	return btn
 
 
+## The thumbnail is a miniature of the BOARD, not an abstract dot lattice: same ground tone, same
+## team-livery dots, and a facing edge on the right so every saved shape reads against the same
+## "the enemy is that way" the full board draws.
 func _draw_thumb(thumb: Control, f: Dictionary) -> void:
 	var r := Rect2(Vector2.ZERO, thumb.size)
-	thumb.draw_rect(r, Color(0.1, 0.1, 0.13), true)
-	thumb.draw_rect(r, Color(0.3, 0.3, 0.36), false, 1.0)
+	thumb.draw_rect(r, GROUND_FALLBACK, true)
+	thumb.draw_rect(r, UiTheme.BORDER_FAINT, false, 1.0)
+	# The facing edge — the rival is beyond the right border, exactly as on the board itself.
+	var col_b := _lifted_team(1)
+	thumb.draw_line(Vector2(r.size.x - 1.5, 0), Vector2(r.size.x - 1.5, r.size.y),
+		Color(col_b.r, col_b.g, col_b.b, 0.6), 3.0)
+	var col_a := _lifted_team(0)
 	for slot in f.get("slots", []):
 		var rel: Array = slot["rel"]
 		var p := Vector2(rel[0] * r.size.x, rel[1] * r.size.y)
-		thumb.draw_circle(p, 2.0, Color(0.4, 0.65, 0.95))
+		thumb.draw_circle(p, 3.5, Color(col_a.r, col_a.g, col_a.b, 0.35))
+		thumb.draw_arc(p, 3.5, 0.0, TAU, 16, col_a, 1.5)
 
 
 func _build_board_area() -> void:
@@ -374,7 +430,7 @@ func _build_board_area() -> void:
 
 func _build_tray_row() -> void:
 	var lbl := Label.new()
-	lbl.text = "Roster — Enter/Space to deploy, then Tab to it and use arrow keys"
+	lbl.text = "Roster — not yet deployed. Click or press Enter to place one."
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	lbl.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
@@ -397,12 +453,26 @@ func _build_readout_row() -> void:
 	_summary_label.add_theme_color_override("font_color", UiTheme.SAFE)
 	add_child(_summary_label)
 
+	## ⚠️ THIS SENTENCE SAID "the 5-icon strip" AND NO SUCH STRIP EXISTS — intent is cycled with
+	## [ and ] on a chip, or set for the whole team in the dropdown above the board. A help line
+	## describing a control that was never built is rule (1)'s lie in miniature; the copy now
+	## names the controls that are actually on the screen.
 	var hint := Label.new()
-	hint.text = "Where you drop a chip is where that monster starts the fight — its station. Positional intent (the 5-icon strip) sets how it fights around that station."
+	hint.text = "Where you drop a monster is where it starts the fight — its station. Positional intent sets how it fights around that station: cycle it with [ and ] on a placed monster, or set the team default above."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD
 	hint.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	hint.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
 	add_child(hint)
+
+	# The keyboard path, given room to say its whole sentence — the round-21 capture cut its
+	# predecessor at "...use arrow key". Autowrap plus the flow-container header is what makes
+	# the room; the sentence itself is the affordance a keyboard-only player navigates by.
+	var keys := Label.new()
+	keys.text = "Keyboard: Tab reaches every control here. Arrows move a placed monster (Shift for fine steps), [ and ] cycle its intent, Delete returns it to the roster."
+	keys.autowrap_mode = TextServer.AUTOWRAP_WORD
+	keys.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	keys.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+	add_child(keys)
 
 
 func _build_legend_row() -> void:
@@ -412,27 +482,81 @@ func _build_legend_row() -> void:
 	# (the scouted rival) was pushed off the right edge of the viewport. Nothing failed — the house
 	# probe went green on the type in the same run — and it was only visible by looking at
 	# `11_tactics.png`. A legend is the one row in this widget that can wrap for free.
+	## ⚠️ THE SWATCH IS THE ACTUAL DRAWING, NOT A FONT GLYPH. The old entries opened with ⛨ ✚ ⚠ ▦ —
+	## four codepoints the packaged face does not carry (`POLISH_DIRECTION.md` §2's live tofu bug),
+	## and four SYMBOLS standing in for marks the board draws differently anyway. Each legend entry
+	## now draws a miniature of the exact mark the board paints — a legend that cannot tofu and
+	## cannot drift from the thing it explains.
 	var row := HFlowContainer.new()
 	row.add_theme_constant_override("h_separation", 14)
 	row.add_theme_constant_override("v_separation", 2)
 	add_child(row)
 	for entry in [
-		["⛨ dashed gold ring", "your aura reach"],
-		["✚ gold dot", "ally covered"],
-		["⚠ pulsing orange", "AoE cluster risk"],
-		["▦ hashed zone", "scouted rival"],
+		["aura", "aura reach"],
+		["covered", "ally covered"],
+		["cluster", "AoE cluster risk"],
+		["ghost", "scouted rival"],
 	]:
+		var item := HBoxContainer.new()
+		item.add_theme_constant_override("separation", 4)
+		row.add_child(item)
+		item.add_child(_legend_swatch(str(entry[0])))
 		var l := Label.new()
-		l.text = "%s — %s" % [entry[0], entry[1]]
+		l.text = str(entry[1])
 		l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 		l.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
-		row.add_child(l)
+		item.add_child(l)
 
 	var motion_toggle := CheckButton.new()
 	motion_toggle.text = "Reduce motion"
 	motion_toggle.tooltip_text = "Freeze the AoE cluster warning pulse to a static outline."
 	motion_toggle.toggled.connect(func(on): _reduce_motion = on)
 	row.add_child(motion_toggle)
+
+
+## One legend entry's mark, drawn in miniature by the same vocabulary the board uses full-size.
+func _legend_swatch(kind: String) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(18, 14)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.draw.connect(func(): _draw_legend_swatch(c, kind))
+	return c
+
+
+func _draw_legend_swatch(c: Control, kind: String) -> void:
+	var mid: Vector2 = c.size * 0.5
+	match kind:
+		"aura":
+			_draw_dashed_circle_on(c, mid, minf(mid.x, mid.y) - 1.5,
+				Color(UiTheme.GOLD.r, UiTheme.GOLD.g, UiTheme.GOLD.b, 0.9))
+		"covered":
+			c.draw_circle(mid, 3.0, UiTheme.SAFE)
+		"cluster":
+			_draw_warn_mark(c, mid, 10.0, UiTheme.STATUS_BURN)
+		"ghost":
+			var col := _lifted_team(1)
+			var r := Rect2(Vector2(1, 1), c.size - Vector2(2, 2))
+			c.draw_rect(r, Color(col.r, col.g, col.b, 0.4), false, 1.0)
+			c.draw_line(r.position, r.position + r.size, Color(col.r, col.g, col.b, 0.6), 1.0)
+			c.draw_line(Vector2(r.position.x + r.size.x * 0.5, r.position.y),
+				Vector2(r.position.x + r.size.x, r.position.y + r.size.y * 0.5),
+				Color(col.r, col.g, col.b, 0.6), 1.0)
+
+
+## The cluster warning's mark — a triangle with a stem, DRAWN, replacing the `draw_string("⚠")`
+## the board used to paint (a font glyph the packaged face does not carry — it only rendered at
+## all because a Windows system font supplied it).
+func _draw_warn_mark(canvas: CanvasItem, centre: Vector2, px: float, col: Color) -> void:
+	var h := px * 0.5
+	var pts := PackedVector2Array([
+		centre + Vector2(0, -h),
+		centre + Vector2(-h * 0.95, h * 0.8),
+		centre + Vector2(h * 0.95, h * 0.8),
+		centre + Vector2(0, -h),
+	])
+	canvas.draw_polyline(pts, col, maxf(1.2, px * 0.14), true)
+	canvas.draw_line(centre + Vector2(0, -h * 0.35), centre + Vector2(0, h * 0.2), col, maxf(1.2, px * 0.14))
+	canvas.draw_circle(centre + Vector2(0, h * 0.5), maxf(0.8, px * 0.08), col)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -445,9 +569,16 @@ func _rebuild_tray() -> void:
 	_tray_buttons.clear()
 	for m in team_a:
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(CHIP_SIZE + 6, CHIP_SIZE + 6)
+		b.custom_minimum_size = Vector2(CHIP_SIZE + 12, CHIP_SIZE + 12)
 		b.focus_mode = Control.FOCUS_ALL
-		b.text = _chip_glyph(m)
+		# The player is placing THIS monster — show its face, not its initial. Same degrade rule
+		# as `UiTheme.portrait()`: missing art falls back to the initial at the same footprint.
+		var tex: Texture2D = Art.creature_texture(m.species_id)
+		if tex != null:
+			b.icon = tex
+			b.expand_icon = true
+		else:
+			b.text = _chip_glyph(m)
 		b.tooltip_text = "%s — %s · %s. Enter/Space to deploy." % [m.species_name, m.class_name_, m.role]
 		b.pressed.connect(func(): _deploy_from_tray(m))
 		_tray_box.add_child(b)
@@ -479,7 +610,10 @@ func _deploy_from_tray(m) -> void:
 ## occupied one — a sensible default landing spot for a chip dragged/pressed straight from the
 ## tray, not a final answer (the player repositions from there).
 func _next_open_slot() -> Vector2:
-	var candidates: Array = Sp.deploy_positions(team_a.size(), "A")
+	# `team_size`, not `team_a.size()` — the match's size (maxi of both sides, the sim's own
+	# formula) is what `setup()` now receives, and it is the size `arena_3d.gd` will use for the
+	# fallback positions of anything left undeployed.
+	var candidates: Array = Sp.deploy_positions(team_size, "A")
 	for c in candidates:
 		var clamped := Vector2(
 			clampf(c.x, zone_a.position.x, zone_a.position.x + zone_a.size.x),
@@ -673,7 +807,7 @@ func _cycle_guard_target(m) -> void:
 ## Thin wrapper around `Spatial.deploy_positions()` — fills every UNDEPLOYED chip only, per
 ## `docs/UX_DEPLOYMENT.md` §2.4; already-placed chips are left where the player put them.
 func auto_arrange() -> void:
-	var candidates: Array = Sp.deploy_positions(team_a.size(), "A")
+	var candidates: Array = Sp.deploy_positions(team_size, "A")   # match size — see `_next_open_slot`
 	var ci := 0
 	for m in team_a:
 		if placements.has(m):
@@ -942,102 +1076,135 @@ func _chip_glyph(m) -> String:
 	return m.species_name.substr(0, 1).to_upper()
 
 
+## A deployed monster is its PORTRAIT standing in a team-livery ground ring — the same visual the
+## arena renders under every fighting body (`arena_3d.gd::_add_team_ring`, same colour lift), so
+## the board and the fight it predicts share one vocabulary. State colours are tokens: invalid
+## flash DANGER, keyboard focus FOCUS, aura source GOLD, covered SAFE, low-confidence CAUTION.
 func _draw_chip(chip: Control, m) -> void:
 	var r := Rect2(Vector2.ZERO, chip.size)
-	chip.draw_rect(r, Color(0.14, 0.14, 0.18), true)
+	var centre: Vector2 = chip.size * 0.5
+	var rad: float = minf(centre.x, centre.y) - 1.5
+	var livery := _lifted_team(0)
+
+	# The plinth the portrait stands on, then the livery ring around it.
+	chip.draw_circle(centre, rad, Color(UiTheme.PANEL.r, UiTheme.PANEL.g, UiTheme.PANEL.b, 0.92))
 	var tex: Texture2D = Art.creature_texture(m.species_id)
 	if tex != null:
-		chip.draw_texture_rect(tex, r.grow(-2.0), false)
+		chip.draw_texture_rect(tex, r.grow(-3.0), false)
 	else:
-		chip.draw_string(ThemeDB.fallback_font, Vector2(6, chip.size.y - 6), _chip_glyph(m),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.92, 0.92, 0.95))
+		chip.draw_string(ThemeDB.fallback_font, Vector2(centre.x - 5, centre.y + 6), _chip_glyph(m),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, UiTheme.TEXT_PRIMARY)
 
-	var accent := Color(0.4, 0.65, 0.95)
-	var border_col := accent
-	var border_w := 1.5
+	var ring_col := Color(livery.r, livery.g, livery.b, 0.95)
+	var ring_w := 2.5
 	if int(Time.get_ticks_msec()) < int(_flash_until.get(m, 0)):
-		border_col = Color(0.95, 0.25, 0.25)
-		border_w = 3.0
-	elif chip.has_focus():
-		border_w = 3.0
-	chip.draw_rect(r, border_col, false, border_w)
+		ring_col = UiTheme.DANGER
+		ring_w = 3.5
+	chip.draw_arc(centre, rad, 0.0, TAU, 40, ring_col, ring_w)
 	if chip.has_focus():
-		chip.draw_rect(r.grow(2.0), Color(1.0, 0.9, 0.3), false, 2.0)
+		chip.draw_arc(centre, rad + 2.5, 0.0, TAU, 40, UiTheme.FOCUS, 2.0)
 
 	if aura_flags.get(m, false):
-		chip.draw_circle(Vector2(chip.size.x - 5, 5), 3.0, Color(0.85, 0.72, 0.35))
+		chip.draw_circle(Vector2(chip.size.x - 5, 5), 3.0, UiTheme.GOLD)
 	if _covered.get(m, false):
-		chip.draw_circle(Vector2(5, chip.size.y - 5), 3.0, Color(0.5, 0.85, 0.6))
+		chip.draw_circle(Vector2(5, chip.size.y - 5), 3.0, UiTheme.SAFE)
 	if _low_confidence.get(m, false):
 		chip.draw_string(ThemeDB.fallback_font, Vector2(chip.size.x - 10, chip.size.y - 2), "?",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.95, 0.8, 0.3))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, UiTheme.CAUTION)
 
 
+## ⚠️ THE BOARD DRAWS A PLACE, NOT A DOT LATTICE. The player is placing five monsters on the
+## ground they will fight on, so the board paints that ground: the league's own floor art
+## (passed in by the screen — null degrades to bare earth), the two deploy zones tinted in the
+## SAME livery colours the arena's team rings use, the midline as the facing, and YOU / RIVAL
+## written on the halves so the direction of the fight cannot be misread.
 func _draw_board() -> void:
 	var sz: Vector2 = _board_area.size
-	_board_area.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.05, 0.06, 0.08), true)
+	_board_area.draw_rect(Rect2(Vector2.ZERO, sz), UiTheme.SURFACE, true)
 	if _px_scale <= 0.0:
 		return
+	var col_a := _lifted_team(0)
+	var col_b := _lifted_team(1)
+
+	# The fighting ground — the league's real floor, dimmed so every overlay stays readable.
+	var ground_rect := Rect2(_px_origin, ground * _px_scale)
+	if ground_tex != null:
+		_board_area.draw_texture_rect(ground_tex, ground_rect, false, Color(0.55, 0.55, 0.55))
+	else:
+		_board_area.draw_rect(ground_rect, GROUND_FALLBACK, true)
+	_board_area.draw_rect(ground_rect, UiTheme.BORDER, false, 1.0)
 
 	# Ruler grid every 4 world units — reference only, not a hard snap (UX_DEPLOYMENT §2.2).
 	var gx := 0.0
 	while gx <= ground.x:
 		var x := _world_to_px(Vector2(gx, 0)).x
 		_board_area.draw_line(Vector2(x, _px_origin.y), Vector2(x, _px_origin.y + ground.y * _px_scale),
-			Color(1, 1, 1, 0.04), 1.0)
+			Color(1, 1, 1, 0.05), 1.0)
 		gx += 4.0
 	var gy := 0.0
 	while gy <= ground.y:
 		var y := _world_to_px(Vector2(0, gy)).y
 		_board_area.draw_line(Vector2(_px_origin.x, y), Vector2(_px_origin.x + ground.x * _px_scale, y),
-			Color(1, 1, 1, 0.04), 1.0)
+			Color(1, 1, 1, 0.05), 1.0)
 		gy += 4.0
 
-	# Your deployable zone.
+	# The midline — the facing. Dashed, neutral, full height.
+	var mid_x := _world_to_px(Vector2(ground.x * 0.5, 0)).x
+	_board_area.draw_dashed_line(Vector2(mid_x, _px_origin.y),
+		Vector2(mid_x, _px_origin.y + ground.y * _px_scale), Color(1, 1, 1, 0.22), 1.0, 6.0)
+
+	# Your deployable zone, in YOUR livery — the colour of the ring the arena draws under your
+	# bodies, so "the blue half is mine" is learned once and true everywhere.
 	var za := Rect2(_world_to_px(zone_a.position), zone_a.size * _px_scale)
-	_board_area.draw_rect(za, Color(0.4, 0.65, 0.95, 0.08), true)
-	_board_area.draw_rect(za, Color(0.4, 0.65, 0.95, 0.5), false, 1.5)
+	_board_area.draw_rect(za, Color(col_a.r, col_a.g, col_a.b, 0.10), true)
+	_board_area.draw_rect(za, Color(col_a.r, col_a.g, col_a.b, 0.55), false, 1.5)
 
-	# Neutral strip — the corridor between the zones, off limits.
-	var strip_l := _world_to_px(Vector2(zone_a.position.x + zone_a.size.x, 0)).x
-	var strip_r := _world_to_px(Vector2(zone_b.position.x, 0)).x
-	_board_area.draw_rect(Rect2(Vector2(strip_l, _px_origin.y), Vector2(strip_r - strip_l, ground.y * _px_scale)),
-		Color(1, 1, 1, 0.03), true)
-
-	# Scouted rival ghost zone — diagonal hash fill, per this mockup's standing "fully scouted"
-	# assumption. Not colour-alone: the hash pattern itself is the tell (UX_DEPLOYMENT §4.5).
+	# Scouted rival ghost zone — livery-tinted diagonal hash, per this mockup's standing "fully
+	# scouted" assumption. Not colour-alone: the hash pattern itself is the tell (UX_DEPLOYMENT §4.5).
 	var zb := Rect2(_world_to_px(zone_b.position), zone_b.size * _px_scale)
-	_board_area.draw_rect(zb, Color(0.9, 0.45, 0.4, 0.05), true)
-	_board_area.draw_rect(zb, Color(0.9, 0.45, 0.4, 0.35), false, 1.0)
+	_board_area.draw_rect(zb, Color(col_b.r, col_b.g, col_b.b, 0.06), true)
+	_board_area.draw_rect(zb, Color(col_b.r, col_b.g, col_b.b, 0.40), false, 1.0)
 	var hash_step := 10.0
 	var hx := zb.position.x - zb.size.y
 	while hx < zb.position.x + zb.size.x:
 		var p1 := Vector2(hx, zb.position.y)
 		var p2 := Vector2(hx + zb.size.y, zb.position.y + zb.size.y)
 		_board_area.draw_line(_clip_to_rect(p1, p2, zb, 0), _clip_to_rect(p1, p2, zb, 1),
-			Color(0.9, 0.45, 0.4, 0.18), 1.0)
+			Color(col_b.r, col_b.g, col_b.b, 0.20), 1.0)
 		hx += hash_step
+	# Rival opening positions — hollow livery rings: a body that ISN'T there yet, where your own
+	# monsters are solid portraits.
 	for gp in enemy_ghost:
-		_board_area.draw_circle(_world_to_px(gp), 4.0, Color(0.9, 0.45, 0.4, 0.55))
+		var gpx := _world_to_px(gp)
+		_board_area.draw_circle(gpx, 5.0, Color(col_b.r, col_b.g, col_b.b, 0.25))
+		_board_area.draw_arc(gpx, 5.0, 0.0, TAU, 24, Color(col_b.r, col_b.g, col_b.b, 0.85), 1.5)
+
+	# The halves, named in words — ASCII, so no font can tofu them, and never colour alone.
+	_board_area.draw_string(ThemeDB.fallback_font, Vector2(za.position.x + 5, za.position.y + 15),
+		"YOU", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(col_a.r, col_a.g, col_a.b, 0.95))
+	_board_area.draw_string(ThemeDB.fallback_font,
+		Vector2(zb.position.x + zb.size.x - 44, zb.position.y + 15),
+		"RIVAL", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(col_b.r, col_b.g, col_b.b, 0.95))
 
 	# Aura rings — dashed gold, radius Spatial.aura_radius(team_size), one per aura source.
 	var aura_r_px: float = Sp.aura_radius(team_size) * _px_scale
 	for m in placements:
 		if aura_flags.get(m, false):
-			_draw_dashed_circle(_world_to_px(placements[m]), aura_r_px, Color(0.85, 0.72, 0.35, 0.7))
+			_draw_dashed_circle_on(_board_area, _world_to_px(placements[m]), aura_r_px,
+				Color(UiTheme.GOLD.r, UiTheme.GOLD.g, UiTheme.GOLD.b, 0.7))
 
-	# AoE cluster warning — pulsing orange line + burst glyph at the midpoint.
+	# AoE cluster warning — pulsing orange line + a DRAWN warn mark at the midpoint (this used to
+	# be draw_string("⚠"), a glyph the packaged font does not carry).
 	var alpha := 0.55 if _reduce_motion else (0.35 + 0.35 * (0.5 + 0.5 * sin(_pulse_phase)))
 	for pair in _clusters:
 		var pa := _world_to_px(placements[pair[0]])
 		var pb := _world_to_px(placements[pair[1]])
-		_board_area.draw_line(pa, pb, Color(0.95, 0.55, 0.2, alpha), 2.0)
+		_board_area.draw_line(pa, pb, Color(UiTheme.STATUS_BURN.r, UiTheme.STATUS_BURN.g, UiTheme.STATUS_BURN.b, alpha), 2.0)
 		var mid := (pa + pb) * 0.5
-		_board_area.draw_string(ThemeDB.fallback_font, mid + Vector2(-4, 4), "⚠",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.95, 0.6, 0.25, alpha + 0.3))
+		_draw_warn_mark(_board_area, mid, 12.0,
+			Color(UiTheme.STATUS_BURN.r, UiTheme.STATUS_BURN.g, UiTheme.STATUS_BURN.b, minf(1.0, alpha + 0.3)))
 
 	# Positional-intent hint arrows (illustrative only — see the caption under the board).
-	var enemy_centre_px := _world_to_px(zone_b.get_center())
 	for m in placements:
 		var intent: String = intents.get(m, team_default_intent)
 		_draw_intent_hint(m, intent)
@@ -1063,7 +1230,9 @@ func _draw_intent_hint(m, intent: String) -> void:
 		"guard":
 			var target = guard_target.get(m)
 			if target != null and placements.has(target):
-				_board_area.draw_line(origin, _world_to_px(placements[target]), Color(0.4, 0.65, 0.95, 0.5), 1.5)
+				var gcol := _lifted_team(0)
+				_board_area.draw_line(origin, _world_to_px(placements[target]),
+					Color(gcol.r, gcol.g, gcol.b, 0.55), 1.5)
 			else:
 				# DRAW WHAT THE FIGHT WILL DO, NOT WHAT THE ICON SAYS. A guard with no live charge
 				# is downgraded to "hold" by `arena_3d.gd::_new_sim_tactics()` ("a guard with
@@ -1073,7 +1242,9 @@ func _draw_intent_hint(m, intent: String) -> void:
 				_board_area.draw_arc(origin, 10.0, 0, TAU, 20, col, 1.0)
 
 
-func _draw_dashed_circle(center: Vector2, radius: float, color: Color) -> void:
+## Generalised over its canvas so the legend can draw the same mark in miniature — it used to
+## paint only onto `_board_area`.
+func _draw_dashed_circle_on(canvas: CanvasItem, center: Vector2, radius: float, color: Color) -> void:
 	if radius <= 0.0:
 		return
 	var steps := 48
@@ -1085,7 +1256,7 @@ func _draw_dashed_circle(center: Vector2, radius: float, color: Color) -> void:
 			continue
 		var a0 := float(i) / float(steps) * TAU
 		var a1 := float(i + 1) / float(steps) * TAU
-		_board_area.draw_line(center + Vector2(cos(a0), sin(a0)) * radius,
+		canvas.draw_line(center + Vector2(cos(a0), sin(a0)) * radius,
 			center + Vector2(cos(a1), sin(a1)) * radius, color, 1.5)
 
 

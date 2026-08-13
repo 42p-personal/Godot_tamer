@@ -146,7 +146,10 @@ const TEAM_COLOURS := [
 ## merely likely — every Nth team is the same swatch. A badge glyph paired with the colour keeps
 ## nameplates separable on collision AND for a colourblind player, who otherwise loses the team
 ## channel entirely. UI must draw BOTH; colour alone is never sufficient identification.
-const TEAM_BADGES := ["◆", "▲", "●", "■", "★", "✦", "⬟", "✚"]
+## ⚠️ Every badge must be in the packaged Inter face (`Font.has_char()` — _probe_house G1 gates
+## it on any screen that renders one). ✦/⬟/✚ were replaced round 22: they were Windows-fallback
+## glyphs, latent tofu on any other platform.
+const TEAM_BADGES := ["◆", "▲", "●", "■", "★", "❖", "⊕", "◇"]
 
 func team_colour(index: int) -> Color:
 	return TEAM_COLOURS[index % TEAM_COLOURS.size()]

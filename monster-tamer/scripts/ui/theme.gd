@@ -142,6 +142,36 @@ const STATUS_BUFF         := Color(0.2471, 0.6588, 0.7529)  # #3FA8C0 cool teal 
 const FOCUS := Color(0.40, 0.85, 1.0)  # #66D9FF — 10.42:1 on PANEL
 
 # =============================================================================
+# 1b. THE PACKAGED FACE — Inter 4.1 (SIL OFL 1.1; LICENSE.txt sits beside the files).
+#
+#    ⚠️ THE PROJECT HAD NO FONT AT ALL UNTIL THIS ROUND. `project.godot` set none, so every screen
+#    rendered in Godot's embedded Open Sans SemiBold — and 178 glyph occurrences (arrows, checks,
+#    warning signs, triangles) rendered ONLY because a Windows system font outside the export was
+#    silently supplying them. Round 19's tofu bug was latent in every one of them on any non-Windows
+#    machine. Inter was verified IN-ENGINE with `Font.has_char()` against these exact files
+#    (2026-08-13): it carries → ← ⚠ ✓ ✗ ★ ● ▲ ▼ ◀ ▶ ◆ ◇ ○ ↩ ↺ ↕ ⊘ · × − • … — the glyphs the UI
+#    actually prints — and does NOT carry ▸ ▾ ♛ ⚑ ⏸ ✖ ➤ ⛨ ✚ ▦ ☣ ⚡ ◈ 🎯 🎲 or U+FE0F, all of which
+#    were swept out of the UI scripts in the same round. `_probe_house.gd` G1 now asserts coverage
+#    per rendered label, so a new uncovered glyph FAILS the probe instead of shipping as latent tofu.
+#
+#    THE WEIGHT MAP, DELIBERATE:
+#      Regular  — body. The default for every Label and every data surface. This is also the face
+#                 `project.godot` `gui/theme/custom_font` points at, which is what reaches the
+#                 screens that never adopted `base_theme()` (report/tactics/market/title/sandbox).
+#      Medium   — controls. Buttons/OptionButtons: a control's label should sit a step firmer than
+#                 the copy around it without shouting.
+#      SemiBold — headings. `heading()`/`display_font()` — the "ringside signage" register, with
+#                 the 1px tracking it already carried.
+#      Bold     — the display register: the title wordmark and nothing else yet. Published so the
+#                 title screen's owner can stop rendering the best art in the project under an
+#                 engine-default face (`display_font(tracking, "bold")`).
+# =============================================================================
+const FONT_REGULAR: Font = preload("res://assets/fonts/Inter-Regular.ttf")
+const FONT_MEDIUM: Font = preload("res://assets/fonts/Inter-Medium.ttf")
+const FONT_SEMIBOLD: Font = preload("res://assets/fonts/Inter-SemiBold.ttf")
+const FONT_BOLD: Font = preload("res://assets/fonts/Inter-Bold.ttf")
+
+# =============================================================================
 # 2. TYPE SCALE — px. docs/ACCESSIBILITY.md §5 measured the live nameplate text at 9px/8px,
 #    "50%/44% of the 18px minimum". Every size below already clears that floor; a screen that
 #    adopts these constants instead of an inline `add_theme_font_size_override` cannot
@@ -308,20 +338,20 @@ static func focus_style(base: StyleBoxFlat) -> StyleBoxFlat:
 ## heading in a tight HBox on a screen another stream is rewriting this same round.
 static var _tracked_fonts: Dictionary = {}
 
-## A tracked variant of the packaged face. Cached per amount — a FontVariation is a Resource and
-## handing every Label its own copy would be a needless allocation on screens that build hundreds.
-## ⚠️ Returns null if there is no fallback font (never seen, but a null override would silently
-## reset a Label to default rather than erroring, so callers must not assume).
-static func display_font(tracking: int = 1) -> FontVariation:
-	if _tracked_fonts.has(tracking):
-		return _tracked_fonts[tracking]
-	var base: Font = ThemeDB.fallback_font
-	if base == null:
-		return null
+## A tracked variant of the packaged face. Cached per (weight, amount) — a FontVariation is a
+## Resource and handing every Label its own copy would be a needless allocation on screens that
+## build hundreds. `weight` is "semibold" (the heading register, the default) or "bold" (the
+## display register — the title wordmark). Since the craft round this wraps the PACKAGED Inter
+## face, not `ThemeDB.fallback_font` — the heading register is no longer the engine default bolded.
+static func display_font(tracking: int = 1, weight: String = "semibold") -> FontVariation:
+	var key := "%s:%d" % [weight, tracking]
+	if _tracked_fonts.has(key):
+		return _tracked_fonts[key]
+	var base: Font = FONT_BOLD if weight == "bold" else FONT_SEMIBOLD
 	var fv := FontVariation.new()
 	fv.base_font = base
 	fv.spacing_glyph = tracking
-	_tracked_fonts[tracking] = fv
+	_tracked_fonts[key] = fv
 	return fv
 
 
@@ -330,10 +360,14 @@ static func heading(text: String, level: int = 1) -> Label:
 	l.text = text
 	l.add_theme_font_size_override("font_size", SIZE_HEADING if level == 1 else SIZE_SUBHEADING)
 	l.add_theme_color_override("font_color", GOLD)
-	if level == 1:
-		var fv := display_font(1)
-		if fv != null:
-			l.add_theme_font_override("font", fv)
+	# Every heading takes the SemiBold heading face. Level 1 keeps the 1px signage tracking;
+	# deeper levels take the weight without the tracking so a card title does not read as a plaque.
+	# ⚠️ Level 2+ used to inherit the default font — which WAS semibold (the embedded Open Sans
+	# SemiBold). Now the default is Inter Regular, so without this a subheading would have silently
+	# got LIGHTER in the font round. Weight parity is preserved on purpose.
+	var fv := display_font(1 if level == 1 else 0)
+	if fv != null:
+		l.add_theme_font_override("font", fv)
 	return l
 
 
@@ -778,6 +812,13 @@ static func status_chip(status_name: String) -> Control:
 static func base_theme() -> Theme:
 	var th := Theme.new()
 
+	# The packaged face reaches every Control that inherits this theme. `project.godot`'s
+	# `gui/theme/custom_font` sets the SAME Regular file as the project default, which is what
+	# covers the screens that never adopted this theme and any Control created before it lands —
+	# the two layers are deliberately the same face so adoption changes weight mapping, not family.
+	th.default_font = FONT_REGULAR
+	th.default_font_size = SIZE_BODY
+
 	th.set_color("font_color", "Label", TEXT_PRIMARY)
 	th.set_font_size("font_size", "Label", SIZE_BODY)
 
@@ -786,6 +827,7 @@ static func base_theme() -> Theme:
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		th.set_stylebox(state, "Button", button_stylebox("secondary", state))
 	th.set_stylebox("focus", "Button", button_stylebox("secondary", "focus"))
+	th.set_font("font", "Button", FONT_MEDIUM)  # controls sit a step firmer than copy — see §1b
 	th.set_color("font_color", "Button", TEXT_PRIMARY)
 	th.set_color("font_hover_color", "Button", TEXT_PRIMARY)
 	th.set_color("font_pressed_color", "Button", TEXT_PRIMARY)
@@ -803,6 +845,7 @@ static func base_theme() -> Theme:
 
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		th.set_stylebox(state, "OptionButton", button_stylebox("secondary", state))
+	th.set_font("font", "OptionButton", FONT_MEDIUM)
 	th.set_color("font_color", "OptionButton", TEXT_PRIMARY)
 	th.set_font_size("font_size", "OptionButton", SIZE_BODY)
 
@@ -1194,7 +1237,7 @@ static func comparison_row(label_text: String, left_text: String, right_text: St
 		v.add_theme_color_override("font_color", GOLD if is_winner else TEXT_PRIMARY)
 		# Never colour alone — the winning side is also marked in the text.
 		if is_winner:
-			v.text = "▸ " + v.text
+			v.text = "▶ " + v.text  # ▶ is in the packaged Inter face; ▸ (U+25B8) is not
 		row.add_child(v)
 
 	var vd := Label.new()

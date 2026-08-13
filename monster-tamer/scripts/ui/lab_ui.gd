@@ -380,8 +380,8 @@ func _ledger_card(frozen: Array, rent: int, free_count: int) -> Control:
 		"a pairing needs 2", UiTheme.STATUS_BUFF if frozen.size() >= 2 else UiTheme.TEXT_MUTED))
 
 	var toggle := Button.new()
-	toggle.text = ("Rules ▾  what preserving does, and why it is billed" if _show_rules
-		else "Rules ▸  what preserving does, and why it is billed")
+	toggle.text = ("Rules ▼  what preserving does, and why it is billed" if _show_rules
+		else "Rules ▶  what preserving does, and why it is billed")
 	toggle.focus_mode = Control.FOCUS_ALL
 	toggle.custom_minimum_size = Vector2(0, 30)
 	toggle.pressed.connect(func(): _show_rules = not _show_rules; _refresh())

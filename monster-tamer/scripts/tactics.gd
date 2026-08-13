@@ -94,26 +94,34 @@ static func commit(plan_a: Dictionary, plan_b: Dictionary, orders_a: Dictionary,
 # has no TS equivalent to port (formation is a field-engine-only order there); its copy is
 # grounded in docs/ARENA_BLUEPRINT.md §5's decided aura-vs-AoE trade-off instead. ─────────────
 
+# ⚠️ ICONS ARE COVERED-GLYPH DATA, NOT DECORATION (round 22). Every `icon` below renders as label
+# text on tactics, tournament and report, and _probe_house's G1 tripwire FAILS the build on any
+# codepoint the packaged Inter face lacks — the old emoji set (⚔🛡🎯…) rendered only via a Windows
+# system font and was tofu everywhere else. The vocabulary, chosen for loose semantics:
+#   ▲ pressure · ● steady/hold · ▼ holds back/outlasts · ◆ wall/cluster · ○ no standing order
+#   → directed at one · ↗ wide · ↪ around/behind · ⊕ spend · ⊖ conserve · ⊘ denial
+#   ✗ the mark · ★ high-value target · ■ the tank · ⁂ area/everyone
+# Verify `Font.has_char()` against assets/fonts/Inter-Regular.ttf before adding any new icon.
 const TEMPERAMENT_INFO := [
-	{"id": "aggressive", "icon": "⚔", "name": "Aggressive", "desc": "Fights on the class's own instincts — no different from Balanced yet in this build."},
-	{"id": "balanced", "icon": "⚖", "name": "Balanced", "desc": "Fights on the class's own instincts."},
-	{"id": "cautious", "icon": "🛡", "name": "Cautious", "desc": "Below 40% HP, refuses its riskiest (self-harming) moves rather than trading down to the end."},
+	{"id": "aggressive", "icon": "▲", "name": "Aggressive", "desc": "Fights on the class's own instincts — no different from Balanced yet in this build."},
+	{"id": "balanced", "icon": "●", "name": "Balanced", "desc": "Fights on the class's own instincts."},
+	{"id": "cautious", "icon": "▼", "name": "Cautious", "desc": "Below 40% HP, refuses its riskiest (self-harming) moves rather than trading down to the end."},
 ]
 
 const TARGET_PRIORITY_INFO := [
-	{"id": "", "icon": "🎲", "name": "Team default (weakest)", "desc": "No standing order — goes for whichever enemy is lowest on HP."},
-	{"id": "casters", "icon": "🧙", "name": "Hunt the casters", "desc": "Goes for the enemy's supports — silence the heals before they undo your damage."},
-	{"id": "tanks", "icon": "🐘", "name": "Break the tank", "desc": "Goes for the highest-CON wall and stays on it."},
-	{"id": "manmark", "icon": "🎯", "name": "Man mark", "desc": "Hunts the one rival monster you marked below. Requires scouting — click a rival to mark it."},
+	{"id": "", "icon": "○", "name": "Team default (weakest)", "desc": "No standing order — goes for whichever enemy is lowest on HP."},
+	{"id": "casters", "icon": "★", "name": "Hunt the casters", "desc": "Goes for the enemy's supports — silence the heals before they undo your damage."},
+	{"id": "tanks", "icon": "■", "name": "Break the tank", "desc": "Goes for the highest-CON wall and stays on it."},
+	{"id": "manmark", "icon": "→", "name": "Man mark", "desc": "Hunts the one rival monster you marked below. Requires scouting — click a rival to mark it."},
 ]
 
 const MANA_POLICY_INFO := [
-	{"id": "normal", "icon": "💠", "name": "As needed", "desc": "Spends MP on the class's own judgement — this is the engine's existing default, not a passive option."},
-	{"id": "conserve", "icon": "💧", "name": "Conserve", "desc": "Won't cast a skill if it would drop MP below a quarter of the pool — holds back for something worth it."},
+	{"id": "normal", "icon": "⊕", "name": "As needed", "desc": "Spends MP on the class's own judgement — this is the engine's existing default, not a passive option."},
+	{"id": "conserve", "icon": "⊖", "name": "Conserve", "desc": "Won't cast a skill if it would drop MP below a quarter of the pool — holds back for something worth it."},
 ]
 
 const FORMATION_INFO := [
-	{"id": "tight", "icon": "🤝", "name": "Tight", "desc": "Stay clustered: your team-wide buffs and auras reach almost everyone — but so does the enemy's area damage."},
+	{"id": "tight", "icon": "◆", "name": "Tight", "desc": "Stay clustered: your team-wide buffs and auras reach almost everyone — but so does the enemy's area damage."},
 	{"id": "loose", "icon": "↔", "name": "Loose", "desc": "Fan out: the enemy's area damage catches only part of your team — but so do your own team buffs and auras."},
 ]
 
@@ -136,11 +144,11 @@ const FORMATION_INFO := [
 ## comment style exists to prevent. This one outlived its subject by five days and produced a
 ## round-20 brief whose central claim was refuted.
 const POSITIONAL_INTENT_INFO := [
-	{"id": "hold", "icon": "⚓", "name": "Hold", "desc": "Keep the line near where you deployed."},
-	{"id": "push", "icon": "➡", "name": "Push", "desc": "Advance on the enemy line, take ground."},
+	{"id": "hold", "icon": "●", "name": "Hold", "desc": "Keep the line near where you deployed."},
+	{"id": "push", "icon": "→", "name": "Push", "desc": "Advance on the enemy line, take ground."},
 	{"id": "wings", "icon": "↗", "name": "Wings", "desc": "Work wide, approach from the flank."},
-	{"id": "dive", "icon": "⤴", "name": "Dive", "desc": "Go around or through for the enemy back line."},
-	{"id": "guard", "icon": "🛡", "name": "Guard", "desc": "Stay near a named ally and intercept threats to it."},
+	{"id": "dive", "icon": "↪", "name": "Dive", "desc": "Go around or through for the enemy back line."},
+	{"id": "guard", "icon": "◆", "name": "Guard", "desc": "Stay near a named ally and intercept threats to it."},
 ]
 
 ## ⚠️ `guard` IS INHERENTLY PER-MONSTER AND MUST NOT BE OFFERED AS A TEAM DEFAULT — it is the
@@ -149,10 +157,10 @@ const POSITIONAL_INTENT_INFO := [
 ## an ally, `arena_3d.gd:1013` downgrades a charge-less guard to `hold`, and the player would have
 ## picked a posture that silently became a different one. Five dead controls in one dropdown.
 const TEAM_POSITIONAL_INTENT_INFO := [
-	{"id": "hold", "icon": "⚓", "name": "Hold", "desc": "Keep the line near where you deployed."},
-	{"id": "push", "icon": "➡", "name": "Push", "desc": "Advance on the enemy line, take ground."},
+	{"id": "hold", "icon": "●", "name": "Hold", "desc": "Keep the line near where you deployed."},
+	{"id": "push", "icon": "→", "name": "Push", "desc": "Advance on the enemy line, take ground."},
 	{"id": "wings", "icon": "↗", "name": "Wings", "desc": "Work wide, approach from the flank."},
-	{"id": "dive", "icon": "⤴", "name": "Dive", "desc": "Go around or through for the enemy back line."},
+	{"id": "dive", "icon": "↪", "name": "Dive", "desc": "Go around or through for the enemy back line."},
 ]
 
 
@@ -259,7 +267,7 @@ const TEAM_POSITIONAL_INTENT_INFO := [
 # needed no engine; the numbers in the strings still need one.
 const GAMEPLANS := {
 	"rushdown": {
-		"name": "Rushdown", "icon": "🔥",
+		"name": "Rushdown", "icon": "▲",
 		"tell": "Fast, aggressive, no support — all pressure.",
 		"read": "Comes straight down the middle and hits first. Nothing clever, and nothing held back.",
 		## AUTHORED ANSWER: an area/ZONE roster. ⚠️ THE OLD LINE HERE WAS THE WORST SENTENCE IN THE
@@ -277,7 +285,7 @@ const GAMEPLANS := {
 		"tactics": {"temperament": "aggressive", "manaPolicy": "normal", "formation": "tight"},
 	},
 	"bulwark": {
-		"name": "Bulwark", "icon": "🛡",
+		"name": "Bulwark", "icon": "◆",
 		"tell": "Tanks and guardians around a protected carry.",
 		"read": "Will not break. Brings guards and wards and expects you to run out of patience.",
 		## AUTHORED ANSWER: a BURST/focus-fire roster. The MECHANISM below is design reasoning about
@@ -295,7 +303,7 @@ const GAMEPLANS := {
 		"tactics": {"temperament": "cautious", "manaPolicy": "conserve", "formation": "tight"},
 	},
 	"attrition": {
-		"name": "Attrition", "icon": "☠",
+		"name": "Attrition", "icon": "▼",
 		"tell": "Poison and stall, with a mender behind it — out-lasts you.",
 		"read": "Stalls. Heals what you break and wins on the clock unless you make the fight happen.",
 		## AUTHORED ANSWER: a BURST/focus-fire roster. ⚠️ THE METHODOLOGICAL LESSON ON THIS ROW IS
@@ -314,7 +322,7 @@ const GAMEPLANS := {
 		"tactics": {"temperament": "cautious", "manaPolicy": "conserve", "formation": "tight"},
 	},
 	"focusfire": {
-		"name": "Focus-Fire", "icon": "🎯",
+		"name": "Focus-Fire", "icon": "✗",
 		"tell": "High burst — the whole team piles onto one target.",
 		"read": "Focuses one target down and moves on. Your softest body dies first.",
 		## AUTHORED ANSWER: a CONTROL roster. ⚠️ "the largest counter effect in the game" went with
@@ -328,7 +336,7 @@ const GAMEPLANS := {
 		"tactics": {"temperament": "aggressive", "targetPriority": "manmark", "manaPolicy": "normal", "formation": "tight"},
 	},
 	"control": {
-		"name": "Control", "icon": "🔗",
+		"name": "Control", "icon": "⊘",
 		"tell": "Hexers and orators — they take your turns away before they take your HP.",
 		"read": "Controls. You will be stunned, silenced and blinded on purpose, and your supports go first.",
 		## AUTHORED ANSWER: a WALL/bulwark roster. ⚠️ THIS IS THE ROW MOST LIKELY TO BE WRONG — the
@@ -351,7 +359,7 @@ const GAMEPLANS := {
 		"tactics": {"temperament": "balanced", "targetPriority": "casters", "manaPolicy": "normal", "formation": "tight"},
 	},
 	"zone": {
-		"name": "Zone", "icon": "🌩",
+		"name": "Zone", "icon": "⁂",
 		"tell": "Heralds and evokers — everything they throw lands on your whole team at once.",
 		"read": "Opens wide. Everything hits everyone, so a tight formation gives them the whole team for free.",
 		## TWO ANSWERS — the only archetype with both an ORDER and a ROSTER answer, and they do NOT

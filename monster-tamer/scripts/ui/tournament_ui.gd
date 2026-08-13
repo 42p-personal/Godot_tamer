@@ -663,7 +663,7 @@ func _cup_card(idx: int) -> Control:
 	var beaten: bool = Career.has_beaten_champion(idx)
 	var gp: Dictionary = TacticsScript.GAMEPLANS.get(str(champ.get("archetype", "")), {})
 	var champ_line := UiTheme.body_text("%s %s, %s — %s. %s%s" % [
-		"↺" if beaten else "♛",
+		"↺" if beaten else "❖",  # ❖ (U+2756) is in the packaged Inter face; ♛ is not
 		str(champ.get("name", "")), str(champ.get("title", "")), str(gp.get("name", "?")),
 		str(champ.get("read", "")),
 		"  (you have taken this title off them before — they have trained since)" if beaten else ""],
@@ -790,7 +790,7 @@ func _cleared_cup_row(idx: int) -> Control:
 	row.add_child(name_lbl)
 
 	var terms := UiTheme.body_text(
-		"cleared — pays %d%%  ·  %dv%d  ·  %d rounds  ·  entry %dg  ·  1st %dg  ·  %d week%s  ·  ♛ %s"
+		"cleared — pays %d%%  ·  %dv%d  ·  %d rounds  ·  entry %dg  ·  1st %dg  ·  %d week%s  ·  ❖ %s"
 		% [drop_pct, team_size, team_size, rounds, fee, purse, weeks,
 			"" if weeks == 1 else "s", str(champ.get("name", ""))], "muted")
 	terms.autowrap_mode = TextServer.AUTOWRAP_OFF

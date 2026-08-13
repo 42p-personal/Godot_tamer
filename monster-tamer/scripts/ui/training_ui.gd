@@ -542,7 +542,7 @@ func _rest_card(m) -> Control:
 	var pv: Dictionary = _preview(m, {"kind": "rest"})
 	col.add_child(UiTheme.heading("Rest   → %+d stamina" % int(round(float(pv.get("staminaDelta", 0.0)))), 3))
 	col.add_child(UiTheme.body_text(
-		"Recovers stamina. No stat gain. ⚠️ Below 30 stamina every drill pays HALF, so a rest week often earns more than a tired drill.",
+		"Recovers stamina. No stat gain. ⚠ Below 30 stamina every drill pays HALF, so a rest week often earns more than a tired drill.",
 		"secondary"))
 	# Rest is the ONLY thing that mends a monster between cups — say so with the actual numbers,
 	# because "rest or train" is the one weekly choice the player will face every single week.

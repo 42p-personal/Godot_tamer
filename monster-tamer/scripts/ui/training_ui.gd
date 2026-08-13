@@ -59,6 +59,14 @@ const Pace = preload("res://scripts/ui/ending_ui.gd")
 const UiTheme = preload("res://scripts/ui/theme.gd")
 const WeekLib = preload("res://scripts/week.gd")
 
+## ⚠️ ONE TABLE OF STAT HUES, NOT TWO. `stable_ui.gd:stat_hue()` is a static function reading
+## `theme.gd`'s `STAT_HUES` when that token exists and falling back to the values sampled from the
+## 141 authored ability icons when it does not. This screen SHARES it rather than keeping a second
+## copy — a hand-copied six-entry table on this exact pair of screens is what round 14's
+## `INTENSIVE_PAIR` failure was, and a colour table drifts as quietly as a drill table did.
+## (`ending_ui.gd` is already preloaded the same way for `Pace`, so the pattern is the house one.)
+const StatHue = preload("res://scripts/ui/stable_ui.gd")
+
 var stat_box: VBoxContainer
 var header_label: Label
 var arc_label: Label
@@ -364,9 +372,22 @@ func _stat_column(m, stat: String, drills: Array) -> Control:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.size_flags_vertical = Control.SIZE_FILL
 
+	# ⚠️ SIX COLUMNS THAT LOOKED LIKE ONE COLUMN SIX TIMES. Round 20's fix was the right one — the
+	# grid is what made STR and CHA comparable at all — but every column then opened with a GOLD bar
+	# and a grey tag, so the eye had nothing to land on and the only way to know which column you
+	# were in was to read its three-letter label. The rule and the bar now carry the stat's own hue
+	# (`docs/POLISH_DIRECTION.md` §3.1, sampled from the ability icons), so a column has an identity
+	# at a glance and the Stable's stat bars agree with it in the same six colours.
+	var hue: Color = StatHue.stat_hue(stat)
+	var rule := ColorRect.new()
+	rule.color = hue
+	rule.custom_minimum_size = Vector2(0, 4)
+	rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(rule)
+
 	var cur: float = float(m.stats.get(stat, 0.0))
 	var ceiling: float = _ceiling(m, stat)
-	col.add_child(UiTheme.stat_bar(stat, cur, maxf(ceiling, cur), UiTheme.GOLD, 34))
+	col.add_child(UiTheme.stat_bar(stat, cur, maxf(ceiling, cur), hue, 34))
 
 	var apt: float = WeekLib.stat_training_bonus(m, stat)
 	var tag := "even going"
@@ -539,7 +560,18 @@ func _rest_card(m) -> Control:
 	btn.focus_mode = Control.FOCUS_ALL
 	var booked: bool = str(WeekPlan.plan_for(m.id).get("activity", "rest")) == "rest"
 	btn.text = "✓ Booked — resting" if booked else "Book a rest week"
-	btn.disabled = booked
+	# ⚠️ THIS WAS THE PROJECT'S ONE SILENT DEAD CONTROL, AND ONLY THE LOSING FIXTURE SHOWED IT.
+	# `_probe_screens.gd` reported `B_thin/04_training` as **1 disabled button with no reason** while
+	# `A_comfortable` reported zero — because the comfortable career has a drill booked, so the rest
+	# button is live there and nobody ever saw it dead. `UI_LAYOUT_RULES` R3 is not satisfied by a
+	# checkmark: it needs a stated reason. The rest of this screen already does it right (every
+	# unaffordable food says "— can't afford"); the rest card was the exception.
+	if booked:
+		UiTheme.disable_with_reason(btn,
+			"Already booked — this monster is resting this week. Pick a drill to change it.")
+		# The card takes the same settled treatment a booked drill gets, so "what did I choose" has
+		# one answer shape everywhere on the screen.
+		panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.SAFE))
 	btn.pressed.connect(func():
 		WeekPlan.set_activity(m.id, "rest")
 		_refresh())
@@ -575,9 +607,26 @@ func _drill_card(m, d: Dictionary) -> Control:
 	var deltas: Dictionary = pv.get("statDeltas", {})
 	var net := _net_of(deltas)
 
-	var title := UiTheme.body_text("%s  → %+d net" % [str(d["name"]), int(round(net))], "primary")
-	title.add_theme_color_override("font_color", UiTheme.GOLD if net > 0.0 else UiTheme.CAUTION)
-	col.add_child(title)
+	# ⚠️ THE NAME AND THE NUMBER WERE ONE STRING IN ONE INK, AND THE NUMBER IS THE DECISION.
+	# `docs/POLISH_DIRECTION.md` §1.2 measured GOLD against CAUTION at **1.023:1** — two published
+	# tokens that are the same colour — so a card's title and its footnote carried identical
+	# emphasis, and `→ +9 net`, the one figure the player is actually choosing on, was buried inside
+	# the gold title line with the drill's name. Splitting them into a row puts every net gain on the
+	# same right-hand edge down all six columns: the comparison the grid exists for now happens
+	# without reading a single word.
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	var title := UiTheme.body_text(str(d["name"]), "primary")
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title)
+	var net_lbl := UiTheme.body_text("%+d net" % int(round(net)), "primary")
+	net_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	net_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	# GOLD is the ink of the thing being bought; CAUTION marks a week that buys nothing. Both are
+	# published tokens, and this is the one line on the card where the distinction is load-bearing.
+	net_lbl.add_theme_color_override("font_color", UiTheme.GOLD if net > 0.0 else UiTheme.CAUTION)
+	title_row.add_child(net_lbl)
+	col.add_child(title_row)
 
 	var live := _delta_text(deltas)
 	# ⚠️ THE WEEK'S REAL COST IS NOT STAMINA (§A5). Stamina comes back — `week.gd:stamina_malus`
@@ -659,6 +708,14 @@ func _drill_card(m, d: Dictionary) -> Control:
 		btn.disabled = true
 		btn.text = "✓ Booked"
 		btn.tooltip_text = "This is the week's plan. Advance Week at the Stable to spend it."
+		# ⚠️ A SETTLED DECISION SHOULD LOOK SETTLED FROM ACROSS SIX COLUMNS. `✓ Booked` differed from
+		# `Book` by 1.10:1 of button fill plus a checkmark — below any glance threshold, so the
+		# player's own committed week was the hardest card on the screen to find. The CARD is what
+		# changes state now, not just the control inside it: raised fill, and the column's hue as its
+		# border. Elevation is information, and this is the one card on the screen that is a decision
+		# already made.
+		panel.add_theme_stylebox_override("panel",
+			UiTheme.panel_style("raised", StatHue.stat_hue(_primary_stat_of(d))))
 	else:
 		btn.text = "Book"
 		btn.pressed.connect(func():

@@ -113,7 +113,23 @@ func _build_ui() -> void:
 	vbox.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	margin.add_child(vbox)
 
-	vbox.add_child(UiTheme.heading("The Read"))
+	## ⚠️ THE SAME MASTHEAD AS `tournament_ui.gd`, AND THAT IS THE POINT OF DOING IT TWICE. These two
+	## screens plus the report are the game's POSTER register (`docs/POLISH_DIRECTION.md` C4) — the
+	## scout, the commit and the verdict — and a register that only one screen uses is a one-off, not
+	## a register. Tracked title, gold rule, state line on the same row. No new size: `heading()` is
+	## 22px here as everywhere, and tracking is not a size.
+	var mast := HBoxContainer.new()
+	mast.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	var mast_title := UiTheme.heading("THE READ")
+	mast_title.add_theme_font_override("font", UiTheme.display_font(5))
+	mast.add_child(mast_title)
+	vbox.add_child(mast)
+
+	var mast_rule := ColorRect.new()
+	mast_rule.color = UiTheme.GOLD
+	mast_rule.custom_minimum_size = Vector2(0, 2)
+	mast_rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(mast_rule)
 
 	var subtitle := UiTheme.body_text(
 		"You never intervene once the fight starts. Set your team's orders now, informed by what you've scouted — then watch how the read plays out.",
@@ -126,7 +142,12 @@ func _build_ui() -> void:
 			Career.league_at(_cup.league_idx).get("name", "?"), _cup.current_round + 1, _cup.rival_count, _cup.wins]
 		round_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
 		round_lbl.add_theme_color_override("font_color", UiTheme.GOLD)
-		vbox.add_child(round_lbl)
+		# On the masthead row, right-aligned — which fixture you are in belongs beside the title,
+		# not on a line of its own between the title and the instruction that explains it.
+		round_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		round_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		round_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		mast.add_child(round_lbl)
 
 	## ⚠️ THE ROOT SCROLLS NOW, AND THE TWO INNER SCROLLERS ARE GONE — ONE CHANGE, THREE RULES.
 	## `UI_LAYOUT_RULES` rule 1 (every screen's root is scrollable) was the one this screen never
@@ -209,19 +230,36 @@ func _build_ui() -> void:
 	# is the house look assembled by hand (same styleboxes, same tokens, same 44px target) with the
 	# ONE difference that the action leads. Flagged for the integrator: `commit_bar()` cannot be
 	# safely adopted on any screen until `tutorial_overlay.gd` stops sitting on the bottom-right.
+	## ⚠️ THE COMMIT GETS A PLINTH, BECAUSE THE COMMIT IS THE SCREEN. This rail was already the best
+	## button in the project (gold border, filled, consequence stated in the label —
+	## `docs/POLISH_DIRECTION.md` §1.2 says so) and it was drawn as three loose controls on the page
+	## fill, level with the "Back to the Stable" escape hatch and a caption. The irreversible act in
+	## a game whose entire premise is *you cannot intervene* should not sit at page level.
+	##
+	## A raised, gold-edged plate under the whole rail is the whole change — no new colour, no new
+	## size, no motion. ⚠️ AND IT MUST STAY OUTSIDE `page_scroll`: the pin is rule R2 and it was paid
+	## for by three captures (see the ⚠️ above `_build_read_panel`).
+	var rail := PanelContainer.new()
+	rail.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.GOLD))
+	vbox.add_child(rail)
+
 	var bottom := HBoxContainer.new()
 	bottom.add_theme_constant_override("separation", UiTheme.SPACE_MD)
-	vbox.add_child(bottom)
+	rail.add_child(bottom)
 
 	commit_btn = Button.new()
 	commit_btn.text = "COMMIT AND FIGHT  —  no take-backs"
-	commit_btn.custom_minimum_size = Vector2(300, 44)
+	## Bigger than the escape hatch beside it, and set with tracking. ⚠️ `SIZE_SUBHEADING` is 18 and
+	## ON the published scale — the weight comes from the target size (360×56 against 44) and the
+	## letter-spacing, not from an invented font size.
+	commit_btn.custom_minimum_size = Vector2(360, 56)
 	commit_btn.focus_mode = Control.FOCUS_ALL
 	commit_btn.tooltip_text = "Locks these orders. You cannot intervene once the fight starts — the report will grade exactly the claims listed under YOUR READ."
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		commit_btn.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
 	commit_btn.add_theme_stylebox_override("focus", UiTheme.button_stylebox("primary", "focus"))
-	commit_btn.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
+	commit_btn.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
+	commit_btn.add_theme_font_override("font", UiTheme.display_font(2))
 	commit_btn.pressed.connect(_on_commit)
 	bottom.add_child(commit_btn)
 
@@ -329,6 +367,9 @@ func _refresh_read() -> void:
 
 
 # ── Your team ─────────────────────────────────────────────────────────────────────────────────
+
+## ⚠️ TRACKING IS NOT A SIZE, and it comes from `UiTheme.display_font(px)` — see `title_ui.gd`.
+
 
 func _build_team_column(parent: HBoxContainer) -> void:
 	var col := VBoxContainer.new()

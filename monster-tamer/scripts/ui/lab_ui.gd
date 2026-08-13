@@ -69,6 +69,7 @@ const WeekLib = preload("res://scripts/week.gd")
 
 const STATS := ["STR", "DEX", "CON", "WIS", "INT", "CHA"]
 
+
 ## ⚠️ NO LONGER A MIRROR. This used to be a hand-copied `const RENTAL_PER_FROZEN := 12` with a
 ## comment admitting that if the two files ever disagreed the screen would be the one lying —
 ## which is `technical-preferences.md`'s named forbidden pattern (never hand-transcribe a table
@@ -96,7 +97,7 @@ const FUSION_RECIPES := [
 ]
 
 var _box: VBoxContainer
-var _header: Label
+var _plate_host: VBoxContainer
 var _log_label: Label
 var _fuse_a = null
 var _fuse_b = null
@@ -136,9 +137,10 @@ func _build() -> void:
 	page.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	margin.add_child(page)
 
-	page.add_child(UiTheme.heading("The Lab", 1))
-	_header = UiTheme.body_text("", "secondary")
-	page.add_child(_header)
+	# The room's signboard — see `UiTheme.room_plate()`. Rebuilt every refresh: the freezer bill
+	# and the preserved count both move when a body is preserved or released.
+	_plate_host = VBoxContainer.new()
+	page.add_child(_plate_host)
 	_log_label = UiTheme.body_text("", "muted")
 	page.add_child(_log_label)
 	page.add_child(HSeparator.new())
@@ -300,8 +302,19 @@ func _refresh() -> void:
 	# ⚠️ THE TICK'S OWN RULE, NOT A SECOND COPY OF IT — `week_plan.gd:rent_for` is what bills.
 	var rent: int = WeekPlan.rent_for(frozen)
 	var free_count: int = frozen.filter(func(m): return m.retired).size()
-	_header.text = "%d gold · %d in the barn (holds %d) · %d preserved (%d enshrined free) · freezer bill %dg/week" % [
-		Career.gold, Roster.monsters.size(), Career.barn_capacity, frozen.size(), free_count, rent]
+	for c in _plate_host.get_children():
+		c.queue_free()
+	_plate_host.add_child(UiTheme.room_plate("lab", "The Lab",
+		"Cryo storage, and the Hall of Fame with it. A body kept here is out of competition and on the bill forever — a retiree is enshrined free, because it can never race again.",
+		# ⚠️ TWO TILES, NOT FOUR, AND THE FIRST AFTER-CAPTURE IS WHY. The plate originally carried
+		# preserved / rent / stalls as well — which is exactly the four-tile ledger card sitting
+		# 60px below it. Two panels printing the same four numbers is one refactor away from being
+		# two panels printing DIFFERENT four numbers, which is this project's rule-(1) failure with
+		# a delay fuse on it. The freezer facts belong to the ledger; the plate keeps the purse.
+		[
+			{"value": "%dg" % Career.gold, "label": "in hand", "tint": UiTheme.GOLD},
+			{"value": "%d / %d" % [Roster.monsters.size(), Career.barn_capacity], "label": "stalls used"},
+		]))
 
 	if _fuse_a != null and not frozen.has(_fuse_a): _fuse_a = null
 	if _fuse_b != null and not frozen.has(_fuse_b): _fuse_b = null
@@ -595,7 +608,7 @@ func _frozen_row(mi) -> Control:
 	pick.custom_minimum_size = Vector2(0, 34)
 	pick.focus_mode = Control.FOCUS_ALL
 	if mi == _fuse_a or mi == _fuse_b:
-		pick.text = "✓ on the fusion bench"
+		pick.text = "• on the fusion bench"
 		pick.pressed.connect(func():
 			if _fuse_a == mi: _fuse_a = null
 			elif _fuse_b == mi: _fuse_b = null
@@ -640,7 +653,7 @@ func _fusion_bench() -> Control:
 	for r in FUSION_RECIPES:
 		var gate: String = str(r["licence"])
 		var held: bool = gate == "" or Career.holds_licence(gate)
-		known.append("%s + %s → %s%s" % [r["pair"][0], r["pair"][1], r["body"],
+		known.append("%s + %s makes %s%s" % [r["pair"][0], r["pair"][1], r["body"],
 			"" if held else " (needs the %s)" % gate])
 	col.add_child(UiTheme.body_text("Known recipes: " + " · ".join(known), "muted"))
 
@@ -670,11 +683,25 @@ func _fusion_bench() -> Control:
 	chips.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	for o in opts:
 		var b := Button.new()
-		b.text = ("● " if o["value"] == _fuse_heirloom else "") + str(o["text"])
+		var chosen: bool = o["value"] == _fuse_heirloom
+		b.text = ("• " if chosen else "") + str(o["text"])
 		b.tooltip_text = str(o.get("tip", ""))
-		b.custom_minimum_size = Vector2(0, 32)
+		b.custom_minimum_size = Vector2(0, 34)
 		b.focus_mode = Control.FOCUS_ALL
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# A committed choice gets the primary treatment; the • stays as the non-colour channel.
+		if chosen:
+			for state in ["normal", "hover", "pressed", "focus"]:
+				b.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
+		# ⚠️ 141 AUTHORED ICONS, ONE FILE LOADING THEM. `arena_3d.gd:3894` was the only caller in
+		# the project; every screen that names a move drew a word. `UiTheme.ability_texture()` is
+		# the ONE shared lookup (round 21 deleted three private copies) and degrades to the word
+		# when a file is missing.
+		var tex: Texture2D = UiTheme.ability_texture(str(o["value"]))
+		if tex != null:
+			b.icon = tex
+			b.expand_icon = true
+			b.add_theme_constant_override("icon_max_width", 22)
 		var v = o["value"]
 		b.pressed.connect(func(): _fuse_heirloom = v; _refresh())
 		chips.add_child(b)

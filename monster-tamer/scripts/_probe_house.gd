@@ -19,6 +19,20 @@
 ##   T1  no font size outside `UiTheme.TOKEN_FONT_SIZES`
 ##   T2  no text colour outside `UiTheme.TOKEN_TEXT_COLOURS`
 ##   T3  no font size below the 14px floor this theme ever hands out
+##   C1  measured CONTRAST floors — the AA floors and the elevation ladder            (craft round)
+##   C2  interactive-state DISTINCTNESS — hover/pressed/disabled separated from rest  (craft round)
+##
+## ⚠️ C1/C2 WERE ADDED BECAUSE A CRAFT ROUND CAN ONLY LOSE IN WAYS T1–T3 CANNOT SEE. T1–T3 count
+## labels: they answer "did someone invent a sixth grey" and "is anything under 14px". Neither can
+## answer "is this still readable" — a builder chasing depth can darken a fill, keep every token
+## intact, score a clean row, and ship text at 4.2:1. Prettier and less readable is a LOSS, and
+## before this round nothing in the repo could detect one. These two checks are the detector.
+##
+## ⚠️ AND THEY TAKE THEIR NUMBERS FROM `UiTheme.elevation_report()`, NEVER FROM A COPY. The
+## published figures in `UI_THEME.md` §3 were already wrong in the third decimal (5.10/4.63 against
+## a live 5.098/4.628), so a tripwire holding its own copy of the truth would have failed against
+## an UNCHANGED theme and reported a phantom regression on the round's first diff. The floors below
+## are the only constants here, and they are the *requirements*, not the measurements.
 ##
 ## ⚠️ WHAT IT DELIBERATELY DOES NOT DO IS JUDGE. Density, hierarchy, whether a screen is any GOOD
 ## — none of that is measurable and a probe that pretended otherwise would be worse than nothing.
@@ -81,15 +95,107 @@ func _ready() -> void:
 		await _capture(str(s["scene"]), str(s["n"]))
 
 	_report()
-	get_tree().quit(0)
+	var craft_ok := _report_craft()
+	get_tree().quit(0 if craft_ok else 1)
+
+
+# ── C1/C2 — THE CRAFT TRIPWIRES ───────────────────────────────────────────────────────────────
+#
+# ⚠️ THE FLOORS BELOW ARE REQUIREMENTS, NOT OBSERVATIONS, AND THE DISTINCTION IS THE WHOLE POINT.
+# Each is either a WCAG floor (4.5 for normal text, 3.0 for a non-text boundary) or a perceptual
+# target this round committed to in `docs/POLISH_DIRECTION.md` §4.4. None was read off the theme
+# and then written down as "what it happens to be" — that is a changelog, not a guard, and this
+# project has already had to delete one instrument for exactly that (`UI_LAYOUT_RULES` R7).
+#
+# ⚠️ ONE FLOOR IS DELIBERATELY SET BELOW ITS MEASURED VALUE: `card_to_raised`. PANEL→PANEL_RAISED
+# measures 1.101 and CANNOT be improved — lifting PANEL_RAISED to reach 1.16 drops TEXT_MUTED on it
+# to 4.27, under the AA floor. It is listed as a WATCH rather than a floor so the number stays
+# visible and nobody "fixes" it by spending the text budget. A guard that hides a known-unfixable
+# number is how it gets fixed by someone who did not know.
+const FLOORS := {
+	# key                      floor   what it is
+	"page_to_card":            1.16,  # a card must be separable from its page WITHOUT its border
+	"control_on_card":         1.25,  # a button must read as a control sitting ON a card
+	"btn_hover":               1.45,  # POLISH_DIRECTION §4.4
+	"btn_pressed":             1.25,  # POLISH_DIRECTION §4.4 — plus the geometric check below
+	"btn_disabled":            1.20,  # POLISH_DIRECTION §4.4 — a dead control must not look live
+	"muted_on_panel":          4.50,  # WCAG AA, normal text
+	"muted_on_raised":         4.50,  # WCAG AA — ⚠️ measures 4.628, only 0.13 of headroom
+	"danger_on_surface":       4.50,  # WCAG AA — was 4.226, i.e. UNDER the floor before this round
+	"border_edge":             1.30,  # the hairline must remain visible against the panel it edges
+}
+
+## Ratios that are watched and printed but not enforced, with the reason stated in one line so a
+## future reader does not have to reconstruct why a visibly-low number is tolerated.
+const WATCH := {
+	"card_to_raised": "cannot rise — lifting PANEL_RAISED drops TEXT_MUTED on it to 4.27 (under AA)",
+	"primary_on_page": "the call-to-action fill against the page; informational",
+}
+
+
+func _report_craft() -> bool:
+	var e: Dictionary = UiTheme.elevation_report()
+	var ok := true
+	print("")
+	print("=== C1/C2 CRAFT TRIPWIRES (measured live through UiTheme.elevation_report()) ===")
+	var keys: Array = FLOORS.keys()
+	keys.sort()
+	for k in keys:
+		var got: float = float(e[k])
+		var floor_v: float = float(FLOORS[k])
+		var pass_v: bool = got >= floor_v - 0.0005
+		if not pass_v:
+			ok = false
+		print("  %-20s %7.3f : 1   floor %5.2f   %s" % [k, got, floor_v, "ok" if pass_v else "FAIL"])
+	for k in WATCH.keys():
+		print("  %-20s %7.3f : 1   (watch)      %s" % [k, float(e[k]), WATCH[k]])
+
+	# C2's non-tonal half. ⚠️ CONTRAST ALONE CANNOT CARRY `pressed` AND THE ARITHMETIC SAYS SO:
+	# darkening the resting fill all the way to pure black tops out around 1.37:1, so a click that
+	# is only a tone change is a click that is barely acknowledged. The state has to be
+	# GEOMETRICALLY different too — it drops its shadow and shifts its label down — and that is a
+	# structural fact a probe can check exactly, unlike a ratio it can only compare.
+	var n: StyleBoxFlat = UiTheme.button_stylebox("secondary", "normal")
+	var p: StyleBoxFlat = UiTheme.button_stylebox("secondary", "pressed")
+	var geom_ok: bool = bool(e["pressed_loses_lift"])
+	var shift_ok: bool = p.content_margin_top > n.content_margin_top
+	var size_ok: bool = is_equal_approx(
+		n.content_margin_top + n.content_margin_bottom,
+		p.content_margin_top + p.content_margin_bottom)
+	if not (geom_ok and shift_ok and size_ok):
+		ok = false
+	print("  %-20s %s   pressed drops its shadow (%.0f -> %.0f)" % [
+		"pressed_geometry", "ok" if geom_ok else "FAIL", n.shadow_size, p.shadow_size])
+	print("  %-20s %s   pressed shifts content down (%.0f -> %.0f top)" % [
+		"pressed_shift", "ok" if shift_ok else "FAIL", n.content_margin_top, p.content_margin_top])
+	print("  %-20s %s   and total margin is unchanged, so nothing reflows on click" % [
+		"pressed_no_reflow", "ok" if size_ok else "FAIL"])
+
+	# ⚠️ ELEVATION IS INFORMATION — assert that it is RATIONED, not just present. A page where every
+	# panel floats is exactly as flat as one where none do, so "default casts no shadow" is as much
+	# a requirement as "raised does". This is the check that stops the next round undoing this one
+	# by making everything pretty.
+	var rungs := {"flat": 0, "default": 0, "interactive": UiTheme.ELEV_INTERACTIVE, "raised": UiTheme.ELEV_RAISED}
+	for variant in rungs.keys():
+		var sb: StyleBoxFlat = UiTheme.panel_style(variant)
+		var want: int = int(rungs[variant])
+		var got_lift: int = int(sb.shadow_size)
+		if got_lift != want:
+			ok = false
+		print("  %-20s shadow %d (want %d)   %s" % [
+			"panel:" + variant, got_lift, want, "ok" if got_lift == want else "FAIL"])
+
+	print("")
+	print("CRAFT: %s" % ("all floors held" if ok else "⚠ AT LEAST ONE FLOOR BROKEN — this is a LOSS, not a trade"))
+	return ok
 
 
 func _report() -> void:
 	print("")
 	print("=== HOUSE STYLE (window %dx%d, base viewport %d tall) ===" % [WINDOW.x, WINDOW.y, _view_h])
-	print("                     R1     R2   |------- R3 disabled -------|   R5      T1/T3     T2")
-	print("screen             scroll pinned  n  tooltip  maybe  SILENT   nest   off-scale off-token")
-	var tot := {"r1": 0, "r2": 0, "r3": 0, "maybe": 0, "r5": 0, "t1": 0, "t2": 0}
+	print("                     R1     R2   |------- R3 disabled -------|   R5      T1/T3     T2      C3")
+	print("screen             scroll pinned  n  tooltip  maybe  SILENT   nest   off-scale off-token  lifted")
+	var tot := {"r1": 0, "r2": 0, "r3": 0, "maybe": 0, "r5": 0, "t1": 0, "t2": 0, "lift": 0, "lift_max": 0}
 	for r in _rows:
 		if not r["scrolls"]:
 			tot["r1"] += 1
@@ -101,7 +207,9 @@ func _report() -> void:
 			tot["r5"] += 1
 		tot["t1"] += int(r["off_size"])
 		tot["t2"] += int(r["off_colour"])
-		print("%-18s %5s %6s %4d %6d %7d %7d %6d %9d %8d" % [
+		tot["lift"] += int(r["lifted"])
+		tot["lift_max"] = maxi(int(tot["lift_max"]), int(r["lifted"]))
+		print("%-18s %5s %6s %4d %6d %7d %7d %6d %9d %8d %7d" % [
 			r["n"],
 			"yes" if r["scrolls"] else "NO",
 			"yes" if r["pinned_action"] else "NO",
@@ -110,6 +218,7 @@ func _report() -> void:
 			int(r["max_nest"]),
 			int(r["off_size"]),
 			int(r["off_colour"]),
+			int(r["lifted"]),
 		])
 	print("")
 	print("TOTALS  R1 screens that do not scroll: %d · R2 screens with no pinned action: %d"
@@ -119,6 +228,10 @@ func _report() -> void:
 	print("        R5 screens with nested scrolls: %d" % tot["r5"])
 	print("        T1/T3 labels at an off-scale size: %d · T2 labels at an off-token colour: %d"
 		% [tot["t1"], tot["t2"]])
+	# ⚠️ REPORTED, NEVER FAILED — see the C3 note in `_walk`. A screen at 1 is using the ladder as
+	# intended; a screen at 5+ is claiming five primary things and needs a human to read its capture.
+	print("        C3 panels claiming top elevation (\"raised\"): %d across %d screens · max on one screen: %d"
+		% [tot["lift"], _rows.size(), tot["lift_max"]])
 
 	print("")
 	print("--- OFF-SCALE FONT SIZES (theme hands out %s) ---" % [UiTheme.TOKEN_FONT_SIZES])
@@ -237,7 +350,7 @@ func _capture(scene_path: String, screen_name: String) -> void:
 	var r := {
 		"n": screen_name, "scrolls": false, "pinned_action": false,
 		"disabled": 0, "reason_tip": 0, "reason_maybe": 0, "silent_disabled": 0,
-		"max_nest": 0, "off_size": 0, "off_colour": 0,
+		"max_nest": 0, "off_size": 0, "off_colour": 0, "lifted": 0,
 	}
 	_walk(node, r, 0)
 	_rows.append(r)
@@ -293,6 +406,27 @@ func _walk(n: Node, r: Dictionary, scroll_depth: int) -> void:
 		# answers the weaker, checkable question: is ANY action reachable without scrolling.
 		if depth == 0 and not b.disabled and b.global_position.y < float(_view_h):
 			r["pinned_action"] = true
+
+	# C3 — HOW MANY THINGS ON THIS SCREEN CLAIM TO BE THE PRIMARY THING.
+	#
+	# ⚠️ THIS IS THE COUNTER-CHECK TO THE CRAFT ROUND, NOT A CELEBRATION OF IT. Elevation is
+	# information: `raised` means "the one thing this page is about". A screen with seven raised
+	# panels has said that seven times, which is the same as not saying it — a page where every
+	# panel floats is exactly as flat as one where none do, and it is flat in a way that now also
+	# costs GPU fill and visual noise. The first run of this counter found `panel_style("raised")`
+	# at 32 call sites against `"interactive"` at ZERO, i.e. the four-rung ladder the theme
+	# publishes is being used as two rungs, with every clickable card claiming top billing.
+	#
+	# It is reported, never failed. "Two raised panels" can be correct (a selected row inside a
+	# selected section) and a probe cannot tell that from a mistake — this project has twice had an
+	# instrument stop being believed by scoring a correct implementation as a fault. A high number
+	# means READ THE CAPTURE, which is the right outcome.
+	if n is Control:
+		var c := n as Control
+		if c.has_theme_stylebox_override("panel"):
+			var sb := c.get_theme_stylebox("panel") as StyleBoxFlat
+			if sb != null and sb.shadow_size >= UiTheme.ELEV_RAISED:
+				r["lifted"] += 1
 
 	if n is Label:
 		var l := n as Label

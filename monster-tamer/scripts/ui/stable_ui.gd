@@ -40,6 +40,22 @@ const TEMPERAMENT_AXES := [
 	{"key": "focus", "label": "Focus"},
 ]
 
+## ── THE SIX STAT HUES ─────────────────────────────────────────────────────────────────────────
+##
+## ⚠️ THE TABLE IS GONE FROM THIS FILE — IT IS `UiTheme.STAT_HUES` AND THIS IS A ONE-LINE FORWARD.
+## It was written here as a self-deleting fallback that read the theme's constant map at runtime,
+## because the screen needed the hues in the same round the theme was being edited by someone else.
+## Round 21's integration published the token and deleted both copies (the second was a `const` in
+## `theme_gallery.gd`, which would have let the GALLERY — the thing whose whole job is to show the
+## truth — drift away from the screens it documents). The rules that make the hues legal, the
+## measured contrast, and the CON/CHA weak adjacency all live on the token now.
+##
+## This forward stays only because `training_ui.gd` addresses the hues through `StatHue.stat_hue()`;
+## it is two lines and it means neither screen holds a colour value.
+static func stat_hue(stat: String) -> Color:
+	return UiTheme.stat_hue(stat)
+
+
 ## ⚠️ `INTENSIVE_PAIR` USED TO LIVE HERE AND IT WAS A LIE IN THREE SEPARATE WAYS (round 14).
 ## It was a hand-copied six-entry table "kept in sync" with training_ui.gd, and it had drifted:
 ## it claimed CON pairs with DEX and CHA with CON, while `week.gd:DRILLS` — the table the tick
@@ -410,26 +426,7 @@ func _refresh_detail() -> void:
 		detail_box.add_child(UiTheme.body_text("No monsters in the stable yet.", "secondary"))
 		return
 
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", UiTheme.SPACE_LG)
-	detail_box.add_child(header)
-
-	header.add_child(_portrait(m.species_id, m.species_name, Vector2(180, 180), accent))
-
-	var id_col := VBoxContainer.new()
-	id_col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
-	id_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	id_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	id_col.alignment = BoxContainer.ALIGNMENT_CENTER
-	header.add_child(id_col)
-
-	id_col.add_child(UiTheme.heading(m.species_name, 2))
-	id_col.add_child(UiTheme.body_text(
-		"%s  ·  %s body  ·  %s (%s role)" % [m.flavour, m.body, m.class_name_, m.role], "secondary"))
-	id_col.add_child(UiTheme.body_text(
-		"HP pool %d   ·   MP pool %d   ·   refuels via %s" % [m.max_hp, m.max_mp, m.mana_role], "secondary"))
-	id_col.add_child(UiTheme.body_text(
-		"Free attack: %s, %s channel, reach %.1f" % [m.basic_attack.get("stat", "?"), m.basic_attack.get("channel", "?"), float(m.basic_attack.get("range", 0.0))], "secondary"))
+	detail_box.add_child(_hero_card(m))
 
 	detail_box.add_child(HSeparator.new())
 
@@ -494,13 +491,134 @@ func _refresh_detail() -> void:
 	if m.moveset.is_empty():
 		detail_box.add_child(UiTheme.body_text("None yet — every stat is still below the pool's lowest learnLevel. Train it.", "muted"))
 	for mv in m.moveset:
-		detail_box.add_child(UiTheme.body_text("  %s  (%s, %s · %s line)" % [mv["name"], mv["type"], mv["channel"], mv["line"]], "secondary"))
+		detail_box.add_child(_move_row(mv))
 
 	if not m.innate.is_empty():
 		detail_box.add_child(HSeparator.new())
 		detail_box.add_child(UiTheme.heading("Innate traits", 2))
 		for inn in m.innate:
 			detail_box.add_child(UiTheme.body_text("  %s — %s" % [inn["name"], inn["desc"]], "secondary"))
+
+
+## ── THE HERO CARD ─────────────────────────────────────────────────────────────────────────────
+##
+## ⚠️ THE SUBJECT OF A MONSTER-TAMING GAME WAS RENDERED AT A THUMBNAIL'S WEIGHT. The detail pane
+## opened with a 180px portrait butted straight against four identical 16px grey sentences, on the
+## same flat card as the six sections below it — so the screen said, in layout, that the creature
+## and the free-attack reach were the same size of fact. `docs/POLISH_DIRECTION.md` §1.2 names this
+## screen's portrait as the case; the brief for this round names the consequence: *"a monster
+## should read as a CHARACTER — something you would be sorry to retire"*, and that feeling is the
+## engine of the whole breeding half.
+##
+## ⚠️ ELEVATION IS INFORMATION, so exactly ONE thing on this screen is raised: the monster. The
+## roster strip, the stat block, the class panel and the story all stay on `default` panels. A page
+## where everything floats is as flat as one where nothing does.
+##
+## The plinth under the portrait is `panel_style` with the TEAM LIVERY as its border — the one
+## sanctioned use of that colour here, and the same accent the roster card and the career chip
+## already carry, so the screen keeps saying "these are yours" in one voice rather than three.
+func _hero_card(m) -> Control:
+	var hero := PanelContainer.new()
+	hero.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", accent))
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	hero.add_child(row)
+
+	# The plinth. ⚠️ The portrait keeps its own footprint whether art landed or not (`_portrait`
+	# degrades to accent-tinted initials at the SAME size), so the card cannot reflow the day a
+	# species gets painted.
+	var plinth := PanelContainer.new()
+	plinth.add_theme_stylebox_override("panel", UiTheme.panel_style("default", accent))
+	plinth.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	plinth.add_child(_portrait(m.species_id, m.species_name, Vector2(232, 232), accent))
+	row.add_child(plinth)
+
+	var id_col := VBoxContainer.new()
+	id_col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	id_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	id_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	id_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_child(id_col)
+
+	# ⚠️ THE NAME GOES UP ONE STEP OF THE PUBLISHED SCALE, NOT TO AN INVENTED SIZE. `heading(_, 1)`
+	# is SIZE_HEADING 22; it was drawn at level 2 (18) — the same size as every card title in the
+	# roster strip beside it, which is why the selected monster never read as the subject.
+	id_col.add_child(UiTheme.heading(m.species_name, 1))
+
+	var flavour := UiTheme.body_text(str(m.flavour), "secondary")
+	flavour.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	id_col.add_child(flavour)
+
+	# What it IS, as three separate marks rather than one grey sentence with dot separators. The
+	# class chip carries the hue of the stat that class leads on, which is the same six-hue channel
+	# the stat bars below now use — so "Tank" and the CON bar agree by colour without either
+	# needing to say so.
+	var chips := HBoxContainer.new()
+	chips.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	chips.add_child(_chip("%s body" % str(m.body), UiTheme.BORDER))
+	chips.add_child(_chip("%s · %s" % [str(m.class_name_), str(m.role)], _class_hue(m)))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chips.add_child(spacer)
+	id_col.add_child(chips)
+
+	id_col.add_child(UiTheme.body_text(
+		"HP pool %d   ·   MP pool %d   ·   refuels via %s" % [m.max_hp, m.max_mp, m.mana_role], "secondary"))
+	id_col.add_child(UiTheme.body_text(
+		"Free attack: %s, %s channel, reach %.1f" % [
+			m.basic_attack.get("stat", "?"), m.basic_attack.get("channel", "?"),
+			float(m.basic_attack.get("range", 0.0))], "secondary"))
+
+	# ⚠️ CONDITION BELONGS TO THE BODY, SO IT LIVES ON THE BODY'S CARD. Monster Rancher's stable
+	# screen is a CONDITION READOUT, and these two bars were a separate row below a separator while
+	# the hero card's right half sat empty. Moved, not copied — `_condition_section` no longer draws
+	# them, because a screen that states the same fact in two places has two authorities for it and
+	# eventually they disagree.
+	var bars := HBoxContainer.new()
+	bars.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	id_col.add_child(bars)
+	var st := UiTheme.stat_bar("Stamina", m.stamina, WeekLib.MAX_STAMINA, _stamina_color(m.stamina), 64)
+	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bars.add_child(st)
+	var hp := UiTheme.stat_bar("Heart", float(m.happiness), float(WeekLib.MAX_HAPPINESS),
+		_heart_color(m.happiness), 64)
+	hp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bars.add_child(hp)
+	return hero
+
+
+## A small bordered tag. ⚠️ The TEXT is a token colour and the HUE is the border only — see the
+## `stat_hue` note: a hued label would be scored off-token by `_probe_house.gd`, a hued border is
+## not scored at all, and that is the boundary the GOLD-is-an-ink ruling draws.
+func _chip(text: String, tint: Color) -> Control:
+	var p := PanelContainer.new()
+	var sb := UiTheme.panel_style("default", tint)
+	sb.content_margin_left = UiTheme.SPACE_SM
+	sb.content_margin_right = UiTheme.SPACE_SM
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 2
+	p.add_theme_stylebox_override("panel", sb)
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	l.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
+	p.add_child(l)
+	return p
+
+
+## The hue of the stat this monster's class leads on. ⚠️ READ FROM THE SHIPPED CLASS TABLE, never
+## from a local class→stat map — `GameData.classes` carries `primary`, and a second copy of that
+## mapping on a screen is the `INTENSIVE_PAIR` failure at the top of this file. Falls back to the
+## resting border when the class is not in the table (Generalist has no primary), which is a
+## deliberate "no claim" rather than a guessed hue.
+func _class_hue(m) -> Color:
+	for c in GameData.classes:
+		if str(c.get("name", "")) == str(m.class_name_):
+			var pri := str(c.get("primary", ""))
+			if UiTheme.STAT_HUES.has(pri):
+				return stat_hue(pri)
+	return UiTheme.BORDER
 
 
 # =============================================================================
@@ -546,16 +664,9 @@ func _condition_section(m) -> Control:
 	# has a different correct answer and none of them were stated anywhere in the game.
 	box.add_child(UiTheme.body_text(_arc_advice(stage, left), "muted"))
 
-	var bars := HBoxContainer.new()
-	bars.add_theme_constant_override("separation", UiTheme.SPACE_LG)
-	box.add_child(bars)
-	var st := UiTheme.stat_bar("Stamina", m.stamina, WeekLib.MAX_STAMINA, _stamina_color(m.stamina), 64)
-	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bars.add_child(st)
-	var hp := UiTheme.stat_bar("Heart", float(m.happiness), float(WeekLib.MAX_HAPPINESS), _heart_color(m.happiness), 64)
-	hp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bars.add_child(hp)
-
+	# ⚠️ THE STAMINA/HEART BARS MOVED UP ONTO THE HERO CARD (see `_hero_card`) — they are not missing
+	# and they must not be re-added here. Drawn in both places, one of them would eventually be the
+	# stale one.
 	box.add_child(UiTheme.body_text(_plan_line(m), "secondary"))
 	return box
 
@@ -630,7 +741,14 @@ func _stat_row(m, stat: String) -> Control:
 	col.add_theme_constant_override("separation", 1)
 	# The bar is drawn against this monster's OWN ceiling, so a stat trained into its headroom is
 	# not silently painted as overflowing a bar it has legitimately passed.
-	col.add_child(UiTheme.stat_bar(stat, value, maxf(ceiling, value), accent, 40))
+	# ⚠️ SIX BARS, SIX HUES — AND IT WAS THE TEAM COLOUR HERE, WHICH IS A GUILD COLOURS COLLISION AS
+	# WELL AS A LEGIBILITY ONE. Every stat drew in `accent`, so the primary readout of a
+	# monster-taming game was six identical blue bars distinguishable only by reading the
+	# three-letter label at the left (`docs/POLISH_DIRECTION.md` §1.2). Worse, the fill was the
+	# player's LIVERY — the one colour `docs/ART_THEME.md` reserves for "whose is this", spent on
+	# "which stat is this". The livery is still on this screen, on the card border and the career
+	# chip, where it answers the question it is for.
+	col.add_child(UiTheme.stat_bar(stat, value, maxf(ceiling, value), stat_hue(stat), 40))
 	# ⚠️ A PER-CLASS TIER LINE STOOD HERE AND HAD NEVER DRAWN A SINGLE PIXEL. It rendered only for
 	# tier "primary"/"secondary"/"off-class", and `week_plan.gd:stat_ceiling_tier()` returns the
 	# literal string "league" down BOTH of its branches — the per-class caps it described were
@@ -902,8 +1020,13 @@ func _temperament_row(m, axis: Dictionary) -> Control:
 	lbl.custom_minimum_size = Vector2(104, 0)
 	row.add_child(lbl)
 
+	# ⚠️ THE BAR USED TO EXPAND AWAY FROM ITS OWN LABEL. `desc_lbl` took SIZE_EXPAND_FILL, so on a
+	# 1566px-wide detail pane the 90px bar was pushed to the far right edge and read as belonging to
+	# nothing — visible in `A_comfortable/03_stable.png` as two orphan blue stubs under the stat
+	# block. The slack now goes to a trailing spacer instead, so label · word · bar stay one group.
 	var desc_lbl := UiTheme.body_text(desc, "primary")
-	desc_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	desc_lbl.custom_minimum_size = Vector2(160, 0)
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
 	row.add_child(desc_lbl)
 
 	var bar := ProgressBar.new()
@@ -921,6 +1044,10 @@ func _temperament_row(m, axis: Dictionary) -> Control:
 	bar.add_theme_stylebox_override("fill", fg)
 	bar.add_theme_stylebox_override("background", bg2)
 	row.add_child(bar)
+
+	var tail := Control.new()
+	tail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(tail)
 
 	return row
 
@@ -1093,6 +1220,45 @@ func _class_after(m, deltas: Dictionary) -> String:
 	if not m.is_class_assigned():
 		return Classify.class_for_stats(stats_copy)
 	return str(m.class_name_)
+
+
+## ── THE MOVESET, WITH THE ART THAT ALREADY SHIPS ──────────────────────────────────────────────
+##
+## ⚠️ 141 ABILITY ICONS ARE ON DISK AND, UNTIL THIS ROUND, ONE FILE LOADED THEM — `arena_3d.gd`,
+## for the cast bar. Every meta screen that lists a moveset rendered the ability as a WORD. That is
+## this project's signature failure (authored and unreached) in its cheapest-to-fix form: the asset
+## exists, it is addressed by the move `id` the row already holds, and the row is a plain label.
+##
+## ⚠️ THE ICON GOES BESIDE THE NAME, NEVER INSTEAD OF IT. These marks are abstract — nobody reads
+## three slashes as "Rend" — so their job is scanning and stat-channel colour, not naming. Dropping
+## the label would be a legibility LOSS dressed as polish, which is the exact way this round fails.
+##
+## ⚠️ AND IT DEGRADES AT THE SAME FOOTPRINT. A missing file leaves a hue-bordered blank badge of
+## identical size, per the `portrait()` rule — a list that reflows when one asset is absent is
+## worse than one that never had icons.
+func _move_row(mv: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	row.tooltip_text = str(mv.get("desc", ""))
+
+	var stat := str(mv.get("stat", ""))
+	row.add_child(UiTheme.ability_icon(str(mv.get("id", "")), stat, 32))
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(col)
+	col.add_child(UiTheme.body_text(str(mv.get("name", "?")), "primary"))
+	col.add_child(UiTheme.body_text("%s, %s · %s line" % [
+		str(mv.get("type", "?")), str(mv.get("channel", "?")), str(mv.get("line", "?"))], "muted"))
+	return row
+
+
+## ⚠️ THE ABILITY ICON USED TO BE HAND-ROLLED HERE, and in `breeding_ui.gd`, and in `lab_ui.gd` —
+## three private loaders for the same 141 assets, all authored in the same round. It is now
+## `UiTheme.ability_icon(move_id, stat, px)`. The three sanctioned sizes (24 inline · 32 in a list ·
+## 48 in a picker) are shown in `theme_gallery.gd` §18.
 
 
 ## Real portrait if Art has one, otherwise a deliberate accent-tinted placeholder (the species'

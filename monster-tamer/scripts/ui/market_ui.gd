@@ -40,6 +40,7 @@ const RELEASE_REFUND_FRAC := RosterLib.RELEASE_REFUND_FRAC
 const WeekLib = preload("res://scripts/week.gd")
 
 var gold_label: Label
+var _plate_host: VBoxContainer
 var gaps_box: VBoxContainer
 var offers_box: VBoxContainer
 var release_box: VBoxContainer
@@ -91,22 +92,21 @@ func _build_ui() -> void:
 	root_margin.add_child(vbox)
 
 	# ---- header ----
+	# ⚠️ THE PLATE REPLACED A TITLE AND A SENTENCE THAT WERE INTERCHANGEABLE WITH FOUR OTHER ROOMS.
+	# See `UiTheme.room_plate()`. `_plate_host` is refilled by `_refresh()` because the tiles
+	# carry live gold and a live barn count — a stale number above a Recruit button is a rule-(1)
+	# lie in the most expensive place on the screen.
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", UiTheme.SPACE_LG)
 	vbox.add_child(header)
 
-	var title_col := VBoxContainer.new()
-	title_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title_col)
-	title_col.add_child(UiTheme.heading("The Market"))
-	title_col.add_child(UiTheme.body_text(
-		"Prospects are cheap, raw and keep their full ceiling. Veterans can play today — and never "
-		+ "train past it. Choose which season you are buying for.", "secondary"))
+	_plate_host = VBoxContainer.new()
+	_plate_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(_plate_host)
 
 	gold_label = UiTheme.body_text("", "primary")
 	gold_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	gold_label.add_theme_color_override("font_color", UiTheme.GOLD)
-	gold_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	gold_label.visible = false  # the plate's first tile carries the purse now
 	header.add_child(gold_label)
 
 	var back_btn := Button.new()
@@ -528,7 +528,7 @@ func _render_release() -> void:
 
 
 func _release_row(mi) -> PanelContainer:
-	var panel := _card_panel()
+	var panel := _card_panel("held")
 
 	var hbox := HBoxContainer.new()
 	hbox.add_theme_constant_override("separation", UiTheme.SPACE_MD)
@@ -588,10 +588,26 @@ func _on_release(mi, refund: int) -> void:
 	_refresh()
 
 
+## ⚠️ ONE PLACE PRINTS THE PURSE, AND IT IS NOW THE PLATE. `gold_label` is kept and hidden rather
+## than deleted because three call sites drive it; deleting it would have been a wider edit than
+## this round's brief in a file another stream may also be reading.
 func _refresh_gold() -> void:
-	if gold_label == null:
+	if gold_label != null:
+		gold_label.text = "%d gold" % (Career.gold if has_node("/root/Career") else 0)
+	if _plate_host == null:
 		return
-	gold_label.text = "%d gold" % (Career.gold if has_node("/root/Career") else 0)
+	for c in _plate_host.get_children():
+		c.queue_free()
+	var gold: int = Career.gold if has_node("/root/Career") else 0
+	var held: int = Roster.monsters.size() if has_node("/root/Roster") else 0
+	var cap: int = Career.barn_capacity if has_node("/root/Career") else 0
+	_plate_host.add_child(UiTheme.room_plate("market", "The Market",
+		"A shelf that restocks every week and never repeats. Prospects are cheap, raw and keep their full ceiling; veterans can play today and never train past it. Choose which season you are buying for.",
+		[
+			{"value": "%dg" % gold, "label": "in hand", "tint": UiTheme.GOLD},
+			{"value": "%d / %d" % [held, cap], "label": "stalls used"},
+			{"value": "%d" % offers.size(), "label": "on the shelf this week"},
+		]))
 
 
 ## ⚠️ ACCESSIBILITY (docs/ACCESSIBILITY.md #1 pattern, reused from stable_ui.gd) — explicit
@@ -623,7 +639,18 @@ func _row_button(row: Node) -> Button:
 	return null
 
 
-func _card_panel() -> PanelContainer:
+## ⚠️ THE TWO COLUMNS THIS SCREEN EXISTS TO COMPARE WERE DRAWN IDENTICALLY. Read off
+## `06_market.png`: "This week's recruits" and "Your stable" are two columns of the same card, so
+## the axis the whole screen is built around — *is this shelf better than what I own* — had no
+## visual expression at all. `shelf` is a SHELF: the interactive variant, which casts the theme's
+## elevation shadow, because those cards are the things you can act on. `held` is a LEDGER: flat,
+## faint-bordered, no shadow, because you already own them and they are the yardstick, not the
+## offer. Elevation is information (`docs/POLISH_DIRECTION.md` §4.3) and this is the one place on
+## the screen where the two registers mean two different things.
+func _card_panel(kind: String = "shelf") -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default", UiTheme.BORDER))
+	if kind == "held":
+		panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default", UiTheme.BORDER_FAINT))
+	else:
+		panel.add_theme_stylebox_override("panel", UiTheme.panel_style("interactive", UiTheme.BORDER))
 	return panel

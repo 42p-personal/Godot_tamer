@@ -128,8 +128,9 @@ const MAX_CHILDREN_PER_PARENT := 2
 const LIFESPAN_STEP_YEARS := 0.5
 const MAX_LIFESPAN_YEARS := 12.0
 
+
 var _box: VBoxContainer
-var _header: Label
+var _plate_host: VBoxContainer
 var _pick_a = null   # MonsterInstance, or null
 var _pick_b = null
 var _line_from_b := false      # false = child takes parent A's species, true = parent B's
@@ -171,14 +172,15 @@ func _build() -> void:
 	page.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	margin.add_child(page)
 
-	page.add_child(UiTheme.heading("The Breeding Ranch", 1))
-	_header = UiTheme.body_text("", "secondary")
-	page.add_child(_header)
+	# ⚠️ THE PLATE REPLACED A TITLE AND A COMMA-RUN, AND THE FOUR ROOMS OPENED IDENTICALLY WITHOUT
+	# IT. See `UiTheme.room_plate()` for why it lives there and what it costs. `_plate_host` is
+	# rebuilt every `_refresh()` because the tiles are live numbers (gold, stud book, barn).
+	_plate_host = VBoxContainer.new()
+	page.add_child(_plate_host)
 
 	_log_label = UiTheme.body_text("Choose two preserved parents.", "primary")
 	_log_label.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
 	page.add_child(_log_label)
-	page.add_child(HSeparator.new())
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -335,8 +337,16 @@ func _refresh() -> void:
 		c.queue_free()
 
 	var stock: Array = Roster.breeding_stock()
-	_header.text = "%d gold · %d preserved in the Lab · %d in the barn (holds %d) · breeding costs %dg" % [
-		Career.gold, stock.size(), Roster.monsters.size(), Career.barn_capacity, BREED_COST]
+	for c in _plate_host.get_children():
+		c.queue_free()
+	_plate_host.add_child(UiTheme.room_plate("breeding", "The Breeding Ranch",
+		"Two champions out of competition make a third that neither could be. The line's gift is TIME — a foal is behind on the day it hatches and outlives everything it will ever race.",
+		[
+			{"value": "%dg" % Career.gold, "label": "in hand", "tint": UiTheme.GOLD},
+			{"value": "%d" % stock.size(), "label": "in the stud book"},
+			{"value": "%d / %d" % [Roster.monsters.size(), Career.barn_capacity], "label": "stalls used"},
+			{"value": "%dg" % BREED_COST, "label": "a pairing costs"},
+		]))
 
 	# Selections can be invalidated by a preserve/release between refreshes.
 	if _pick_a != null and not stock.has(_pick_a): _pick_a = null
@@ -381,6 +391,43 @@ func _kit_line(mi) -> String:
 	for m in mi.moveset:
 		names.append(str(m.get("name", "?")))
 	return "kit: " + (", ".join(names) if not names.is_empty() else "—")
+
+
+## ⚠️ THE KIT WAS A COMMA-SEPARATED STRING WHILE 141 AUTHORED ICONS SAT ON DISK. `kit: Grand
+## Mockery, Bravura, Sidestep, Discord, Screech, Anthem of Iron` is six facts a player has to read
+## as prose; the icons are addressed by the id the moveset already carries. Icon BESIDE the name,
+## never instead of it — these badges are abstract and cannot name a move on their own.
+func _kit_row(mi) -> Control:
+	if mi.moveset.is_empty():
+		return UiTheme.body_text("kit: —", "muted")
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	col.add_child(UiTheme.body_text("kit", "muted"))
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", UiTheme.SPACE_MD)
+	flow.add_theme_constant_override("v_separation", UiTheme.SPACE_XS)
+	for m in mi.moveset:
+		var cell := HBoxContainer.new()
+		cell.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+		var tex: Texture2D = UiTheme.ability_texture(str(m.get("id", "")))
+		if tex != null:
+			var ic := TextureRect.new()
+			ic.texture = tex
+			ic.custom_minimum_size = Vector2(24, 24)
+			ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			cell.add_child(ic)
+		var nm := Label.new()
+		nm.text = str(m.get("name", "?"))
+		nm.autowrap_mode = TextServer.AUTOWRAP_OFF
+		nm.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		nm.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
+		nm.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cell.add_child(nm)
+		flow.add_child(cell)
+	col.add_child(flow)
+	return col
 
 
 ## ── PORTRAITS AND NUMBERS ON EVERY BODY THIS SCREEN NAMES ─────────────────────────────────────
@@ -482,7 +529,7 @@ func _parent_card(mi) -> Control:
 	col.add_child(UiTheme.body_text("%s body · %s · potential ×%.2f · %s · %d of %d matings used" % [
 		mi.body, _age_line(mi), mi.potential, mi.lineage_label(), used, MAX_CHILDREN_PER_PARENT], "secondary"))
 	col.add_child(UiTheme.body_text(_aptitude_line(mi), "muted"))
-	col.add_child(UiTheme.body_text(_kit_line(mi), "muted"))
+	col.add_child(_kit_row(mi))
 
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 34)
@@ -491,7 +538,7 @@ func _parent_card(mi) -> Control:
 		btn.disabled = true
 		btn.text = "Retired from the stud book — %d children already" % used
 	elif picked:
-		btn.text = "✓ Chosen — tap to release"
+		btn.text = "Chosen — tap to release"
 		btn.pressed.connect(func():
 			if _pick_a == mi: _pick_a = null
 			elif _pick_b == mi: _pick_b = null
@@ -563,20 +610,52 @@ func _chip_row(label: String, options: Array, current, on_pick: Callable) -> Con
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 	col.add_child(UiTheme.body_text(label, "secondary"))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", UiTheme.SPACE_XS)
+	row.add_theme_constant_override("v_separation", UiTheme.SPACE_XS)
 	for opt in options:
+		var chosen: bool = opt["value"] == current
 		var b := Button.new()
-		b.text = ("● " if opt["value"] == current else "") + str(opt["text"])
+		b.text = ("• " if chosen else "") + str(opt["text"])
 		b.tooltip_text = str(opt.get("tip", ""))
-		b.custom_minimum_size = Vector2(0, 32)
+		b.custom_minimum_size = Vector2(0, 34)
 		b.focus_mode = Control.FOCUS_ALL
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# ⚠️ THE CHOSEN CHIP LOOKED EXACTLY LIKE THE ELEVEN IT WAS CHOSEN OVER. Read off
+		# `09_breeding.png`: three rows of identical grey buttons, the selection carried by a `●`
+		# prefix alone at 16px. This is a COMMITTED choice about a creature that costs 300g — it
+		# gets the theme's primary treatment, and the `●` stays, because the glyph is the channel
+		# that survives a colourblind read.
+		if chosen:
+			for state in ["normal", "hover", "pressed", "focus"]:
+				b.add_theme_stylebox_override(state, UiTheme.button_stylebox("primary", state))
+		# ⚠️ THE ICONS WERE ALREADY ON DISK AND EXACTLY ONE FILE IN THE PROJECT LOADED THEM
+		# (`arena_3d.gd:3894`). Twelve heirloom buttons here rendered twelve authored 64x64 icons
+		# as twelve identical grey words. `icon_id` is the move id the option already carries, so
+		# this costs a lookup and nothing else.
+		var icon_id: String = str(opt.get("icon_id", ""))
+		if icon_id != "":
+			var tex: Texture2D = UiTheme.ability_texture(icon_id)
+			if tex != null:
+				b.icon = tex
+				b.expand_icon = true
+				b.add_theme_constant_override("icon_max_width", 22)
 		var v = opt["value"]
 		b.pressed.connect(func(): on_pick.call(v))
 		row.add_child(b)
 	col.add_child(row)
 	return col
+
+
+## ⚠️ ICONS GO BESIDE NAMES, NEVER INSTEAD OF THEM. These are abstract badges — nobody reads
+## `three slashes` as `Rend` — so their job is scanning and stat-channel colour, not naming.
+## The lookup is `UiTheme.ability_texture()` (and `UiTheme.ability_icon()` when you want the whole
+## control): a missing file returns null and the caller simply renders the word, which is the
+## `portrait()` degrade pattern — never a layout jump when an import fails.
+##
+## ⚠️ IT WAS A PRIVATE COPY IN THIS FILE UNTIL ROUND 21's INTEGRATION, alongside two others in
+## `stable_ui.gd` and — via a cross-screen call into this file — `lab_ui.gd`. Three loaders for one
+## asset folder, all authored in the same round the icons first reached a meta screen.
 
 
 func _bequest_card() -> Control:
@@ -591,6 +670,21 @@ func _bequest_card() -> Control:
 	col.add_child(UiTheme.heading("%s × %s — the bequest" % [a.species_name, b.species_name], 2))
 	col.add_child(UiTheme.body_text(
 		"Three choices, and the exact monster they produce is shown below before you pay.", "secondary"))
+
+	# ⚠️ THE FOAL IS THE PRODUCT AND IT WAS BELOW THE FOLD, RENDERED AS A TABLE. Read off
+	# `A_comfortable/09_breeding.png` and `..._end.png`: the pairing's three creatures never appear
+	# together anywhere on the page — parent A and parent B are two 88px thumbnails in two separate
+	# stacked rows, and the child arrives 400px further down as a column of numbers headed by a
+	# 56px face. `CLAUDE.md` calls this half the vision ("knowing WHICH monster to make is the
+	# skill") and the most emotionally loaded thing the game does; it read as a spreadsheet diff.
+	# The banner puts the three faces on one line, at the size the art was drawn for, above the
+	# three chips that change the third one. Everything in it is already-computed live data.
+	#
+	# ⚠️ IT IS BUILT FROM THE SAME `child` THE PREVIEW AND THE COMMIT USE. `_make_child` is called
+	# ONCE here and handed to both, so the face in the banner and the numbers in the grid cannot
+	# come from two different rolls of the same pairing.
+	var child = _make_child(a, b, "")
+	col.add_child(_pairing_banner(a, b, child))
 
 	# 1 — the LINE. Species carries body, art, innates and the training aptitude the child will
 	# live under, so this is the single largest decision on the screen.
@@ -612,14 +706,14 @@ func _bequest_card() -> Control:
 	var heir_opts: Array = [{"value": "", "text": "no heirloom", "tip": "the child drafts its own kit"}]
 	for opt in _heirloom_options(a, b):
 		heir_opts.append({"value": opt["id"],
-			"text": "%s" % opt["name"],
+			"text": "%s" % opt["name"], "icon_id": str(opt["id"]),
 			"tip": "%s's %s — dormant until the heir reaches %s %d" % [
 				opt["from"], opt["type"], opt["stat"], int(opt["at"])]})
 	col.add_child(_chip_row("The move it is BORN knowing (dormant until it matches its parent)",
 		heir_opts, _heirloom_id, func(v): _heirloom_id = v; _refresh()))
 
 	col.add_child(HSeparator.new())
-	col.add_child(_child_preview(a, b))
+	col.add_child(_child_preview(a, b, child))
 
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(0, 40)
@@ -668,7 +762,7 @@ func _lineage_grid(a, b, child) -> Control:
 		grid.add_child(head)
 
 	for s in STATS:
-		var lbl := _cell("%s%s" % [s, " ◆" if s == _emphasis else ""], "secondary", 80)
+		var lbl := _cell("%s%s" % [s, " •" if s == _emphasis else ""], "secondary", 80)
 		if s == _emphasis:
 			lbl.add_theme_color_override("font_color", UiTheme.GOLD)
 		grid.add_child(lbl)
@@ -692,8 +786,86 @@ func _cell(text: String, tier: String, width: int) -> Label:
 	return l
 
 
-func _child_preview(a, b) -> Control:
-	var child = _make_child(a, b, "")
+## ── THE MATING PEN ────────────────────────────────────────────────────────────────────────────
+## Three creatures on one line, at portrait scale: the two you preserved, and the one they make.
+## Nothing here is computed — every value is read off the instances the caller already built.
+##
+## ⚠️ `×` IS USED AND `→` IS NOT, ON PURPOSE. Probed against the packaged Open Sans SemiBold
+## (`docs/POLISH_DIRECTION.md` §2): U+00D7 is in the face, U+2192 is not — it renders on Windows
+## only because a system font supplies it. The parents-to-foal step is therefore the WORD "makes",
+## not an arrow. No new glyph enters this file without that check.
+func _pairing_banner(a, b, child) -> Control:
+	var panel := PanelContainer.new()
+	var sb := UiTheme.panel_style("default", UiTheme.BORDER)
+	sb.bg_color = UiTheme.SURFACE
+	sb.content_margin_top = UiTheme.SPACE_MD
+	sb.content_margin_bottom = UiTheme.SPACE_MD
+	panel.add_theme_stylebox_override("panel", sb)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	panel.add_child(row)
+
+	row.add_child(_banner_face(a, "parent A", 104, false))
+	row.add_child(_joiner("×"))
+	row.add_child(_banner_face(b, "parent B", 104, false))
+	row.add_child(_joiner("makes"))
+	row.add_child(_banner_face(child, "Gen %d · potential ×%.2f" % [child.generation, child.potential], 132, true))
+	return panel
+
+
+func _banner_face(mi, caption: String, px: int, is_foal: bool) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var frame := PanelContainer.new()
+	var fsb := UiTheme.panel_style("raised" if is_foal else "default", UiTheme.GOLD if is_foal else UiTheme.BORDER)
+	fsb.set_border_width_all(3 if is_foal else 1)
+	frame.add_theme_stylebox_override("panel", fsb)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	frame.add_child(_portrait(mi.species_id, mi.species_name, Vector2(px, px)))
+	col.add_child(frame)
+
+	var nm := Label.new()
+	nm.text = mi.species_name
+	nm.autowrap_mode = TextServer.AUTOWRAP_OFF
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	nm.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING if is_foal else UiTheme.SIZE_BODY)
+	nm.add_theme_color_override("font_color", UiTheme.GOLD if is_foal else UiTheme.TEXT_PRIMARY)
+	col.add_child(nm)
+
+	var cls := Label.new()
+	cls.text = mi.class_name_
+	cls.autowrap_mode = TextServer.AUTOWRAP_OFF
+	cls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cls.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
+	cls.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
+	col.add_child(cls)
+
+	var cap := Label.new()
+	cap.text = caption
+	cap.autowrap_mode = TextServer.AUTOWRAP_OFF
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+	cap.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+	col.add_child(cap)
+	return col
+
+
+func _joiner(text: String) -> Control:
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", UiTheme.SIZE_SUBHEADING)
+	l.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return l
+
+
+func _child_preview(a, b, child) -> Control:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default"))
 	var col := VBoxContainer.new()
@@ -728,24 +900,44 @@ func _child_preview(a, b) -> Control:
 	# this project's named signature failure. The comparison to a bought body is on the card for
 	# the same reason the market's stat total is.
 	var wpy: float = float(WeekLib.WEEKS_PER_YEAR)
+	# ⚠️ ONE GOLD PARAGRAPH, NOT THREE. `docs/POLISH_DIRECTION.md` §1.1 measures GOLD against
+	# CAUTION at 1.023:1 — one colour under two names — and counts this file at 13 amber text
+	# references against 2 greys. When the heading ink, the emphasis ink and the warning ink are
+	# the same value, nothing on the page is emphasised. Potential keeps the gold because it is the
+	# one thing on this card training can never buy; the lifespan gift and the bequest drop to
+	# TEXT_PRIMARY, which is BRIGHTER than gold and therefore loses no emphasis at all — it only
+	# stops competing.
 	var span := UiTheme.body_text(
 		"Lives %.1f years to its parent's %.1f (+%.1f a generation, ceiling %.0f). That is %d more trainable weeks than a monster bought off the market, which arrives already %d weeks old. Training is bounded by the CLOCK, not the ceiling — the line's real gift is time." % [
 			child.lifespan_years, maxf(a.lifespan_years, b.lifespan_years), LIFESPAN_STEP_YEARS,
 			MAX_LIFESPAN_YEARS,
 			int(round((child.lifespan_years - 8.0) * wpy)) + 48, 48], "primary")
-	span.add_theme_color_override("font_color", UiTheme.GOLD)
 	col.add_child(span)
 
-	col.add_child(UiTheme.body_text(_kit_line(child), "secondary"))
+	col.add_child(_kit_row(child))
 	if child.heirloom_move_id != "":
 		var h: Dictionary = child.heirloom_move()
+		# The bequeathed move gets its authored icon, at the size the theme reserves for an inline
+		# mark — beside the sentence that names it, never instead of it.
+		var hrow := HBoxContainer.new()
+		hrow.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+		var htex: Texture2D = UiTheme.ability_texture(child.heirloom_move_id)
+		if htex != null:
+			var ic := TextureRect.new()
+			ic.texture = htex
+			ic.custom_minimum_size = Vector2(32, 32)
+			ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			ic.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			hrow.add_child(ic)
 		var line := UiTheme.body_text(
-			"☆ %s is bequeathed — it holds a slot from birth at %d%% power and a longer cooldown, and awakens to its parent's full version when the heir reaches %s %d (its parent's value today). The child hatches at %s %d." % [
+			"%s is bequeathed — it holds a slot from birth at %d%% power and a longer cooldown, and awakens to its parent's full version when the heir reaches %s %d (its parent's value today). The child hatches at %s %d." % [
 				h.get("name", "?"), int(MonsterInstanceScript.HEIRLOOM_DORMANT_MULT * 100),
 				child.heirloom_stat, int(child.heirloom_awaken_at),
 				child.heirloom_stat, int(child.stats.get(child.heirloom_stat, 0))], "primary")
-		line.add_theme_color_override("font_color", UiTheme.GOLD)
-		col.add_child(line)
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hrow.add_child(line)
+		col.add_child(hrow)
 
 	# ⚠️ SAY WHAT THE MARKET WOULD HAVE GIVEN. The measured failure of the old screen was that
 	# 300g bought a monster weaker than a wild recruit and nothing on the page said so. The

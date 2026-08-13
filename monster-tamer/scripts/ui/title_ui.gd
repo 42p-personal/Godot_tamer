@@ -69,9 +69,24 @@ func _build_ui() -> void:
 	else:
 		add_child(_fallback_background())
 
-	# Scrim so the wordmark and menu read over ANY background, painted or fallback.
+	## ⚠️ A FLAT 40% SCRIM DIMS THE ART EVERYWHERE AND GUARANTEES LEGIBILITY NOWHERE, AND THAT IS
+	## EXACTLY THE TRADE THIS SCREEN WAS MAKING. The whole painting was darkened by 40% — the sky,
+	## the crowd, the far stands, all of it — and the tagline was STILL drawn in GOLD over the
+	## brightest region of the image, which is the least legible text in the game.
+	##
+	## Two layers instead of one, and they pull in opposite directions on purpose:
+	##   * a LEFT PLATE — near-opaque where the type lives, ramping to nothing by 72% across. The
+	##     column the wordmark, tagline, career card and menu occupy now sits on a known dark
+	##     ground rather than on whatever the art happens to be doing behind it, so contrast is a
+	##     property of the composition instead of a hope about the painting.
+	##   * a global scrim CUT FROM 0.40 TO 0.16, so the right two-thirds of the key art — the
+	##     stands, the sunset, the crowd — is materially BRIGHTER than it was before this change.
+	## Net: the art reads better and the type reads better. That is the whole point of a plate.
+	add_child(_plate(Vector2(0, 0), Vector2(0, 1), [0.30, 0.62, 1.0], [0.0, 0.55, 0.90]))
+	add_child(_plate(Vector2(0, 0), Vector2(1, 0), [0.0, 0.30, 0.58], [0.62, 0.50, 0.0]))
+
 	var scrim := ColorRect.new()
-	scrim.color = Color(0.03, 0.03, 0.05, 0.4)
+	scrim.color = Color(0.03, 0.03, 0.05, 0.16)
 	scrim.anchor_right = 1; scrim.anchor_bottom = 1
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(scrim)
@@ -100,10 +115,38 @@ func _build_ui() -> void:
 	## is a `SIZE_POSTER` token in theme.gd (integrator note, round 20) rather than a keyboard
 	## number here. Until that lands: one multiple of one token, so a probe reading 64 can see a
 	## decision and not a fifth invented size.
-	word.add_theme_font_size_override("font_size", UiTheme.SIZE_DISPLAY * 2)
+	word.add_theme_font_size_override("font_size", UiTheme.SIZE_POSTER)
 	word.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
+	## ⚠️ TRACKING IS NOT A SIZE, AND IT IS THE ONLY DISPLAY TREATMENT AVAILABLE UNTIL A FACE IS
+	## PACKAGED. `docs/POLISH_DIRECTION.md` C5 is right that the wordmark rendering in the engine's
+	## default face is the most direct cause of the prototype impression, and it is right that the
+	## fix is a font file nobody has approved yet. What IS available without one is the other half
+	## of a wordmark treatment: letter-spacing. `FontVariation.spacing_glyph` widens
+	## `MONSTER TAMER` from 538px to 610px at this size (measured on the 4.7.1 binary), which is
+	## the difference between a sentence set large and a logotype.
+	##
+	## ⚠️ AND IT MUST STAY ONE LABEL. The obvious alternative — one Label per letter in an HBox with
+	## a separation constant — would give tracking too, and would take `_probe_house.gd`'s
+	## off-scale count from 1 to 13 for a single unchanged wordmark. The round's tripwire is ≤1.
+	word.add_theme_font_override("font", UiTheme.display_font(8))
 	_ink_over_art(word)
 	vbox.add_child(word)
+
+	## The rule under the wordmark. A hairline of the brand ink is the cheapest possible piece of
+	## poster furniture: it terminates the logotype, sets the left column's measure, and gives the
+	## tagline something to hang from instead of floating in the middle of a painting.
+	var rule := ColorRect.new()
+	rule.color = UiTheme.GOLD
+	rule.custom_minimum_size = Vector2(340, 3)
+	rule.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var rule_gap := Control.new()
+	rule_gap.custom_minimum_size = Vector2(0, UiTheme.SPACE_XS)
+	vbox.add_child(rule_gap)
+	vbox.add_child(rule)
+	var rule_gap2 := Control.new()
+	rule_gap2.custom_minimum_size = Vector2(0, UiTheme.SPACE_SM)
+	vbox.add_child(rule_gap2)
 
 	var tagline := Label.new()
 	tagline.text = "You run the stable. The stable fights."
@@ -141,9 +184,9 @@ func _build_ui() -> void:
 	## cannot.
 	var has_save: bool = not saved.is_empty()
 
-	continue_btn = _menu_button(_continue_label(saved), has_save)
+	continue_btn = _menu_button(_continue_label(saved), has_save, 52 if has_save else 44)
 	continue_btn.pressed.connect(_on_continue)
-	var new_btn := _menu_button("New Career", not has_save)
+	var new_btn := _menu_button("New Career", not has_save, 52 if not has_save else 44)
 	new_btn.pressed.connect(_on_new_career)
 
 	if has_save:
@@ -160,12 +203,12 @@ func _build_ui() -> void:
 	# `godot --path . scenes/watch.tscn` line in chat, which is not something anyone should have to
 	# keep, remember or type to look at their own game. If a thing is worth watching it belongs on
 	# the screen the game opens on.
-	var watch_btn := _menu_button("Watch a Battle", false)
+	var watch_btn := _menu_button("Watch a Battle", false, 40)
 	watch_btn.tooltip_text = "A 5v5 exhibition on the four_pillar arena — no career, no saving."
 	watch_btn.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/watch.tscn"))
 	menu.add_child(watch_btn)
 
-	var quit_btn := _menu_button("Quit", false)
+	var quit_btn := _menu_button("Quit", false, 40)
 	quit_btn.pressed.connect(func(): get_tree().quit())
 	menu.add_child(quit_btn)
 
@@ -179,10 +222,61 @@ func _build_ui() -> void:
 ## Every menu button, one shape. `primary` is the gold call-to-action register from theme.gd —
 ## exactly the styling the ending's "Back to the Town" already uses, so the two screens that
 ## bookend the game agree about what a primary action looks like.
-func _menu_button(label: String, primary: bool) -> Button:
+## ⚠️ TRACKING COMES FROM `UiTheme.display_font(px)` AND FROM NOWHERE ELSE. `base_font` is
+## `ThemeDB.fallback_font` deliberately: no screen sets a font of its own, so tracking must wrap
+## whatever face the project ends up packaging (`project.godot` sets none today — see
+## `docs/POLISH_DIRECTION.md` §2). The moment C5 lands a real face this keeps working with no edit.
+##
+## ⚠️ FIVE SCREENS HAND-ROLLED THIS IN ROUND 21 WHILE THE THEME ALREADY PUBLISHED IT, and the
+## published one CACHES (a FontVariation is a Resource; the copies allocated one per label).
+## Round 21's integration deleted all five. Tracking is not a font SIZE, so `_probe_house.gd`
+## cannot see it — which is exactly why it must not be allowed to drift back out again.
+
+
+## ONE DIRECTIONAL PLATE. Two of these are stacked at the call site — a vertical one that carries
+## most of the cover and a shallower horizontal one — and together they read as light falling off
+## into the corner the type occupies rather than as a black rectangle laid over a painting.
+##
+## ⚠️ THE FIRST VERSION OF THIS WAS A SINGLE FULL-HEIGHT LEFT COLUMN AT 0.96 ALPHA AND THE CAPTURE
+## KILLED IT. It did clear the legibility bar, and it turned the left third of the best asset in
+## the project into flat black with a visible vertical seam where the ramp ran out — trading one
+## crude answer (dim everything by 40%) for another (delete a third of it). The seam is the tell:
+## a plate you can SEE the edge of is a rectangle, not lighting. Two gentler gradients crossing in
+## the corner have no edge anywhere, and the region that ends up darkest is exactly the region the
+## type sits in. Caught by reading the capture, which is the only reason it was caught.
+func _plate(from: Vector2, to: Vector2, offsets: Array, alphas: Array) -> TextureRect:
+	var g := Gradient.new()
+	var offs := PackedFloat32Array()
+	var cols := PackedColorArray()
+	for i in range(offsets.size()):
+		offs.append(float(offsets[i]))
+		cols.append(Color(0.02, 0.02, 0.03, float(alphas[i])))
+	g.offsets = offs
+	g.colors = cols
+	var tex := GradientTexture2D.new()
+	tex.gradient = g
+	tex.fill = GradientTexture2D.FILL_LINEAR
+	tex.fill_from = from
+	tex.fill_to = to
+	tex.width = 256
+	tex.height = 256
+	var rect := TextureRect.new()
+	rect.anchor_right = 1; rect.anchor_bottom = 1
+	rect.texture = tex
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rect
+
+
+## ⚠️ HEIGHT IS THE HIERARCHY HERE, AND IT IS INFORMATION RATHER THAN DECORATION. Four identical
+## 44px plates said the four actions were equally likely; they are not. Continue (or New Career on
+## a cold boot) is what the overwhelming majority of launches want, Watch is a curiosity and Quit
+## is an exit. The primary plate is 52px and the tertiary pair 40px — the same ordering the label
+## text already states, now visible before it is read.
+func _menu_button(label: String, primary: bool, height: int = 44) -> Button:
 	var btn := Button.new()
 	btn.text = label
-	btn.custom_minimum_size = Vector2(0, 44)
+	btn.custom_minimum_size = Vector2(0, height)
 	btn.focus_mode = Control.FOCUS_ALL
 	btn.clip_text = true
 	var kind: String = "primary" if primary else "secondary"

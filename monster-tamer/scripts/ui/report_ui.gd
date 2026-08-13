@@ -944,6 +944,14 @@ func _graded_claims(tactics_apply: bool) -> Array:
 	return grade_read(claims, _result, _team_a, _team_b)
 
 
+## ⚠️ ONE `FontVariation` FOR TRACKING, AND TRACKING IS NOT A SIZE. The payoff line of the whole
+## design has to LAND, and the two ways to make a line land are size and spacing. Size is spent —
+## `SIZE_DISPLAY` already belongs to VICTORY/DEFEAT one line above, and a second display-register
+## label would put the round's off-scale count up for a screen that is already on the scale. So
+## the verdict gets the other half: letter-spacing, which reads as deliberate at a distance and
+## costs nothing the probe measures. It comes from `UiTheme.display_font(px)` — see `title_ui.gd`.
+
+
 func _verdict_block(tactics_apply: bool, graded: Array) -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", UiTheme.SPACE_XS)
@@ -964,6 +972,38 @@ func _verdict_block(tactics_apply: bool, graded: Array) -> Control:
 		result_text = "%s DEFEAT" % (Art.team_identity(1))["badge"]
 		result_col = UiTheme.DANGER
 
+	## ⚠️ THE PAYOFF IS A PLATE NOW, NOT FOUR LOOSE LINES AT THE TOP OF A STACK. Every element of
+	## this screen used to be a sibling in one column at one density: the result, the verdict, the
+	## turning point, the biggest hit, the team columns and the closing advice, in the same rhythm,
+	## on the same ground. The screen the whole "observation is the reward" promise is cashed on
+	## therefore had no focal point — the loudest thing on it was loud only because of a font size.
+	##
+	## The result and the read verdict are ONE argument ("this happened, and here is whether your
+	## plan was the reason") and they are now one bordered band, tinted by the verdict's own tone,
+	## sitting above the evidence rather than in it. Nothing is removed, no branch is collapsed and
+	## no sentence is rewritten — `read_verdict()` is untouched, including the branch this project
+	## considers its most instructive result ("YOUR READ WAS RIGHT. YOU LOST ANYWAY."), which reads
+	## far harder inside a CAUTION-edged plate than it did as the fourth line of a wall of text.
+	## ⚠️ GRADED ONCE, READ ONCE — see `_graded_claims()`'s ⚠️. The verdict is now needed BEFORE the
+	## result line is drawn (its tone tints the band the result sits in), so it is computed here and
+	## reused below rather than computed a second time further down.
+	var verdict: Dictionary = read_verdict(graded, str(_result.get("winner", "draw")),
+		_team_a, _team_b)
+	var tone: String = str(verdict.get("tone", "flat"))
+	var hero := PanelContainer.new()
+	hero.add_theme_stylebox_override("panel",
+		UiTheme.panel_style("raised", _tone_colour(tone)))
+	box.add_child(hero)
+	var hv := VBoxContainer.new()
+	hv.add_theme_constant_override("separation", UiTheme.SPACE_XS)
+	hero.add_child(hv)
+
+	# The result and the clock on ONE line: they are the same fact seen twice, and stacking them
+	# spent a whole row on eight characters.
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", UiTheme.SPACE_MD)
+	hv.add_child(top)
+
 	var result_lbl := Label.new()
 	result_lbl.text = result_text
 	# ⚠️ KEPT LOUD, TAKEN FROM THE SCALE. Round 18 judged "leading with VICTORY at display size" an
@@ -971,14 +1011,17 @@ func _verdict_block(tactics_apply: bool, graded: Array) -> Control:
 	# keyboard, not a register. SIZE_DISPLAY is the same register the title screen's wordmark uses.
 	result_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_DISPLAY)
 	result_lbl.add_theme_color_override("font_color", result_col)
-	box.add_child(result_lbl)
+	result_lbl.add_theme_font_override("font", UiTheme.display_font(3))
+	top.add_child(result_lbl)
 
 	var sub := Label.new()
 	sub.text = "%.1fs — %d vs %d standing" % [float(_result.get("duration", 0.0)),
 		int(_result.get("survivorsA", 0)), int(_result.get("survivorsB", 0))]
 	sub.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY)
 	sub.add_theme_color_override("font_color", UiTheme.TEXT_SECONDARY)
-	box.add_child(sub)
+	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sub.size_flags_vertical = Control.SIZE_SHRINK_END
+	top.add_child(sub)
 
 	# ⚠️ THE CLOCK, ON THE SCREEN THE PLAYER SEES MOST. Round 16 measured a fight advantage
 	# compounding to 4.03x and dying against a boolean; round 17's answer is to score PACE instead
@@ -993,21 +1036,29 @@ func _verdict_block(tactics_apply: bool, graded: Array) -> Control:
 		pace_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		pace_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 		pace_lbl.add_theme_color_override("font_color", Pace.pace_color(snap))
-		box.add_child(pace_lbl)
+		hv.add_child(pace_lbl)
 
-	box.add_child(HSeparator.new())
+	# ⚠️ A TONE-COLOURED RULE, NOT AN `HSeparator`. Inside the band the divider is doing a second
+	# job — it is the join between "what happened" and "was your plan the reason", the two halves
+	# of the one argument — and a default separator says only "these are different rows". Same ink
+	# as the band's edge, so the plate reads as one object.
+	var rule := ColorRect.new()
+	rule.color = _tone_colour(tone)
+	rule.custom_minimum_size = Vector2(0, 2)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hv.add_child(rule)
 
 	# ── 2. WAS THE PLAN THE REASON. ──────────────────────────────────────────────────────────
 	var committed: Dictionary = TacticsScript.committed if tactics_apply else {}
 	var stored: Dictionary = committed.get("read", {})
 	var plan_a: Dictionary = committed.get("planA", {})
-	var verdict: Dictionary = read_verdict(graded, str(_result.get("winner", "draw")), _team_a, _team_b)
 
 	var eyebrow := Label.new()
 	eyebrow.text = "THE READ"
 	eyebrow.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
 	eyebrow.add_theme_color_override("font_color", UiTheme.GOLD)
-	box.add_child(eyebrow)
+	eyebrow.add_theme_font_override("font", UiTheme.display_font(4))
+	hv.add_child(eyebrow)
 
 	# ⚠️ SIZED BY TONE, AND THAT IS THE FIX RATHER THAN A NEW SENTENCE. `docs/META_UI_DIRECTION.md`
 	# C3 says "fix the hierarchy, not the sentence" — so a verdict that ANSWERS the read is a
@@ -1015,21 +1066,26 @@ func _verdict_block(tactics_apply: bool, graded: Array) -> Control:
 	# reports our own inability to answer it ("flat" tone: NO READ TO GRADE / THE READ COULD NOT BE
 	# GRADED) drops to body size. It still says the same honest thing in the same words; it just
 	# stops being the loudest thing in a fight the player won.
-	var flat: bool = str(verdict.get("tone", "flat")) == "flat"
+	# ⚠️ AND THE TRACKING IS SIZED BY TONE TOO, FOR THE SAME REASON THE SIZE IS. A verdict that
+	# answers the read is set with air in it; the "flat" apology stays at body size AND at normal
+	# spacing, so the screen never looks proud of its own inability to grade.
+	var flat: bool = tone == "flat"
 	var headline := Label.new()
 	headline.text = str(verdict.get("headline", ""))
 	headline.autowrap_mode = TextServer.AUTOWRAP_WORD
 	headline.add_theme_font_size_override("font_size", UiTheme.SIZE_BODY if flat else UiTheme.SIZE_HEADING)
-	headline.add_theme_color_override("font_color", _tone_colour(str(verdict.get("tone", "flat"))))
-	box.add_child(headline)
+	headline.add_theme_color_override("font_color", _tone_colour(tone))
+	if not flat:
+		headline.add_theme_font_override("font", UiTheme.display_font(2))
+	hv.add_child(headline)
 
-	box.add_child(_line(str(verdict.get("sub", "")), UiTheme.SIZE_BODY, UiTheme.TEXT_SECONDARY))
+	hv.add_child(_line(str(verdict.get("sub", "")), UiTheme.SIZE_BODY, UiTheme.TEXT_SECONDARY))
 
 	var gp_id: String = str(stored.get("gameplan", ""))
 	if gp_id != "":
 		var cl := counter_line(gp_id, plan_a)
 		if cl != "":
-			box.add_child(_line(cl, UiTheme.SIZE_CAPTION, UiTheme.TEXT_MUTED))
+			hv.add_child(_line(cl, UiTheme.SIZE_CAPTION, UiTheme.TEXT_MUTED))
 
 	for c in graded:
 		box.add_child(_claim_row(c))

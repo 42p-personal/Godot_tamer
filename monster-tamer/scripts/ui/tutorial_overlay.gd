@@ -51,6 +51,7 @@ const MUTED_SCENES := ["arena3d", "arena", "battle", "report", "sandbox", "tacti
 var _strip: PanelContainer = null
 var _title: Label = null
 var _body: Label = null
+var _skip: Button = null
 var _poll_accum: float = 0.0
 var _warned: Dictionary = {}
 
@@ -145,6 +146,7 @@ func _drop_strip() -> void:
 	_strip = null
 	_title = null
 	_body = null
+	_skip = null
 
 
 func _build_strip(host: VBoxContainer) -> void:
@@ -173,6 +175,7 @@ func _build_strip(host: VBoxContainer) -> void:
 	col.add_child(_body)
 
 	var skip := Button.new()
+	_skip = skip
 	skip.text = "Skip the guide"
 	skip.focus_mode = Control.FOCUS_ALL
 	skip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -215,15 +218,40 @@ func _refresh() -> void:
 		_drop_strip()
 		_build_strip(host)
 
-	if _step_is_actionable(step):
+	# ⚠️ TWO REGISTERS, BECAUSE THE POINTER IS NOT THE INSTRUCTION AND MUST NOT COST WHAT ONE COSTS.
+	# Round 18 made the guide HONEST — a step declares `where` it can be followed, so the food hint
+	# stopped instructing the player on the Title screen. But honest and cheap are different
+	# problems, and it stayed EXPENSIVE: the same two-line gold plate, ~55px, at the top of the
+	# fold, on nine screens out of thirteen. Round 21's captures caught it saying "Decide what it
+	# eats / This one happens in Training" above the Tournament masthead, the Market plate, the
+	# Breeding pairing and the resolved week on Feeding — where the instruction is not merely
+	# elsewhere, it is not actionable at all because the week has already resolved. All three
+	# builders flagged it independently and none of them owned this file.
+	#
+	# So: the room that CAN act on the step gets the full plate. Every other room gets one flat
+	# line. The guide keeps saying the same true thing; it stops charging the fold to say it.
+	var actionable := _step_is_actionable(step)
+	_body.visible = actionable
+	_title.add_theme_font_size_override(
+		"font_size", UiTheme.SIZE_SUBHEADING if actionable else UiTheme.SIZE_BODY)
+	# ⚠️ `flat`, not `raised`. Elevation is information: what is raised is what is primary, and a
+	# signpost to another room is the least primary thing on any page it appears on. A page where
+	# everything floats is as flat as one where nothing does.
+	_strip.add_theme_stylebox_override("panel", UiTheme.panel_style(
+		"raised" if actionable else "flat", UiTheme.GOLD if actionable else UiTheme.BORDER_FAINT))
+	if is_instance_valid(_skip):
+		_skip.text = "Skip the guide" if actionable else "Skip"
+		_skip.custom_minimum_size = Vector2(180 if actionable else 90, 0)
+
+	if actionable:
 		_title.text = str(step.get("title", ""))
 		_body.text = str(step.get("body", ""))
 	else:
 		# Real step, wrong room: point at the right one instead of instructing here. The full
 		# instruction is deliberately NOT printed — that is round 18's honesty fix and it stands.
 		var at := str(step.get("at", ""))
-		_title.text = "Guide — %s" % str(step.get("title", ""))
-		_body.text = ("This one happens in %s." % at) if at != "" else "Not on this screen."
+		_title.text = ("Guide · your next step is in %s" % at) if at != "" \
+			else "Guide · your next step is on another screen"
 
 
 ## Does this step's instruction describe something the player can do on THIS screen?

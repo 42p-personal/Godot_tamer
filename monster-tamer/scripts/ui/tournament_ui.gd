@@ -105,10 +105,32 @@ func _build() -> void:
 	page.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	margin.add_child(page)
 
-	page.add_child(UiTheme.heading("Tournaments", 1))
+	## ⚠️ A MASTHEAD, NOT A PAGE TITLE — this is the one screen in the meta game that is a
+	## COMPETITION, and it was introducing itself the same way the Ranch Shop does: a heading, a
+	## grey line, a default separator. The three changes here are all typographic and none of them
+	## adds a size to the scale:
+	##   * the title and the state line share a ROW, so the fold gains a line and the two facts
+	##     that belong together (which competition, and what you can field at it) are read together;
+	##   * the title is TRACKED, which is what makes 22px read as signage rather than as a label;
+	##   * the separator becomes a GOLD RULE, the same device the title screen uses under its
+	##     wordmark, so the two screens agree about what "this is the top of something" looks like.
+	var mast := HBoxContainer.new()
+	mast.add_theme_constant_override("separation", UiTheme.SPACE_LG)
+	var mast_title := UiTheme.heading("TOURNAMENTS", 1)
+	mast_title.add_theme_font_override("font", UiTheme.display_font(5))
+	mast.add_child(mast_title)
 	_header = UiTheme.body_text("", "secondary")
-	page.add_child(_header)
-	page.add_child(HSeparator.new())
+	_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_header.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	mast.add_child(_header)
+	page.add_child(mast)
+
+	var rule := ColorRect.new()
+	rule.color = UiTheme.GOLD
+	rule.custom_minimum_size = Vector2(0, 2)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(rule)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -247,8 +269,15 @@ func _gaps_panel(parent: VBoxContainer) -> void:
 		var line := UiTheme.body_text(GapVoice.gap_sentence(g), "secondary")
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		## ⚠️ THE SENTENCE IS NOT A SECOND AMBER. `GOLD` and `CAUTION` measure 1.023:1 apart —
+		## `docs/POLISH_DIRECTION.md` §1.1 — so a blocking gap written in CAUTION was, on screen,
+		## exactly the same colour as the "What your stable lacks" heading two rows above it, and
+		## this screen printed amber ink 25 times against 13 greys. The severity is already carried
+		## by the ▲ mark beside it (which KEEPS its CAUTION, because a mark is a mark); the sentence
+		## takes the primary ink and is emphatic by being brighter than the secondary lines it sits
+		## among, not by being a second heading colour.
 		if blocking:
-			line.add_theme_color_override("font_color", UiTheme.CAUTION)
+			line.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
 		row.add_child(line)
 
 
@@ -285,10 +314,20 @@ func _ladder_board(parent: VBoxContainer) -> void:
 
 	parent.add_child(UiTheme.heading("The Ladder", 3))
 
+	## ⚠️ THE BEST INFORMATION DESIGN ON THIS SCREEN WAS DRAWN ON THE PAGE ITSELF. Eleven rungs,
+	## every titleholder named, your marker and the pace-setter's — and it sat directly on the
+	## SURFACE fill with nothing around it, so the one element that is genuinely a BOARD read as
+	## eleven loose columns of caption text. A panel is the whole fix: it is the same strip, given
+	## an edge and a ground, and it costs one container. ELEVATION IS INFORMATION — this is the
+	## screen's subject, so it is the thing that gets raised.
+	var board := PanelContainer.new()
+	board.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", UiTheme.BORDER))
+	parent.add_child(board)
+
 	var strip := HBoxContainer.new()
 	strip.add_theme_constant_override("separation", 3)
 	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(strip)
+	board.add_child(strip)
 
 	for i in range(n):
 		var taken: bool = i < won.size() and bool(won[i])
@@ -346,6 +385,12 @@ func _ladder_board(parent: VBoxContainer) -> void:
 		pace.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		pace.add_theme_color_override("font_color", Pace.pace_color(snap))
 		parent.add_child(pace)
+
+
+## ⚠️ TRACKING IS NOT A SIZE — it does not touch `TOKEN_FONT_SIZES` and the probe cannot see it,
+## which is the point: the display treatment this screen needed was spacing, not another number.
+## It comes from `UiTheme.display_font(px)`; see the ⚠️ in `title_ui.gd` for why no screen may
+## hand-roll its own again.
 
 
 func _ladder_cell_label(text: String, tint: Color, size: int) -> Label:
@@ -462,8 +507,9 @@ func _season_strip(parent: VBoxContainer) -> void:
 		parent.add_child(none)
 	else:
 		for ln in lines:
+			# Primary ink, no override — see the ⚠️ in `_gaps_panel`. The ★ in the month strip above
+			# is what marks a marquee; the sentence does not need to be amber to say so as well.
 			var l2 := UiTheme.body_text(str(ln), "primary")
-			l2.add_theme_color_override("font_color", UiTheme.CAUTION)
 			l2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			parent.add_child(l2)
 
@@ -565,8 +611,10 @@ func _cup_card(idx: int) -> Control:
 		var spacer := Control.new()
 		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		title_row.add_child(spacer)
+		# `heading()` is already GOLD. The override to CAUTION made this the only heading on the
+		# screen in a DIFFERENT amber that measures 1.023:1 from the one every other heading uses —
+		# a distinction nobody can see, costing the screen its one heading ink.
 		var m := UiTheme.heading("★ %s — THIS MONTH ONLY" % CupRun.marquee_name(idx), 3)
-		m.add_theme_color_override("font_color", UiTheme.CAUTION)
 		m.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		title_row.add_child(m)
 
@@ -620,7 +668,11 @@ func _cup_card(idx: int) -> Control:
 		str(champ.get("read", "")),
 		"  (you have taken this title off them before — they have trained since)" if beaten else ""],
 		"primary")
-	champ_line.add_theme_color_override("font_color", UiTheme.GOLD if not beaten else UiTheme.TEXT_SECONDARY)
+	## ⚠️ GOLD IS THE CARD'S TITLE INK, AND A CARD WITH FIVE GOLD LINES HAS NO TITLE. The champion
+	## read and the promotion rule are both BODY — the most important body on the card, so they take
+	## the primary ink — and gold is left to do one job here: the cup's name and its entry button.
+	## This is the "amber monotone" `docs/POLISH_DIRECTION.md` §1.2 measured on this exact screen.
+	champ_line.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY if not beaten else UiTheme.TEXT_SECONDARY)
 	champ_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(champ_line)
 
@@ -640,7 +692,7 @@ func _cup_card(idx: int) -> Control:
 		var short_line := UiTheme.body_text(
 			"⚠ Entering short-handed: you field %d against %d, every round. The draw does not shrink to match you."
 			% [mini(have, team_size), team_size], "primary")
-		short_line.add_theme_color_override("font_color", UiTheme.CAUTION)
+		short_line.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
 		short_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(short_line)
 
@@ -655,7 +707,7 @@ func _cup_card(idx: int) -> Control:
 	var promo_text: String = "Beat all %d and the title — and the rank — are yours." % rounds if need >= rounds \
 		else "Win %d of the %d rounds and the RANK is yours; take all %d and so is the TITLE." % [need, rounds, rounds]
 	var promo := UiTheme.body_text(promo_text + " Fall short and you place, and are paid to place.", "primary")
-	promo.add_theme_color_override("font_color", UiTheme.GOLD)
+	promo.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
 	promo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(promo)
 
@@ -667,7 +719,7 @@ func _cup_card(idx: int) -> Control:
 	var blocked: String = Roster.entry_block_reason(Career.min_team_to_enter(idx))
 	if blocked != "":
 		var why := UiTheme.body_text(blocked, "primary")
-		why.add_theme_color_override("font_color", UiTheme.CAUTION)
+		why.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
 		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(why)
 
@@ -763,7 +815,7 @@ func _cleared_cup_row(idx: int) -> Control:
 		btn.text = "Cannot enter"
 		btn.tooltip_text = blocked
 		var why := UiTheme.body_text(blocked, "primary")
-		why.add_theme_color_override("font_color", UiTheme.CAUTION)
+		why.add_theme_color_override("font_color", UiTheme.TEXT_PRIMARY)
 		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		col.add_child(why)
 	elif Career.gold < fee:

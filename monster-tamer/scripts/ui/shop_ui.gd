@@ -47,8 +47,9 @@ const UiTheme = preload("res://scripts/ui/theme.gd")
 const BARN_PRICES := [0, 0, 150, 350, 700, 1300, 2200, 3200]
 const MAX_BARN := 7
 
+
 var _box: VBoxContainer
-var _header: Label
+var _plate_host: VBoxContainer
 
 
 func _ready() -> void:
@@ -84,10 +85,10 @@ func _build() -> void:
 	page.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	margin.add_child(page)
 
-	page.add_child(UiTheme.heading("The Ranch Shop", 1))
-	_header = UiTheme.body_text("", "secondary")
-	page.add_child(_header)
-	page.add_child(HSeparator.new())
+	# The room's signboard — see `UiTheme.room_plate()`. Rebuilt every refresh because the tiles
+	# are live (gold moves the moment a stall is bought).
+	_plate_host = VBoxContainer.new()
+	page.add_child(_plate_host)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -111,8 +112,18 @@ func _build() -> void:
 func _refresh() -> void:
 	for c in _box.get_children():
 		c.queue_free()
-	_header.text = "%d gold · barn holds %d · %s league" % [
-		Career.gold, Career.barn_capacity, Career.current_league_name()]
+	for c in _plate_host.get_children():
+		c.queue_free()
+	var next_price: int = BARN_PRICES[Career.barn_capacity + 1] if Career.barn_capacity + 1 < BARN_PRICES.size() else 0
+	_plate_host.add_child(UiTheme.room_plate("shop", "The Ranch Shop",
+		"The counter where gold turns back into capability. Everything here is permanent and changes what the stable can DO — which is what makes a purse worth winning.",
+		[
+			{"value": "%dg" % Career.gold, "label": "in hand", "tint": UiTheme.GOLD},
+			{"value": "%d / %d" % [Career.barn_capacity, MAX_BARN], "label": "stalls owned"},
+			{"value": ("%dg" % next_price) if Career.barn_capacity < MAX_BARN else "—",
+				"label": "the next stall"},
+			{"value": Career.current_league_name(), "label": "your rung"},
+		]))
 
 	_box.add_child(_barn_card())
 	_box.add_child(_barn_ladder())
@@ -132,7 +143,7 @@ func _barn_card() -> Control:
 
 	col.add_child(UiTheme.heading("Barn extension", 3))
 	col.add_child(UiTheme.body_text(
-		"Room for one more monster. ⚠️ Team leagues need bodies — Bronze fields 3, Platinum fields 5, and a cup you cannot field a team for is a cup you cannot enter.",
+		"Room for one more monster. Team leagues need bodies — Bronze fields 3, Platinum fields 5, and a cup you cannot field a team for is a cup you cannot enter.",
 		"secondary"))
 
 	var cur: int = Career.barn_capacity
@@ -221,7 +232,7 @@ func _barn_ladder() -> Control:
 		cum += price
 		var have: bool = Career.barn_capacity >= n
 		var tier := "muted" if have else ("primary" if n == Career.barn_capacity + 1 else "secondary")
-		var mark := "✓ " if have else ""
+		var mark := "• " if have else ""
 		grid.add_child(_cell("%s%d" % [mark, n], tier, widths[0]))
 		grid.add_child(_cell("%dg" % price, tier, widths[1]))
 		grid.add_child(_cell("%dg" % cum, tier, widths[2]))
@@ -288,7 +299,7 @@ func _licence_card(label: String, price: int, league_req: int, effect: String) -
 
 	if owned:
 		btn.disabled = true
-		btn.text = "✓ Held"
+		btn.text = "Held"
 	elif Career.league_index < league_req:
 		btn.disabled = true
 		btn.text = "Locked — reach %s league (you are %s)" % [req_name, Career.current_league_name()]

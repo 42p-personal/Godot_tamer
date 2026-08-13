@@ -256,15 +256,34 @@ func _v_slack() -> Control:
 	return s
 
 
+## ⚠️ TRACKING IS NOT A SIZE, and it comes from `UiTheme.display_font(px)` — see `title_ui.gd`.
+
+
 func _title_block() -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", UiTheme.SPACE_XS)
 
 	var t := Label.new()
 	t.text = "TAMERS APEX — TAKEN"
+	## ⚠️ THE ROUND-21 BRIEF SAID THIS LINE WAS SET AT HEADING SIZE AND WAS ONE OF THE PROJECT'S TWO
+	## OFF-SCALE LABELS. BOTH HALVES ARE WRONG AND THE INSTRUMENT SAYS SO: it has been
+	## `SIZE_DISPLAY` since round 20 (see the ⚠️ in `_grade_block`, which records the label that
+	## actually WAS off-scale and the round it was brought back on), and `_probe_house.gd` reports
+	## off-scale **1** for the whole project — the title wordmark, on `01_title`, and nothing here.
+	## Taking this to `SIZE_DISPLAY * 2` to "make it a poster" would therefore not be restoring an
+	## intended exception, it would be SPENDING the round's ≤1 tripwire on a screen that is already
+	## on the scale. So the moment comes from spacing and furniture instead: tracking, and the same
+	## gold rule the title screen and the two poster screens now share.
 	t.add_theme_font_size_override("font_size", UiTheme.SIZE_DISPLAY)
+	t.add_theme_font_override("font", UiTheme.display_font(6))
 	t.add_theme_color_override("font_color", UiTheme.GOLD)
 	v.add_child(t)
+
+	var rule := ColorRect.new()
+	rule.color = UiTheme.GOLD
+	rule.custom_minimum_size = Vector2(0, 3)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(rule)
 
 	var c := _career()
 	var champ: Dictionary = {}

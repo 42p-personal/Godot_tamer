@@ -44,13 +44,21 @@ const GRID_COLUMNS := 4
 ## navigate to a working scene; locked ones say why not rather than pretending. "The Stable" is
 ## the Ranch of docs/CORE_LOOP_PORT.md's loop diagram — training, feeding-preview and the roster
 ## all live there.
+##
+## ⚠️ `mark` REPLACED AN EMOJI ON EVERY ROW, AND IT WAS A BUG AS WELL AS A STYLE PROBLEM. These
+## were 🛒 🏟 🥊 🏗️ 🧪 🐎 🏛 — Segoe UI Emoji, a photographic-gradient icon language inside a
+## stylised guild aesthetic (a *pink boxing glove* for Tournament), and `docs/POLISH_DIRECTION.md`
+## §2 proves the packaged Open Sans SemiBold contains none of them. They render on this machine
+## only because a Windows system font is quietly supplying the codepoint; on any other export
+## target they are tofu. `PlaceMark` draws them instead, so the hub's iconography cannot depend on
+## which machine the game was opened on. See `UiTheme.place_mark()` below.
 const LOCATIONS := [
-	{"icon": "🛒", "title": "The Market", "desc": "recruit new partners, release old ones", "real": true, "scene": "res://scenes/market.tscn"},
-	{"icon": "🏟", "title": "The Stable", "desc": "train and manage your monsters", "real": true, "scene": "res://scenes/stable.tscn"},
-	{"icon": "🥊", "title": "Tournament", "desc": "enter the Circuit", "real": true, "scene": "res://scenes/tournament.tscn"},
-	{"icon": "🏗️", "title": "Ranch Shop", "desc": "licences and barn upgrades", "real": true, "scene": "res://scenes/shop.tscn"},
-	{"icon": "🧪", "title": "Lab", "desc": "cryo storage for the bloodline", "real": true, "scene": "res://scenes/lab.tscn"},
-	{"icon": "🐎", "title": "Breeding Ranch", "desc": "raise the next generation", "real": true, "scene": "res://scenes/breeding.tscn"},
+	{"mark": "market", "title": "The Market", "desc": "recruit new partners, release old ones", "real": true, "scene": "res://scenes/market.tscn"},
+	{"mark": "stable", "title": "The Stable", "desc": "train and manage your monsters", "real": true, "scene": "res://scenes/stable.tscn"},
+	{"mark": "tournament", "title": "Tournament", "desc": "enter the Circuit", "real": true, "scene": "res://scenes/tournament.tscn"},
+	{"mark": "shop", "title": "Ranch Shop", "desc": "licences and barn upgrades", "real": true, "scene": "res://scenes/shop.tscn"},
+	{"mark": "lab", "title": "Lab", "desc": "cryo storage for the bloodline", "real": true, "scene": "res://scenes/lab.tscn"},
+	{"mark": "breeding", "title": "Breeding Ranch", "desc": "raise the next generation", "real": true, "scene": "res://scenes/breeding.tscn"},
 	# ⚠️ THIS DOOR SAID `"real": false` — "not yet built" — WHILE THE FEATURE WAS SHIPPED, and it is
 	# `CLAUDE.md`'s named signature failure with the sign flipped. `lab_ui.gd`'s own header states
 	# *"IT IS ALSO THE HALL OF FAME, DELIBERATELY, AND NOT A TROPHY CASE"*: a retired champion is
@@ -59,7 +67,7 @@ const LOCATIONS := [
 	# standing decision rather than a display case. So the door opens on the Lab rather than a
 	# second screen showing the same list — a trophy room next to it would be the duplicate, not
 	# the feature. Renamed with it so the destination is not a surprise.
-	{"icon": "🏛", "title": "Hall of Fame", "desc": "champions enshrined — at the Lab", "real": true, "scene": "res://scenes/lab.tscn"},
+	{"mark": "hall", "title": "Hall of Fame", "desc": "champions enshrined — at the Lab", "real": true, "scene": "res://scenes/lab.tscn"},
 ]
 
 const LOCKED_TOOLTIP := "Not yet built in Godot — the logic still lives in the TypeScript build (docs/META_GAME_DISPOSITION.md §5). Shown so the town reads whole; wired up once it's ported."
@@ -201,10 +209,27 @@ func _build_ui() -> void:
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	doors_col.add_child(grid)
 
+	# ⚠️ THE HUB HAD NO HIERARCHY AND THE INFORMATION TO GIVE IT ONE WAS ALREADY ON THE PAGE.
+	# Seven doors at identical size, weight and colour — the Hall of Fame drawn exactly as loud as
+	# the Market — while two columns to the right the agenda panel had already RANKED them and
+	# printed its top prompt with a button. So the ranking existed and the doors did not know about
+	# it. `_featured_scene()` asks the same `_agenda_items()` the panel asks, so the flagged door and
+	# the panel's button can never point at different rooms.
+	# ⚠️ ONE FLAG, AND THE FIRST AFTER-CAPTURE CAUGHT IT WEARING TWO. `B_thin/02_town.png` showed
+	# THIS WEEK on both the Lab and the Hall of Fame, because the two doors deliberately share
+	# `lab.tscn` (the Hall of Fame IS the Lab — see the ⚠️ on that row) and the match was on the
+	# scene path. Matching a scene is matching a destination; a flag marks a DOOR. `flagged` makes
+	# it structurally impossible for the hub to point at two places at once.
+	var featured: String = _featured_scene()
+	var flagged := false
 	loc_buttons.clear()
 	for loc in LOCATIONS:
 		var forced_disabled: bool = (loc["title"] == "Tournament") and stable_empty
-		var card := _make_location_button(loc, forced_disabled, NO_TEAM_TOOLTIP)
+		var is_featured: bool = (not flagged) and (not forced_disabled) \
+			and featured != "" and str(loc.get("scene", "")) == featured
+		if is_featured:
+			flagged = true
+		var card := _make_location_button(loc, forced_disabled, NO_TEAM_TOOLTIP, is_featured)
 		grid.add_child(card)
 		loc_buttons.append(card)
 	_wire_grid_focus(GRID_COLUMNS)
@@ -453,11 +478,17 @@ func _outclassed_banner() -> Control:
 	row.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	panel.add_child(row)
 
-	var icon := Label.new()
-	icon.text = "⚑" if bad else "🎲"
-	icon.add_theme_font_size_override("font_size", UiTheme.SIZE_HEADING)
-	icon.add_theme_color_override("font_color", accent)
-	row.add_child(icon)
+	# ⚠️ THE GLYPH WAS ⚑ / 🎲 AND BOTH ARE ABSENT FROM THE PACKAGED FONT
+	# (`docs/POLISH_DIRECTION.md` §2). A tinted rule carries the same "this banner is louder"
+	# signal with no font dependency at all, and the non-colour channel is unharmed: the headline
+	# still says OUTCLASSED or unlucky in words.
+	var rule := PanelContainer.new()
+	rule.custom_minimum_size = Vector2(4, 0)
+	var rsb := StyleBoxFlat.new()
+	rsb.bg_color = accent
+	rsb.set_corner_radius_all(2)
+	rule.add_theme_stylebox_override("panel", rsb)
+	row.add_child(rule)
 
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -515,10 +546,7 @@ func _empty_stable_banner() -> Control:
 	row.add_theme_constant_override("separation", UiTheme.SPACE_MD)
 	panel.add_child(row)
 
-	var icon := Label.new()
-	icon.text = "🛒"
-	icon.add_theme_font_size_override("font_size", UiTheme.SIZE_HEADING)
-	row.add_child(icon)
+	row.add_child(UiTheme.place_mark("market", 30))
 
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -617,7 +645,13 @@ func _condition_card(mi) -> Control:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(200, 0)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("raised", tint))
+	# ⚠️ NOT "raised", AND THE PROBE IS WHY. `_probe_house.gd`'s C3 column scored the Town at NINE
+	# top-elevation panels, the highest in the game — the pace strip, the alert, the agenda, the
+	# featured door AND all five of these. `docs/POLISH_DIRECTION.md` §4.3: "a page where every
+	# panel floats is as flat as one where none do." These five are a ROW OF PEERS being compared
+	# across, so none of them is primary and none of them should float; the stage tint on the
+	# border is what distinguishes them, and it still does.
+	panel.add_theme_stylebox_override("panel", UiTheme.panel_style("default", tint))
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 2)
@@ -649,15 +683,22 @@ func _condition_card(mi) -> Control:
 
 	# The two stats this body actually has — the one-line answer to "what is it FOR", and the thing
 	# the class name only gestures at.
-	col.add_child(_nowrap(UiTheme.body_text(_top_stats_line(mi), "secondary")))
-
+	#
 	# ⚠️ AUTHORED AND UNREACHED, FIXED HERE. Every monster carries a `favourite_food` and a
 	# `hated_food` (`game_data.gd:_pick_food_prefs`) and `docs/META_UI_DIRECTION.md` §2 slack-point 2
 	# records that NO screen in the game showed either — so the food step has been a chore with a
 	# hidden right answer since it was built. Naming the preference here costs one line and turns
 	# it into a small real choice.
+	#
+	# ⚠️ THE TWO SHARE A ROW NOW, AND THAT IS A CLIPPING FIX, NOT A TIDY-UP. Read off
+	# `B_thin/02_town.png`: at the thin fixture the outclassed banner pushes this strip down far
+	# enough that the card is cut horizontally THROUGH the glyphs of `DEX 250 · STR 176`. A card
+	# cut mid-letter reads as a broken screen even though the region scrolls correctly. Two facts
+	# on one line is ~18px off every card in the row, spent exactly where the fold falls.
+	var facts := _top_stats_line(mi)
 	if str(mi.favourite_food) != "":
-		col.add_child(_nowrap(UiTheme.body_text("♥ %s" % _food_name(str(mi.favourite_food)), "muted")))
+		facts += "    likes %s" % _food_name(str(mi.favourite_food))
+	col.add_child(_nowrap(UiTheme.body_text(facts, "secondary")))
 
 	col.add_child(UiTheme.stat_bar("stam", mi.stamina, WeekLib.MAX_STAMINA,
 		UiTheme.SAFE if mi.stamina > 50.0 else (UiTheme.CAUTION if mi.stamina > 30.0 else UiTheme.DANGER), 34))
@@ -977,16 +1018,51 @@ static func gap_sentence(g: Dictionary) -> String:
 ## `forced_disabled`/`forced_reason` let a location that IS built (e.g. Tournament) be temporarily
 ## unavailable for a stated reason — distinct from `loc["real"] == false`, which means "not built
 ## at all". Both end in a disabled button with a tooltip; neither is ever a silent dead end.
-func _make_location_button(loc: Dictionary, forced_disabled: bool = false, forced_reason: String = "") -> PanelContainer:
+## The scene the agenda's TOP prompt points at, or "" when the panel has no door to offer. Read
+## from `_agenda_items()` — never a second ranking.
+func _featured_scene() -> String:
+	var items: Array = _agenda_items()
+	if items.is_empty():
+		return ""
+	return str((items[0] as Dictionary).get("scene", ""))
+
+
+func _make_location_button(loc: Dictionary, forced_disabled: bool = false, forced_reason: String = "", featured: bool = false) -> PanelContainer:
 	var authored_real: bool = loc["real"]
 	var clickable: bool = authored_real and not forced_disabled
 
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(210, 112)
 
-	var base_sb: StyleBoxFlat = UiTheme.panel_style("default", accent if clickable else UiTheme.BORDER_FAINT)
-	if clickable:
-		base_sb.set_border_width_all(2)
+	# ⚠️ A DOOR IS NOT A MATCH, SO A DOOR DOES NOT WEAR A LIVERY. This read
+	# `accent if clickable else BORDER_FAINT`, and `accent` is `team_border_color(0)` — the
+	# player's TEAM COLOUR. `docs/ART_THEME.md` publishes three colour systems that must never
+	# collide, and the team livery's single job is "this body, in this fight, is mine". The hub is
+	# nobody's match. Flagged in `UI_THEME.md` §0 two rounds running and visible in every Town
+	# capture as six saturated blue outlines.
+	#
+	# ⚠️ AND IT COST MORE THAN CORRECTNESS — IT COST THE HIERARCHY THIS ROUND BUILT. Six doors
+	# outlined in 2px of saturated blue shout exactly as loudly as the ONE door the agenda is
+	# pointing at, so the `featured` gold edge below had to compete with its own siblings. A
+	# clickable door is now ordinary chrome; the flagged one is the only claim on the page.
+	# ⚠️ Not scored by `_probe_house.gd` either way — T2 reads LABEL colours, and this is a border.
+	# The probe could not have caught this one; a capture did.
+	# ⚠️ AND IT ADOPTS `panel_style("interactive")`, WHICH HAD ZERO CALL SITES. Round 21's theme
+	# stream published a four-rung elevation ladder and reported, honestly, that the game was using
+	# two rungs of it: 32 call sites said "raised" and none said "interactive" — the project's own
+	# signature "authored and unreached" failure appearing inside the round that named it. A door
+	# you can walk through is the definition of the interactive rung. Its 4px shadow is what now
+	# separates a live door from a locked one, in place of the livery. Do NOT call
+	# `set_border_width_all()` on the result: the ladder draws a heavier BOTTOM edge as a ground
+	# line, and squaring it off is the raw-90-degree-edge `ART_DIRECTION.md` forbids.
+	var base_sb: StyleBoxFlat = UiTheme.panel_style(
+		"interactive" if clickable else "flat",
+		UiTheme.BORDER if clickable else UiTheme.BORDER_FAINT)
+	# The featured door is raised, gold-edged and flagged in words — never hue alone, and never a
+	# second claim: the flag says "this week" because the agenda's top line already says why.
+	if featured:
+		base_sb = UiTheme.panel_style("raised", UiTheme.GOLD)
+		base_sb.set_border_width_all(3)
 	panel.add_theme_stylebox_override("panel", base_sb)
 
 	var btn := Button.new()
@@ -1021,23 +1097,26 @@ func _make_location_button(loc: Dictionary, forced_disabled: bool = false, force
 	icon_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(icon_row)
 
-	var icon_lbl := Label.new()
-	icon_lbl.text = loc["icon"]
-	icon_lbl.add_theme_font_size_override("font_size", 22)
-	icon_row.add_child(icon_lbl)
+	icon_row.add_theme_constant_override("separation", UiTheme.SPACE_SM)
+	# Drawn, not typed — see LOCATIONS' ⚠️. A disabled door's emblem drops to TEXT_MUTED so the
+	# whole card, mark included, reads dead rather than the label alone doing the work.
+	icon_row.add_child(UiTheme.place_mark(str(loc.get("mark", "market")), 24,
+		UiTheme.GOLD if clickable else UiTheme.TEXT_MUTED))
 
-	if not authored_real:
-		var lock_lbl := Label.new()
-		lock_lbl.text = " 🔒"
-		lock_lbl.add_theme_font_size_override("font_size", 16)
-		lock_lbl.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
-		icon_row.add_child(lock_lbl)
-	elif forced_disabled:
-		var wait_lbl := Label.new()
-		wait_lbl.text = " ⏳"
-		wait_lbl.add_theme_font_size_override("font_size", 16)
-		wait_lbl.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
-		icon_row.add_child(wait_lbl)
+	if not authored_real or forced_disabled:
+		var state_lbl := Label.new()
+		state_lbl.text = "not built" if not authored_real else "waiting"
+		state_lbl.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		state_lbl.add_theme_color_override("font_color", UiTheme.TEXT_MUTED)
+		state_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon_row.add_child(state_lbl)
+	elif featured:
+		var flag := Label.new()
+		flag.text = "THIS WEEK"
+		flag.add_theme_font_size_override("font_size", UiTheme.SIZE_CAPTION)
+		flag.add_theme_color_override("font_color", UiTheme.GOLD)
+		flag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon_row.add_child(flag)
 
 	var title_lbl := Label.new()
 	title_lbl.text = loc["title"]

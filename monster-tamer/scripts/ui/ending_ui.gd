@@ -200,17 +200,60 @@ func _build() -> void:
 
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	## ⚠️ SHRINK_CENTER, NOT FILL — THIS IS THE ENDING VOID FIX AND IT IS COMPOSITIONAL, NOT
+	## STRUCTURAL. Round 18 flagged "~35% void below the roster grid" and round 20 only half
+	## closed it; the reason it survived two attempts is that NOTHING IS MISSING FROM THE PAGE.
+	## The grid already renders every body including retirees (`_barn()` returns all of
+	## `Roster.monsters`), so a three-monster career simply produces a short page, and a FILL
+	## column pins that page to the top and dumps all the slack underneath it.
+	##
+	## Centering distributes the slack as margin above and below, so a short career reads as a
+	## composed plate rather than an unfinished one. It is the right fix precisely BECAUSE the
+	## content is complete: padding it with invented sections to fill a viewport would be the
+	## wrong answer to "there is empty space", and this screen is the last thing a player sees.
+	##
+	## ⚠️ AND IT MUST NOT BREAK THE TALL CASE. A full stable plus a preserved bloodline overflows
+	## the viewport, and a centred page must still scroll normally rather than clipping its head.
+	## Verified on BOTH capture fixtures — see `_probe_screens.gd`'s A_comfortable / B_thin split,
+	## which exists because a harness that only drives one state manufactures findings.
+	##
+	## ⚠️ `SIZE_SHRINK_CENTER` ON THIS COLUMN DOES NOTHING AND I TRIED IT FIRST. A ScrollContainer
+	## STRETCHES its single child to fill the viewport when the content is shorter, so the column
+	## is already full height and its own size flags never come into play; the VBox then packs its
+	## children to the top and the slack lands underneath. The slack is INSIDE the column, so the
+	## fix has to be inside it too — an expanding spacer at each end, which share the surplus
+	## equally when there is any and collapse to nothing when the page overflows.
+	## ⚠️ AND THE COLUMN ITSELF MUST BE TOLD TO FILL, WHICH WAS THE SECOND FAILED ATTEMPT. A
+	## ScrollContainer does NOT stretch its child by default — it hands the child its combined
+	## minimum size — so the spacers below had no surplus to share and the void simply moved from
+	## inside the column to underneath it. `SIZE_EXPAND_FILL` here is what makes the column as tall
+	## as the viewport when the content is shorter, and it is ignored the moment the content is
+	## taller, which is exactly the behaviour the tall case needs.
+	col.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_theme_constant_override("separation", UiTheme.SPACE_LG)
 	scroll.add_child(col)
+	col.add_child(_v_slack())
 
 	col.add_child(_title_block())
 	col.add_child(_grade_block())
 	col.add_child(_ladder_block())
 	col.add_child(_summary_block())
 	col.add_child(_roster_block())
+	col.add_child(_v_slack())
 
 	outer.add_child(HSeparator.new())
 	outer.add_child(_footer())
+
+
+## An empty Control that eats surplus height and nothing else. One at each end of the page column
+## centres a short career; both collapse to zero the moment the content overflows, so the tall case
+## scrolls exactly as it did. Deliberately NOT a Spacer with a minimum size — a minimum would add
+## height a long career cannot afford.
+func _v_slack() -> Control:
+	var s := Control.new()
+	s.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	s.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return s
 
 
 func _title_block() -> Control:

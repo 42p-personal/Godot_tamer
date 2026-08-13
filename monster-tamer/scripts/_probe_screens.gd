@@ -179,6 +179,28 @@ func _reset_out_dir() -> void:
 	for f in d.get_files():
 		if f.ends_with(".png") or f.ends_with(".txt"):
 			d.remove(f)
+	_sweep_legacy_root()
+
+
+## ⚠️ AND SWEEP THE PRE-FIXTURE CAPTURES AT THE ROOT, WHICH IS THE SAME HAZARD ONE LEVEL UP AND IT
+## HAS ALREADY BITTEN. This probe used to write straight into `user://screens/`; it now writes into
+## a per-fixture subdirectory, and `_reset_out_dir()` above only clears the subdirectory it is
+## about to fill. That leaves the old flat `13_ending.png` and friends sitting at the root, FROZEN
+## at whatever the build looked like before the fixture split, with nothing to mark them stale.
+##
+## That cost three consecutive wrong conclusions while fixing the ending void: the fix worked on
+## the first attempt, the root PNG never changed because nothing writes there any more, and each
+## re-run "confirmed" the failure. Two more edits were made against an image two hours older than
+## the code. It is exactly the instrument-lies failure this project keeps recording — a probe that
+## reports on a build nobody is running — and the only reliable cure is to leave nothing readable
+## that the run did not just produce.
+func _sweep_legacy_root() -> void:
+	var root := DirAccess.open(OUT_ROOT)
+	if root == null:
+		return
+	for f in root.get_files():
+		if f.ends_with(".png") or f.ends_with(".txt"):
+			root.remove(f)
 
 
 ## ── THE FIXTURE ───────────────────────────────────────────────────────────────────────────────

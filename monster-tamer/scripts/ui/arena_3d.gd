@@ -96,6 +96,34 @@ const WORLD_SCALE := 0.34
 ## the sim reads prop height, so `PROP_HEIGHT_BODIES` can make a piece read as a pier without
 ## moving one number the sim uses. That is where the next round's accent-layer work should go.
 const UNIT_HEIGHT := 4.4
+## ── THE DRAWN BODY MAY NOT BE WIDER THAN THE DISC THE SIM KEEPS CLEAR FOR IT ────────────────
+##
+## ⚠️ ROUND 13 PROVED THE SCRUM-AS-PILE IS ARITHMETIC, NOT PRESENTATION, and refused to fake it:
+## the sim separates enemy centres by `2 * Sp.BODY_RADIUS` = 4.4 ground units = 1.50 world at
+## `WORLD_SCALE` 0.34, while the presence normaliser in `creature_rig._scale_to` drew the ten
+## watch bodies 2.56-5.50 world units wide (measured, `_probe_watch.gd` §D2 — the brief's own
+## "~2.6" estimate was the FLOOR of the roster, not the mean of 3.82). Bodies therefore
+## interpenetrated 37.6% on average at rest, p90 70.6%, 3.16 overlapping pairs per frame, and no
+## camera, plate or colour work could separate what the geometry had already merged.
+##
+## So the drawn footprint is CAPPED at the sim's own body disc plus a small overlap budget —
+## DERIVED from `Sp.BODY_RADIUS`, never a literal, so if the sim's body ever grows the drawn
+## bodies re-expand to match without anyone editing this file. (The reverse dependency is the
+## fifth-scale-bug family `COMBAT_SPATIAL_LOG.md` keeps recording: a renderer absolute that was
+## right until the sim moved under it.)
+##
+## The budget: at 0.10, a pair at the sim's hard push-out floor (1.50 world) reads at exactly
+## 10% overlap, and a pair at the surround-slot rest distance (4.8 ground = 1.63 world) at ~2%.
+## Allies are PASSABLE by design (`AUTOBATTLER_DESIGN.md` #22), so transient deep overlaps while
+## two allies cross remain — those are motion, not rest, and the probe reports them honestly.
+##
+## ⚠️ THE COST IS PRESENCE, PAID KNOWINGLY: a capped creature is uniformly smaller (a wide body
+## at 5.25 drops to ~1.4 world tall). The honest buy-back is SIMULATING BIGGER — raising
+## `Sp`/`sim.gd BODY_RADIUS` (with `SLOT_RADIUS` above the new body ring and below
+## `BASE_REACH * 0.95`) lifts this cap automatically. That is a sim/balance change with a ladder
+## re-baseline behind it, owned by the sim's workstream, not this file.
+const BODY_OVERLAP_BUDGET := 0.10
+const UNIT_FOOTPRINT_MAX := 2.0 * Sp.BODY_RADIUS * WORLD_SCALE / (1.0 - BODY_OVERLAP_BUDGET)
 const WALL_H := 1.4
 const STAND_TIERS := 5
 
@@ -3184,7 +3212,7 @@ func _build_units() -> void:
 		# the first person to debug a facing bug would find two things claiming to be the body.
 		var rig = CreatureRigScript.new()
 		holder.add_child(rig)
-		if rig.build(m.species_id, UNIT_HEIGHT):
+		if rig.build(m.species_id, UNIT_HEIGHT, UNIT_FOOTPRINT_MAX):
 			# The cast is the subject of the frame, so it gets its own lamp — see `CAST_LIGHT_LAYER`.
 			_add_to_cast_layer(holder)
 			var rplate := _make_plate(m, side, i)

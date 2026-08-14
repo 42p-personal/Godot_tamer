@@ -61,6 +61,29 @@ const SEEN_KINDS := [
 var _arena: Node = null
 var _out: Array = []            # the report, printed at the end so it is not interleaved with engine spam
 var _samples: Array = []        # per-engine-frame framing measurements
+## Per-unit DRAWN body width/height in world units, read once from each rig's own `drawn_width` /
+## `drawn_height` (the rig records what it actually scaled to — probe and renderer cannot
+## disagree). ⚠️ THIS FEEDS THE OVERLAP-AT-REST METRIC, the number behind round 13's "the scrum
+## is a pile" finding: the sim separates enemy centres by 2*Sp.BODY_RADIUS ground units
+## (= 1.50 world at WORLD_SCALE 0.34) while bodies were drawn ~2.2-2.6 wide, so bodies
+## interpenetrated ~40% AT REST by construction. Overlap depth for a pair = how far inside each
+## other's drawn discs two living bodies sit, as a fraction of their mean drawn width.
+var _body_w: Array = []
+var _body_h: Array = []
+## Overlap depths split by whether the pair was AT REST (both units' frame `state` is not
+## "advance" — the sim's own definition: moved ≤0.02 this tick) or CROSSING (either moving).
+## ⚠️ THE SPLIT IS THE HONESTY OF THE METRIC, NOT A SOFTENING OF IT. Allies are PASSABLE by
+## design (`AUTOBATTLER_DESIGN.md` #22), so two allies crossing legitimately pass through each
+## other and briefly measure 100% overlap — that is motion, and it reads as motion. The pile
+## complaint is bodies STANDING inside each other, and that is what the rest figure isolates.
+## Both are reported; hiding the crossing number would be the probe lying by omission.
+var _ov_rest: Array = []        # depth fractions, pairs at rest — CROSS-TEAM (enemy push-out is
+								#  the hard rule, so this is the pure read of drawn vs simulated)
+var _ov_rest_ally: Array = []   # depth fractions, ALLY pairs at rest — the sim's soft-avoid only
+								#  drifts allies apart, so standing ally overlap is a SIM spacing
+								#  finding, not a drawing one; split so the fault gets the right owner
+var _ov_move: Array = []        # depth fractions, pairs where at least one body is travelling
+var _ov_episodes: Array = []    # deep rest overlaps, identified: who stood inside whom, and when
 var _next_strip := 0.0
 var _shot := 0
 var _tag := "four_pillar"
@@ -340,13 +363,26 @@ func _frame_alive() -> Array:
 	return out
 
 
+## Per-unit `state` from the DISPLAYED frame — the sim's own word for whether a body is
+## travelling ("advance": moved more than 0.02 this tick) or standing/casting/idle.
+func _frame_states() -> Array:
+	var frames: Array = _arena.get("frames")
+	var i: int = clampi(int(floor(float(_arena.get("frame_pos")))), 0, frames.size() - 1)
+	var out: Array = []
+	for rec in (frames[i].get("units", []) as Array):
+		out.append(str(rec.get("state", "idle")))
+	return out
+
+
 func _measure(cam: Camera3D, t: float) -> void:
 	var nodes: Array = _arena.get("nodes")
 	var units: Array = _frame_alive()
+	_cache_body_sizes()
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	var mn := Vector2(1e9, 1e9)
 	var mx := Vector2(-1e9, -1e9)
 	var body_px := 0.0
+	var drawn_h_px := 0.0
 	var on_screen := 0
 	var n := 0
 	for k in range(nodes.size()):
@@ -356,7 +392,15 @@ func _measure(cam: Camera3D, t: float) -> void:
 		var foot: Vector2 = cam.unproject_position(p)
 		var head: Vector2 = cam.unproject_position(p + Vector3(0, Arena.UNIT_HEIGHT, 0))
 		var h: float = absf(foot.y - head.y)
-		body_px += PI * pow(h * 0.30, 2.0)     # a body is roughly 0.6x as wide as it is tall
+		# ⚠️ BODY AREA IS THE BODY AS DRAWN, NOT A 0.6-RATIO GUESS. This used to assume every body
+		# is 0.6x as wide as it is tall at nominal UNIT_HEIGHT; once the rig records its real
+		# drawn width/height (and the footprint cap makes them differ per species), the guess
+		# both under-counted wide bodies and would have over-counted capped ones — the instrument
+		# lying about the very trade-off the cap makes.
+		var wf: float = (float(_body_w[k]) / Arena.UNIT_HEIGHT) if k < _body_w.size() else 0.6
+		var hf: float = (float(_body_h[k]) / Arena.UNIT_HEIGHT) if k < _body_h.size() else 1.0
+		body_px += PI * (h * wf * 0.5) * (h * hf * 0.5)
+		drawn_h_px += h * hf
 		# ⚠️ IS IT EVEN IN FRAME? `unproject_position` happily returns coordinates far outside the
 		# viewport (and mirrored ones for points BEHIND the camera), so "action box area" is
 		# meaningless once anything leaves the shot. The honest metric is a headcount.
@@ -437,11 +481,68 @@ func _measure(cam: Camera3D, t: float) -> void:
 		wmx.x = maxf(wmx.x, wp.x); wmx.y = maxf(wmx.y, wp.y)
 	var gs: Vector2 = _arena.get("ground_size")
 	var used: float = maxf(0.0, wmx.x - wmn.x) * maxf(0.0, wmx.y - wmn.y)
+	# ── BODY OVERLAP — do five bodies read as five bodies, or as a pile? Measured between living
+	# units' HOLDER positions (world units, the sim's own truth via `_to_world`) against the width
+	# each rig says it drew. A pair "overlaps" when its centres sit closer than the mean of the two
+	# drawn widths; depth is how far inside that the pair is. The acceptance bar for the footprint
+	# fix is mean depth under ~10%.
+	_cache_body_sizes()
+	var states: Array = _frame_states()
+	var ov_pairs := 0
+	var ov_rest_pairs := 0
+	var ov_worst := 0.0
+	# ⚠️ NOT BEFORE PLAYBACK HAS PLACED THE BODIES. For the first few engine frames every holder
+	# still sits at the scene origin, so all ten units measure 0.00 apart and 45 pairs read as
+	# 100%-deep "standing overlaps" — this probe reported exactly that as a sim spacing fault
+	# before this guard existed. Instruments lie at boundaries; skip the boot frames.
+	for i2 in range(nodes.size() if t >= 0.2 else 0):
+		if i2 >= units.size() or not units[i2]:
+			continue
+		for j2 in range(i2 + 1, nodes.size()):
+			if j2 >= units.size() or not units[j2]:
+				continue
+			var touch: float = (float(_body_w[i2]) + float(_body_w[j2])) * 0.5
+			if touch <= 0.0:
+				continue
+			var pa: Vector3 = (nodes[i2]["holder"] as Node3D).position
+			var pb: Vector3 = (nodes[j2]["holder"] as Node3D).position
+			var d2: float = Vector2(pa.x - pb.x, pa.z - pb.z).length()
+			if d2 < touch:
+				var depth: float = 1.0 - d2 / touch
+				ov_pairs += 1
+				ov_worst = maxf(ov_worst, depth)
+				var at_rest: bool = i2 < states.size() and j2 < states.size() \
+					and str(states[i2]) != "advance" and str(states[j2]) != "advance"
+				if at_rest:
+					ov_rest_pairs += 1
+					var na_split: int = (_arena.get("team_a") as Array).size()
+					if (i2 < na_split) == (j2 < na_split):
+						_ov_rest_ally.append(depth)
+					else:
+						_ov_rest.append(depth)
+					# A STANDING pair more than half inside each other is a spacing fault worth
+					# naming, not just counting — record who, when, and how close (one line per
+					# sampled second per pair, or the 10Hz sim x 144Hz probe floods the report).
+					if depth > 0.5:
+						var sig := "%d-%d@%d" % [i2, j2, int(t)]
+						var dup := false
+						for ep in _ov_episodes:
+							if str((ep as Dictionary).get("sig", "")) == sig:
+								dup = true
+								break
+						if not dup:
+							_ov_episodes.append({"sig": sig, "t": t, "i": i2, "j": j2,
+								"d": d2, "si": str(states[i2]) if i2 < states.size() else "?",
+								"sj": str(states[j2]) if j2 < states.size() else "?"})
+				else:
+					_ov_move.append(depth)
 	_samples.append({
+		"ov_pairs": ov_pairs, "ov_rest_pairs": ov_rest_pairs, "ov_worst": ov_worst,
 		"used_frac": used / maxf(1.0, gs.x * gs.y),
 		"span_x": maxf(0.0, wmx.x - wmn.x), "span_y": maxf(0.0, wmx.y - wmn.y),
 		"t": t, "n": n,
 		"mean_h": _mean_unit_height(cam, nodes, units),
+		"drawn_h": drawn_h_px / maxf(1.0, float(n)),
 		"body_frac": body_px / (vp.x * vp.y),
 		"box_frac": box / (vp.x * vp.y),
 		"plate_frac": plate_px / (vp.x * vp.y),
@@ -461,6 +562,42 @@ func _measure(cam: Camera3D, t: float) -> void:
 		"draws": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
 		"objs": Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
 	})
+
+
+func _sim_body_radius() -> float:
+	return float(load("res://scripts/spatial.gd").BODY_RADIUS)
+
+
+func _depth_stats(depths: Array, suffix: String) -> String:
+	if depths.is_empty():
+		return "no overlapping pair-samples"
+	depths.sort()
+	var dsum := 0.0
+	for d in depths:
+		dsum += float(d)
+	var p90: float = float(depths[mini(depths.size() - 1, int(float(depths.size()) * 0.90))])
+	var worst: float = float(depths[depths.size() - 1])
+	return "depth mean %.1f%% · p90 %.1f%% · worst %.1f%% · %d pair-samples %s" \
+		% [100.0 * dsum / float(depths.size()), 100.0 * p90, 100.0 * worst, depths.size(), suffix]
+
+
+## Reads each unit's drawn body size ONCE from its rig. A sprite unit (no rig) falls back to the
+## probe's long-standing assumption that a billboarded body is ~0.6x as wide as it is tall — the
+## same figure `body_px` in `_measure` has always used, so the two reads cannot drift apart.
+func _cache_body_sizes() -> void:
+	if not _body_w.is_empty():
+		return
+	var nodes: Array = _arena.get("nodes")
+	if nodes == null or nodes.is_empty():
+		return
+	for nd in nodes:
+		var rig = (nd as Dictionary).get("rig")
+		if rig != null and float(rig.get("drawn_width")) > 0.0:
+			_body_w.append(float(rig.get("drawn_width")))
+			_body_h.append(float(rig.get("drawn_height")))
+		else:
+			_body_w.append(Arena.UNIT_HEIGHT * 0.6)
+			_body_h.append(Arena.UNIT_HEIGHT)
 
 
 func _mean_unit_height(cam: Camera3D, nodes: Array, units: Array) -> float:
@@ -502,6 +639,12 @@ func _finish_audit() -> void:
 	_line("   viewport            %dx%d" % [int(vp.x), int(vp.y)])
 	_line("   monster height      mean %.0f px  (%.1f%% of frame height) · min %.0f · max %.0f"
 		% [mean_h / c, 100.0 * (mean_h / c) / vp.y, min_h, max_h])
+	var drawn_h := 0.0
+	for sd in _samples:
+		drawn_h += float(sd.get("drawn_h", 0.0))
+	_line("   DRAWN height        mean %.0f px — the body as actually scaled (footprint cap included);"
+		% (drawn_h / c))
+	_line("                       the line above is the nominal UNIT_HEIGHT anchor plates/VFX use")
 	_line("   bodies occupy       %.2f%% of the frame on average" % (100.0 * mean_body / c))
 	var on_scr := 0.0
 	for s2 in _samples:
@@ -571,6 +714,50 @@ func _finish_audit() -> void:
 	_line("   ground              %.0f x %.0f world units (%.0f sq units)" % [gs2.x, gs2.y, gs2.x * gs2.y])
 	_line("   fight footprint     %.0f x %.0f mean = %.1f%% of the ground (min %.2f%%)"
 		% [sx / c, sy / c, 100.0 * used / c, 100.0 * used_min])
+	# ── BODY OVERLAP — the round-14 acceptance metric. The sim's rest separations are fixed
+	# (enemy push-out 2*BODY_RADIUS = 1.50 world, surround slots 4.8 ground = 1.63 world), so mean
+	# overlap depth is a direct read of drawn width vs simulated width. Target: mean under ~10%.
+	_line("")
+	_line("── D2. BODY OVERLAP — do five bodies read as five bodies? ──")
+	_line("   drawn body sizes (world units, sim clears a %.2f-wide disc per body):"
+		% (2.0 * _sim_body_radius() * Arena.WORLD_SCALE))
+	var names: Array = []
+	for m in (_arena.get("all_units") as Array):
+		names.append(str(m.species_name))
+	for k in range(_body_w.size()):
+		var nm: String = names[k] if k < names.size() else str(k)
+		_line("     %-12s width %.2f · height %.2f" % [nm, float(_body_w[k]), float(_body_h[k])])
+	var ovp := 0.0
+	var ovrp := 0.0
+	var frames_ov := 0
+	for s5 in _samples:
+		ovp += float(s5.get("ov_pairs", 0))
+		ovrp += float(s5.get("ov_rest_pairs", 0))
+		if int(s5.get("ov_pairs", 0)) > 0:
+			frames_ov += 1
+	if _ov_rest.is_empty() and _ov_rest_ally.is_empty() and _ov_move.is_empty():
+		_line("   overlapping pairs   NONE in %d frames — every body reads as its own body" % _samples.size())
+	else:
+		_line("   AT REST, enemies    %s  ← the acceptance number: standing bodies inside each other"
+			% _depth_stats(_ov_rest, "(target: mean under ~10%)"))
+		_line("   AT REST, allies     %s  ← the sim's soft-avoid under anchor pressure: a SIM finding"
+			% _depth_stats(_ov_rest_ally, ""))
+		_line("   crossing            %s  ← allies are PASSABLE by design (#22); this is motion"
+			% _depth_stats(_ov_move, ""))
+		_line("   overlapping pairs   %.2f per frame (%.2f at rest) · %.0f%% of frames have at least one"
+			% [ovp / c, ovrp / c, 100.0 * float(frames_ov) / c])
+		if not _ov_episodes.is_empty():
+			var names2: Array = []
+			for m2 in (_arena.get("all_units") as Array):
+				names2.append(str(m2.species_name))
+			_line("   deep STANDING overlaps (>50%), by pair and second — a spacing fault, not a drawing one:")
+			for ep2 in _ov_episodes.slice(0, 12):
+				var e2: Dictionary = ep2
+				_line("     t=%5.1fs  %s(%s) inside %s(%s)  centres %.2f world apart"
+					% [float(e2["t"]), names2[int(e2["i"])], str(e2["si"]),
+					   names2[int(e2["j"])], str(e2["sj"]), float(e2["d"])])
+			if _ov_episodes.size() > 12:
+				_line("     … and %d more" % (_ov_episodes.size() - 12))
 	_line("")
 	_line("── D. THE NAMEPLATE, which is the ONLY hp/intent surface the player has ──")
 	_line("   plates shown        %.1f on average" % (plates / c))

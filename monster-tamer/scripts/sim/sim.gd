@@ -75,6 +75,8 @@ extends RefCounted
 const BT = preload("res://scripts/ai/bt.gd")
 const CombatTree = preload("res://scripts/ai/combat_tree.gd")
 const NavService = preload("res://scripts/sim/nav_service.gd")
+const Sp = preload("res://scripts/spatial.gd")      # constants only — the sim never calls its movement
+const KitLib = preload("res://scripts/sim/kit.gd")  # constants only — see KIT_RANGE_LIFT
 const Damage = preload("res://scripts/damage.gd")
 const Derive = preload("res://scripts/derive.gd")
 const StatusMathLib = preload("res://scripts/status_math.gd")  # the ONE status rulebook
@@ -802,7 +804,7 @@ func _has_cleansable(u: Dictionary) -> bool:
 ## The living units a friendly entry would touch RIGHT NOW, in unit-id order (units is sorted).
 ## "ally" means someone ELSE where possible — the legacy resolver's rule — falling back to self.
 func _friendly_recipients(u: Dictionary, m: Dictionary) -> Array:
-	var reach := float(m.get("range", CAST_RANGE))
+	var reach := _entry_reach(m)   # the completed lift — see KIT_RANGE_LIFT
 	match _entry_target(m):
 		"self":
 			return [u]
@@ -933,7 +935,50 @@ func _resolve_friendly(u: Dictionary, kentry: Dictionary, events: Array) -> void
 					"move": str(kentry.name), "broke": broken})
 
 
-const CAST_RANGE := 30.0        # spells reach far - the arena is big and casters stand off
+const CAST_RANGE := 30.0        # fallback for kit entries with NO authored range (hand-built
+								#  test kits only — every data move authors one)
+
+## ═══ THE RANGE-LIFT COMPLETION (round 14) — why the fight had no middle ══════════════════════
+## ⚠️ MEASURED, NOT INFERRED (`_probe_sim_quality.gd`, `_reach_vs_separation` + `_opening`, on
+## the real 440x246 board): first attempt, first damage and the fronts physically crossing were
+## the SAME MOMENT (7.2-8.4s) in every comp, because the widest reach any kit fielded was 24.2u
+## against a 391.6u deploy separation — 6% of the walk. Nothing could open fire during the
+## approach, so 30-49% of every watched fight was a silent walk (`WATCH_AUDIT.md` §0) and then
+## everything landed at once.
+##
+## THE CAUSE IS A HALF-APPLIED SCALE LIFT — the fifth-scale-bug shape, again. Authored move
+## ranges live on the pool's original 40x22 board (Volley 8.4-11.0, magic ~7). The design lift
+## onto the real ground is `Spatial.REACH_SCALE` = 4.0 x GEOMETRY_SCALE = x8.8 (`reach_of`,
+## which the superseded spatial_sim used). `kit.gd` lifts by GEOMETRY_SCALE alone — x2.2 — so
+## every authored reach arrived at a QUARTER of its designed length. This constant completes
+## the lift at the point of consumption: 2.2 x 4.0 = 8.8, so Volley reaches 74-96.8u and the
+## approach becomes a closing-under-fire phase — the exact shape `ENGAGEMENT_DESIGN.md` wants
+## and `spatial.gd`'s TARGET_CLOSE_SECONDS note promised ("reach now runs to 96 units").
+##
+## ⚠️ FOR THE INTEGRATOR: THIS IS ONE LIFT SPLIT ACROSS TWO FILES, AND IT WANTS TO BE ONE LINE.
+## The clean home is `kit.gd:74` — `"range": float(mv.get("range", 6.0)) * GEOMETRY_SCALE`
+## becoming `* Spatial.REACH_SCALE` (with the clamp) — and then `_entry_reach` below must become
+## a plain read THE SAME COMMIT, or every reach doubles. Not done here because kit.gd belongs to
+## another workstream this round.
+##
+## ⚠️ MELEE IS DELIBERATELY NOT TOUCHED. BASE_REACH (6.6 = 3.0 x GEOMETRY_SCALE) is on the same
+## wrong scale — the design melee basic is 26.4 (CHANNEL_RANGE) — but BASE_REACH is welded to
+## the surround-slot geometry (SLOT_RADIUS < BASE_REACH*0.95 > body ring) and to the scrum-pile
+## finding at the top of this file: separation and melee reach must move TOGETHER, with the
+## body-radius re-baseline, not as a rider on this change. Melee closing all the way while
+## ranged stands off 74-96u is also precisely the engagement stagger the middle needs.
+const KIT_RANGE_LIFT := Sp.REACH_SCALE / KitLib.GEOMETRY_SCALE   # 8.8 / 2.2 = 4.0
+
+
+## The reach of a kit entry, on the REAL board's scale. Clamped at the design's HARD_REACH_MAX
+## exactly as `Spatial.reach_of` clamps (the 5v5 pool maxes at 96.8 = the clamp, so this only
+## guards future authored outliers). Entries with no authored range (hand-built test kits) keep
+## the CAST_RANGE fallback verbatim — every small-board probe kit behaves exactly as before.
+func _entry_reach(m: Dictionary) -> float:
+	var r := float(m.get("range", 0.0))
+	if r <= 0.0:
+		return CAST_RANGE
+	return minf(r * KIT_RANGE_LIFT, Sp.HARD_REACH_MAX)
 
 ## PROJECTILE FLIGHT (#34) — speeds taken VERBATIM from the superseded spatial layer's authored
 ## constants (scripts/spatial.gd:301, under its "projectiles (2026-08-06)" banner): ranged 90
@@ -1082,7 +1127,7 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 				"started": tick_now, "ends": tick_now + int(float(mvx.get("cast_time", 1.5)) / DT)}
 			events.append({"kind": "cast_start", "from": u.id, "to": fid, "move": cname})
 			return
-		var cast_range: float = float(mvx.get("range", CAST_RANGE)) if not mvx.is_empty() else CAST_RANGE
+		var cast_range: float = _entry_reach(mvx) if not mvx.is_empty() else CAST_RANGE
 		# Opportunism: the ordered target when in range; otherwise the nearest IN-RANGE enemy
 		# (id-order tiebreak). A caster staring at a distant kill target while an enemy stands
 		# on its feet is not focus, it is paralysis — you cast at what you can hit.
@@ -1593,7 +1638,7 @@ static func aoe_falloff(target_count: int) -> float:
 ## taunt, thorns, status via its per-target pre-drawn roll).
 func _resolve_aoe(u: Dictionary, kentry: Dictionary, events: Array) -> void:
 	var mv := _move_of_entry(kentry)
-	var reach := float(kentry.get("range", CAST_RANGE))
+	var reach := _entry_reach(kentry)   # the completed lift — see KIT_RANGE_LIFT
 	var targets: Array = []
 	for o in units:  # unit-id order — the determinism order, as everywhere
 		if o.alive and o.team != u.team and u.pos.distance_to(o.pos) <= reach:

@@ -98,6 +98,12 @@ const LEG_NAMES := ["leg", "foot", "thigh", "shin", "knee"]
 var _twist_mod: TorsoTwist
 var _has_legs := false
 var _pack_id := ""   # which pack model this rig built (outlier-scale lookup)
+## What this rig actually occupies on screen, in world units, measured from the skinned bounds at
+## the scale `_scale_to` chose. ⚠️ READ-ONLY TRUTH FOR INSTRUMENTS (`_probe_watch.gd` measures
+## body overlap with it) — the renderer itself derives nothing from these; they exist so the
+## probe and the rig can never disagree about how big a creature was drawn.
+var drawn_width := 0.0    # widest horizontal extent (max of x/z), world units, after scaling
+var drawn_height := 0.0   # vertical extent, world units, after scaling
 var _facing: Vector2 = Vector2(1, 0)
 var _move_dir: Vector2 = Vector2.ZERO
 var _backwards := false
@@ -115,13 +121,13 @@ static var _lib_cache: Dictionary = {}
 
 ## Assembles the body. Returns false when this species has no model, which is the SIGNAL for
 ## `arena_3d.gd` to fall back to the sprite path — not an error.
-func build(species_id: String, target_height: float) -> bool:
+func build(species_id: String, target_height: float, max_footprint: float = 0.0) -> bool:
 	_species = species_id
 	# ⚠️ PACK CREATURES FIRST — one .glb carrying the mesh, the skeleton AND every clip. This is
 	# the shape CC0 sources ship (`tools/poly_fetch.py`), and it is strictly better than the
 	# one-file-per-clip shape below: hand-authored motion instead of auto-retargeted, correct clip
 	# names inside the file, and 0.07-0.98 MB for the whole creature against 8.4 MB PER CLIP.
-	if _build_from_pack(species_id, target_height):
+	if _build_from_pack(species_id, target_height, max_footprint):
 		return true
 
 	# ⚠️ The base body is just "a file that carries the mesh and skeleton" — every clip file has
@@ -149,7 +155,7 @@ func build(species_id: String, target_height: float) -> bool:
 		return false
 
 	_install_clips(species_id)
-	_scale_to(body, target_height)
+	_scale_to(body, target_height, max_footprint)
 	_apply_shader()
 
 	# Start somewhere valid — a rig sitting in its bind pose reads as broken, not as idle.
@@ -183,7 +189,7 @@ const PACK_CLIPS := {
 
 ## A single .glb carrying mesh, skeleton and every clip. Returns false when this species has no
 ## pack model, which is a SIGNAL to try the per-clip path, not an error.
-func _build_from_pack(species_id: String, target_height: float) -> bool:
+func _build_from_pack(species_id: String, target_height: float, max_footprint: float = 0.0) -> bool:
 	# The species may BE a pack id (probes and galleries pass one directly), or it may map to one.
 	var pack_id := species_id
 	_pack_id = pack_id
@@ -251,7 +257,7 @@ func _build_from_pack(species_id: String, target_height: float) -> bool:
 		_player.get_animation_library("mt").add_animation(lib_name, a)
 		_clip_of[state] = "mt/" + lib_name
 
-	_scale_to(body, target_height)
+	_scale_to(body, target_height, max_footprint)
 	_apply_species_tint(body, species_id)
 	# Species colour identity on SHARED bodies (Art.SPECIES_TINT — authored, never random).
 	# ⚠️ NO SHADER AND NO SIDECAR TEXTURE HERE. These models ship their own material and a palette
@@ -280,7 +286,17 @@ func _build_from_pack(species_id: String, target_height: float) -> bool:
 ## animation, then collapsed back to the exporter's 0.01 and vanished. That is why the first probe
 ## passed on height and the screenshot still showed nothing: the measurement was taken before
 ## playback started. `self` sits above everything the clips touch, so nothing can reach it.
-func _scale_to(_body: Node3D, target_height: float) -> void:
+## `max_footprint` (world units, 0 = uncapped): the widest horizontal extent this body may be
+## DRAWN at. ⚠️ THE CAP IS THE SIM'S BODY DISC ARRIVING IN THE RENDERER, NOT A TASTE NUMBER.
+## Round 13 measured the scrum as a pile of interpenetrating bodies and proved no camera, plate
+## or colour work could separate them, because the sim separates centres by
+## `2 * Sp.BODY_RADIUS * WORLD_SCALE` = 1.50 world units while bodies were drawn 2.2-2.6 wide —
+## ~40% overlap AT REST, by construction. The renderer must not draw a body meaningfully wider
+## than the disc the sim actually keeps clear for it, or the fight reads as a single blob in
+## exactly the ten seconds that decide the match (`docs/WATCH_AUDIT.md` §0). The cap value is
+## derived in `arena_3d.gd` (`UNIT_FOOTPRINT_MAX`) from the sim's own constants, so if the sim's
+## body radius ever moves, the drawn bodies re-expand to match without anyone editing this file.
+func _scale_to(_body: Node3D, target_height: float, max_footprint: float = 0.0) -> void:
 	scale = Vector3.ONE
 	position.y = 0.0
 	var aabb: AABB = _skinned_bounds()
@@ -309,7 +325,16 @@ func _scale_to(_body: Node3D, target_height: float) -> void:
 	# tuning table (that warning stands).
 	var fix := {"squidle": 0.5, "ghost": 0.55, "ghost_skull": 0.55}
 	s *= float(fix.get(_pack_id, 1.0))
+	# The footprint cap (see header). Uniform, never a squash: a non-uniform scale would keep the
+	# height by distorting every proportion the modeller chose, and a stocky creature slimmed 35%
+	# stops reading as its species. A capped creature is instead honestly SMALLER — the same trade
+	# the sim already makes by giving every unit one body disc. Applied after the outlier fix so
+	# the two corrections compose instead of fighting.
+	if max_footprint > 0.0 and widest * s > max_footprint:
+		s = max_footprint / widest
 	scale = Vector3(s, s, s)
+	drawn_width = widest * s
+	drawn_height = aabb.size.y * s
 	# Sit the feet on the ground plane: the bottom of those same bounds, scaled, is the offset —
 	# PLUS a small safety margin, because these are BIND-POSE bounds and the walk/attack cycles
 	# dip below them (the user watched toes sink through the floor). 4% of height is invisible

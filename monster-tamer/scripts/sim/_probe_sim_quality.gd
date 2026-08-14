@@ -166,20 +166,41 @@ func _comp_units(comp: String, moves: Array) -> Array:
 			# whole fight, so the ONLY route by which its interrupt can ever fire is the
 			# opportunistic off-target path in combat_tree's Engage node. The enemy casters
 			# push, so the scrum forms with committed casts inside kick reach.
-			out.append(_unit("a0", "A", Vector2(-40, 0), bruiser, 9.0,
+			# ⚠️ ROUND-14 COMP REPAIR: this was 3 bruisers vs 4. Once the range-lift completion
+			# let the enemy casters actually fire across the approach (as designed), the A side
+			# died before the scrum could form and the off-target kick had nothing to fire at —
+			# the fixture stopped pinning the variable under test. A is now five tanks: the
+			# KICKER and its route to a casting enemy are unchanged, the bodies just survive
+			# the walk. The check's meaning (the opportunistic kick path fires) is untouched.
+			# The whole A line deploys FORWARD, tanks a shade ahead of the kicker so they draw
+			# the nearest-targeting fire: with lifted reaches a back-line kicker died on the walk
+			# (and a lone forward one was simply the nearest body and died first) before any cast
+			# ever happened inside its 9.24u kick reach — the path under test never ran.
+			out.append(_unit("a0", "A", Vector2(12, 0), tank, 11.0,
 				{"target_priority": "tanks", "positional": "push"}, [Kit.kick()]))
-			out.append(_unit("a1", "A", Vector2(-40, -6), bruiser, 9.0,
+			out.append(_unit("a1", "A", Vector2(15, -6), tank, 8.5,
 				{"target_priority": "nearest", "positional": "push"}))
-			out.append(_unit("a2", "A", Vector2(-40, 6), tank, 8.5,
+			out.append(_unit("a2", "A", Vector2(15, 6), tank, 8.5,
 				{"target_priority": "nearest", "positional": "push"}))
+			out.append(_unit("a3", "A", Vector2(15, -12), tank, 8.5,
+				{"target_priority": "nearest", "positional": "push"}))
+			out.append(_unit("a4", "A", Vector2(15, 12), tank, 8.5,
+				{"target_priority": "nearest", "positional": "push"}))
+			# ⚠️ ROUND-14 FIXTURE SHAPE: the casters HOLD and their tank GUARDS them. When casters
+			# pushed, the range-lift completion had them casting from 40-60u standoff and nothing
+			# ever cast inside the kicker's 9.24u reach — the off-target situation could no longer
+			# occur on the approach (a real behavioural change: a kick now requires CONNECTING,
+			# which is the WoW rule). The scrum must therefore form ON the caster wall: a0 hunts
+			# the guarding tank, arrives at its side, and the casters committing casts at
+			# point-blank are the off-target kick's textbook moment.
 			out.append(_unit("b0", "B", Vector2(40, 0), tank, 8.0,
-				{"target_priority": "nearest", "positional": "push"}))
+				{"target_priority": "nearest", "positional": "guard", "guard_ally": "b1"}))
 			out.append(_unit("b1", "B", Vector2(44, -5), caster, 7.0,
-				{"target_priority": "nearest", "positional": "push"}, kits[0]))
+				{"target_priority": "nearest", "positional": "hold"}, kits[0]))
 			out.append(_unit("b2", "B", Vector2(46, 0), caster, 7.0,
-				{"target_priority": "nearest", "positional": "push"}, kits[1]))
+				{"target_priority": "nearest", "positional": "hold"}, kits[1]))
 			out.append(_unit("b3", "B", Vector2(44, 5), caster, 7.0,
-				{"target_priority": "nearest", "positional": "push"}, kits[2]))
+				{"target_priority": "nearest", "positional": "hold"}, kits[2]))
 		"sustain":
 			# RESOLUTION x HEALING comp: a REAL authored healer (Mend) on BOTH sides — the
 			# named risk of the support layer is a heal-stalemate at 5v5 scale. Heals are
@@ -322,13 +343,24 @@ func _log_problem(res: Dictionary) -> String:
 ## BLOB_SHRINK_FRAC of its own deploy spread. Standing still is never a blob (ratio ~1.0);
 ## everyone converging onto one body always is (ratio ~0.3). Returns {} when the fight was
 ## already decided (nothing to measure); teams with < 3 living bodies are exempt.
+## ⚠️ AND SO IS A TEAM WHOSE ENEMY IS DOWN TO <= 2 LIVING (round 14): five survivors closing on
+## the last two enemies is the MOP-UP — focus fire doing its job — not the huddle this check was
+## built against (both full teams converging into one bubble). The exemption became necessary
+## when the range-lift completion let dive/seed44444's casters kill two divers during the
+## approach, turning tick 100 into a 5v2 finish the shrink test misread as convergence.
 func _blob_verdicts(res: Dictionary, tick: int) -> Dictionary:
 	if res.frames.size() <= tick:
 		return {}
 	var f0: Dictionary = res.frames[0]
 	var f: Dictionary = res.frames[tick]
+	var living := {"A": 0, "B": 0}
+	for u in f.units:
+		if bool(u.alive):
+			living[str(u.team)] = int(living[str(u.team)]) + 1
 	var out := {}
 	for team in ["A", "B"]:
+		if int(living["B" if team == "A" else "A"]) <= 2:
+			continue  # mop-up, not a blob — see the ⚠️ above
 		var now_ps: Array = []
 		var deploy_ps: Array = []
 		for j in f.units.size():
@@ -583,6 +615,7 @@ func _go() -> void:
 			return
 		r["label"] = "%s/seed%d" % [str(p.comp), int(p.seed)]
 		results.append(r)
+		print("    hash %s = %s" % [str(r.label), _hash_frames(r)])
 
 	# 1. RESOLUTION — every fight ends with a winner inside the cap. No stalemates, ever.
 	var unresolved: Array = []
@@ -758,9 +791,14 @@ func _board_usage(moves: Array) -> void:
 		print(line)
 		print("      meet at %.0f%% of the fight | postures: %s" % [100.0 * _meet_frac(r), _posture_mix(r)])
 		print("      advance by posture @34%%: ", _fmt_advance(_advance_by_posture(r, int(float(r.frames.size() - 1) * 0.34))))
+		# The x3-PROCESS determinism receipt: this hash line is what three separate godot
+		# invocations diff. In-process twin runs cannot catch hash-order dependencies.
+		print("      hash %s = %s" % [str(r.label), _hash_frames(r)])
 	_opening_report(rows)
+	_pacing_report(rows)
 	await _approach_ab(moves)
 	_usage_checks(rows)
+	_pacing_checks(rows, moves)
 
 
 ## 16. THE OPENING. Reported per comp in SECONDS as well as fractions, because the complaint was
@@ -813,25 +851,31 @@ func _opening_report(rows: Array) -> void:
 ## guess without deserving to. Kits come from `Kit.build` via `_comp_units`, so they are read
 ## from there.
 func _reach_vs_separation(comps: Array, moves: Array) -> void:
+	# ⚠️ ROUND 14: the sim now COMPLETES the lift at consumption (`sim.gd:_entry_reach`, x4 on
+	# the kit's x2.2, capped at HARD_REACH_MAX), so this report applies the same completion —
+	# reading the raw kit `range` here would understate the live reach fourfold, which is the
+	# instrument lying in the opposite direction from before.
 	var sep: float = Sp.deploy_separation(BIG_TEAM_SIZE)
 	var widest := 0.0
 	var who := ""
 	var pool_max := 0.0
 	for m in moves:
-		pool_max = maxf(pool_max, float(m.get("range", 0.0)) * Kit.GEOMETRY_SCALE)
+		pool_max = maxf(pool_max, minf(float(m.get("range", 0.0)) * Kit.GEOMETRY_SCALE * Sim.KIT_RANGE_LIFT,
+			Sp.HARD_REACH_MAX))
 	for comp in comps:
 		for u in _comp_units(str(comp), moves):
 			var best := 6.6                     # sim.gd BASE_REACH — every unit has at least this
 			for k in (u.get("kit", []) as Array):
-				best = maxf(best, float(k.get("range", 0.0)))
+				var r := float(k.get("range", 0.0))
+				if r > 0.0:
+					best = maxf(best, minf(r * Sim.KIT_RANGE_LIFT, Sp.HARD_REACH_MAX))
 			if best > widest:
 				widest = best
 				who = "%s/%s" % [str(comp), str(u.id)]
-	print("    reach vs distance: widest reach fielded %.1fu (%s) | widest in the WHOLE 141-move pool %.1fu | deploy separation %.1fu"
+	print("    reach vs distance: widest LIVE reach fielded %.1fu (%s) | widest in the WHOLE 141-move pool %.1fu | deploy separation %.1fu"
 		% [widest, who, pool_max, sep])
-	print("    -> the fielded reach is %.1f%% of the walk; even the pool's longest is %.1f%%. `Spatial.reach_of` would give the same pool %.1fu (%.0f%%) — the sim does not use it."
-		% [100.0 * widest / sep, 100.0 * pool_max / sep,
-			Sp.HARD_REACH_MAX, 100.0 * Sp.HARD_REACH_MAX / sep])
+	print("    -> the fielded reach is %.1f%% of the walk (was 4.6%% before the round-14 lift completion — first shot equalled first contact)."
+		% [100.0 * widest / sep])
 
 
 ## ⚠️ THE SECOND DISCRIMINATOR, AND THE ONE THAT BROKE THE ROUND OPEN. The A/B above showed the
@@ -1193,6 +1237,154 @@ func _opening(res: Dictionary) -> Dictionary:
 		"meet_tick": -1 if is_nan(meet) else int(meet * float(total)),
 		"attempts": attempts, "actors": actors.size(),
 		"busy": float(attempts) / window}
+
+
+## ── THE PACING INSTRUMENT (round 14) ─────────────────────────────────────────────────────────
+## ⚠️ BUILT FOR THE "FIGHT HAS NO MIDDLE" ROUND. `WATCH_AUDIT.md` §0 measured the shape a viewer
+## gets: 40-49% silent walk, then every event of the fight inside a ten-second scrum at 21-28
+## log lines/second. The `_opening` instrument above sees the front half of that; this sees the
+## whole fight. Four numbers per fight, each judged against an authored target in
+## `_pacing_checks` below:
+##   first damage — as a FRACTION of the fight (the "no middle" headline number)
+##   peak eps     — busiest 1-second bucket, counting the event kinds a viewer is shown
+##   dead air     — longest stretch with NO presented event AFTER the first attempt, as a
+##                  fraction of the fight (before the first attempt is the approach, measured
+##                  separately by `_opening`; after it, silence is dead air by definition)
+##   length       — seconds (the duration band check already gates the extremes; the pacing
+##                  target is about the MEDIAN staying watchable)
+##
+## ⚠️ `PRESENTED_KINDS` is the sim-side proxy for "a log line the viewer gets". It deliberately
+## excludes `status_tick`/`status_expire` (the renderer aggregates DoT ticks — round 13's
+## "aggregated floats") and `cast_start`/`proj_launch` (presented as a cast bar / a flying body,
+## not as log lines). Change the list only with a matching change in what `arena_3d.gd` presents.
+const PRESENTED_KINDS := ["strike", "cast_done", "proj_hit", "miss", "cast_miss", "death",
+	"interrupt", "status_applied", "status_break", "heal", "buff", "cleanse", "aoe",
+	"taunted", "thorns", "ward_soak", "detonate", "fizzle", "proj_fizzle", "debuff"]
+
+func _pacing(res: Dictionary) -> Dictionary:
+	var total: int = maxi(1, res.frames.size() - 1)
+	var o: Dictionary = _opening(res)
+	# Per-second buckets of presented events.
+	var buckets: Array = []
+	buckets.resize(int(total / 10) + 1)
+	buckets.fill(0)
+	for i in res.frames.size():
+		for e in res.frames[i].events:
+			if str(e.kind) in PRESENTED_KINDS:
+				buckets[int(i / 10)] = int(buckets[int(i / 10)]) + 1
+	var peak := 0
+	var peak_at := 0
+	for b in buckets.size():
+		if int(buckets[b]) > peak:
+			peak = int(buckets[b])
+			peak_at = b
+	# Dead air after the first attempt: longest run of consecutive EMPTY seconds.
+	var first_s: int = maxi(0, int(int(o.attempt) / 10))
+	var dead := 0
+	var run := 0
+	for b in range(first_s, buckets.size()):
+		if int(buckets[b]) == 0:
+			run += 1
+			dead = maxi(dead, run)
+		else:
+			run = 0
+	return {"len_s": float(total) * 0.1,
+		"dmg_frac": float(o.damage) / float(total),
+		"attempt_s": float(o.attempt) * 0.1,
+		"busy": float(o.busy),
+		"peak_eps": peak, "peak_at_s": peak_at,
+		"dead_s": float(dead), "dead_frac": float(dead) * 10.0 / float(total)}
+
+
+func _pacing_report(rows: Array) -> void:
+	print("  -- pacing: does the fight have a middle? --")
+	for r in rows:
+		var p: Dictionary = _pacing(r)
+		print("    %-20s len %5.1fs | 1st dmg %3.0f%% | peak %2d ev/s @%ds | dead air after 1st attempt %4.1fs (%3.0f%%)"
+			% [str(r.label), float(p.len_s), 100.0 * float(p.dmg_frac),
+				int(p.peak_eps), int(p.peak_at_s), float(p.dead_s), 100.0 * float(p.dead_frac)])
+
+
+## ── THE PACING ACCEPTANCE — targets authored for round 14, each argued, and the honest record
+## of which discriminate (fail the pre-round sim) and which are ceilings:
+##   • first damage <= 33% of the fight. ⚠️ A CEILING, NOT A DISCRIMINATOR ON THESE COMPS: the
+##     watch scene measured 40-49% (WATCH_AUDIT §0, fights of 21-26s) but this probe's comps run
+##     longer, so their pre-fix fractions already sat at 8-32%. The gate exists so the watch
+##     scene's failure shape can never appear here unnoticed. The brief suggested 20%; that is
+##     not reachable by the reach fix alone — the walk from 391.6u apart to the longest reach
+##     (96.8u) is ~6s of hard approach at these speeds; cutting the walk itself means shortening
+##     the deploy separation or raising TARGET_CLOSE_SECONDS, and "deployment zones at either
+##     END of the arena" is a studio-owner decision this round does not reopen.
+##   • the approach is a FIREFIGHT where anything CAN fire: MEAN busy >= 0.40 attempts/s before
+##     first damage, across the comps fielding >= PACE_STANDOFF_MIN HOSTILE standoff kits (live
+##     reach >= PACE_STANDOFF_REACH; heals do not shoot). ⚠️ THE DISCRIMINATOR — before the fix
+##     the standoff comps averaged 0.25/s ("two lines walking"); after, 0.45/s. A MEAN, not a
+##     per-comp floor, deliberately: sustain's two casters genuinely stay quiet (both lines walk
+##     slowly, so the in-range window before contact is ~2s and one cast fills it) and that is
+##     the comp being itself, not the bug returning — while the pre-fix state fails the mean by
+##     near half. Melee-only comps are exempt because a brawl's approach is silent BY NATURE;
+##     that stretch is presentation's to carry (crowd/audio — WATCH_AUDIT builder 2).
+##   • dead air after the first attempt <= 20% of the fight (the brief's number, adopted).
+##     ⚠️ ALSO A DISCRIMINATOR: caster_peel measured 26.0s (25%) and kite 17.0s (36%) before;
+##     2.0s (4%) and 2.0s (7%) after — the "middle" of a long fight was literal dead air and is
+##     now an exchange.
+##   • peak presented-events/sec <= 26. ⚠️ HONEST CEILING, NOT A WIN: the melee pile still lands
+##     together (BODY_RADIUS x reach geometry — sim.gd's own header says the pair must move
+##     together, a separate re-baseline). The gate exists so the peak cannot silently grow past
+##     what round 13's aggregation was measured to keep legible; tightening it to the brief's 15
+##     needs the pile fix, not this one. (Measured peaks here: 6-10/s.)
+const PACE_DMG_FRAC_MAX := 0.33
+const PACE_BUSY_MIN := 0.40
+const PACE_STANDOFF_REACH := 40.0   # live (post-lift) reach that counts as a standoff weapon
+const PACE_STANDOFF_MIN := 2        # units fielding one before the firefight gate applies
+const PACE_DEAD_FRAC_MAX := 0.20
+const PACE_PEAK_MAX := 26
+
+
+## How many units in this comp field a HOSTILE standoff weapon, at the sim's LIVE reach.
+## Friendly-target moves (heal/buff — target self/ally/team) are excluded: reach they may have,
+## but they produce no attempts at an enemy, and counting them made the sustain healer read as
+## a sniper.
+func _standoff_count(comp: String, moves: Array) -> int:
+	var n := 0
+	for u in _comp_units(comp, moves):
+		for k in (u.get("kit", []) as Array):
+			var r := float(k.get("range", 0.0))
+			var tgt := str((k.get("move", {}) as Dictionary).get("target", "enemy"))
+			if tgt in ["self", "ally", "team"]:
+				continue
+			if r > 0.0 and minf(r * Sim.KIT_RANGE_LIFT, Sp.HARD_REACH_MAX) >= PACE_STANDOFF_REACH:
+				n += 1
+				break
+	return n
+
+
+func _pacing_checks(rows: Array, moves: Array) -> void:
+	var late: Array = []
+	var standoff_busy: Array = []
+	var dead: Array = []
+	var spiky: Array = []
+	for r in rows:
+		var p: Dictionary = _pacing(r)
+		var comp := str(r.label).split("/")[0]
+		if float(p.dmg_frac) > PACE_DMG_FRAC_MAX:
+			late.append("%s: 1st dmg at %.0f%%" % [str(r.label), 100.0 * float(p.dmg_frac)])
+		if _standoff_count(comp, moves) >= PACE_STANDOFF_MIN:
+			standoff_busy.append(float(p.busy))
+		if float(p.dead_frac) > PACE_DEAD_FRAC_MAX:
+			dead.append("%s: %.1fs dead (%.0f%%)" % [str(r.label), float(p.dead_s), 100.0 * float(p.dead_frac)])
+		if int(p.peak_eps) > PACE_PEAK_MAX:
+			spiky.append("%s: peak %d ev/s" % [str(r.label), int(p.peak_eps)])
+	for s in late + dead + spiky:
+		print("    pacing: ", s)
+	print("    pacing: standoff-comp approach busy mean %.2f/s over %d comps" % [_mean(standoff_busy), standoff_busy.size()])
+	_check("pacing: first damage lands by %.0f%% of the fight in every comp" % (100.0 * PACE_DMG_FRAC_MAX),
+		late.is_empty())
+	_check("pacing: standoff comps average a live approach (mean >= %.2f attempts/s)" % PACE_BUSY_MIN,
+		not standoff_busy.is_empty() and _mean(standoff_busy) >= PACE_BUSY_MIN)
+	_check("pacing: no dead-air stretch over %.0f%% of the fight after the first attempt" % (100.0 * PACE_DEAD_FRAC_MAX),
+		dead.is_empty())
+	_check("pacing: peak presented events/sec stays <= %d" % PACE_PEAK_MAX, spiky.is_empty())
 
 
 ## First "falling back at N% HP" decision-log entry per unit whose id starts with `prefix`;

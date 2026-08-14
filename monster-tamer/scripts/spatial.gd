@@ -91,26 +91,19 @@ static func deploy_separation(team_size: int) -> float:
 ## the "closing under fire" shape `ENGAGEMENT_DESIGN.md` wants. `AUTOBATTLER_DESIGN.md` #11 puts
 ## emergent fight length at ~30s to ~3min, so a 26s approach sits inside the design, not outside.
 ##
-## ⚠️⚠️ THE PARAGRAPH DIRECTLY ABOVE IS FALSE OF THE SIM THAT SHIPS, AND IT IS LEFT STANDING ONLY
-## SO THIS CORRECTION HAS SOMETHING TO POINT AT. MEASURED 2026-08-08 by the opening instrument in
-## `scripts/sim/_probe_sim_quality.gd` (`_opening`, `_reach_vs_separation`), on the real 440x246
-## board across seven comps and six seeds:
-##
-##     time to the first attempt of any kind   11.1s  (sd 0.2s across ALL seven comps)
-##     time to the first damage                11.2s
-##     time the two fronts physically cross    11.4s
-##     attempt-events during the approach      1 to 3, i.e. 0.09-0.26 per second
-##
-## First shot, first blood and first contact are the SAME MOMENT to within half a second. Nothing
-## opens fire during the approach, because nothing can: the live sim's reaches are 6.6u (the melee
-## basic) to 24.2u (the longest range in the whole 141-move pool), against a deploy separation of
-## 391.6u — **6% of the walk**. The 96-unit figure is `HARD_REACH_MAX` from `reach_of()` below,
-## and `scripts/sim/sim.gd` NEVER CALLS IT: it does not preload this file at all (`Sp.` appears in
-## it only inside comments), and `scripts/sim/kit.gd` lifts an authored `move.range` by
-## `GEOMETRY_SCALE` (x2.2) where `reach_of` lifts it by `REACH_SCALE` (x8.8). The claim described
-## the superseded `spatial_sim.gd`, which does call `reach_of`.
-## ⚠️ SO: THIS FILE'S REACH NUMBERS DESCRIBE A LAYER THAT NO LONGER FIGHTS. Do not quote them as
-## the game's reaches, and do not "fix" the approach by trusting them.
+## ⚠️⚠️ THE PARAGRAPH ABOVE WAS FALSE OF THE SIM THAT SHIPPED FOR SIX DAYS, AND ROUND 14 MADE IT
+## TRUE. Measured 2026-08-08 by `_probe_sim_quality.gd` (`_opening`, `_reach_vs_separation`): the
+## live sim's reaches ran 6.6u to 24.2u against a 391.6u separation — 6% of the walk — because
+## `kit.gd` lifts an authored `move.range` by GEOMETRY_SCALE (x2.2) where `reach_of` lifts it by
+## REACH_SCALE (x8.8). First shot, first blood and first contact were therefore the SAME MOMENT
+## (7.2-8.4s, all comps), and 30-49% of every watched fight was a silent walk (`WATCH_AUDIT.md`
+## §0). Round 14 (2026-08-13) completed the lift at the point of consumption —
+## `sim.gd:KIT_RANGE_LIFT` / `_entry_reach()`, x4.0 on the kit's x2.2, capped at HARD_REACH_MAX —
+## so authored casts now reach 21.1-96.8u as designed and the approach is a closing-under-fire
+## phase. ⚠️ THE MELEE BASIC (sim.gd BASE_REACH 6.6) IS STILL ON THE OLD SCALE, deliberately: it
+## is welded to the surround-slot/body-ring geometry and to the scrum-pile finding (separation
+## and melee reach must move together, with the body re-baseline). The integrator note in sim.gd
+## says how the split lift becomes one line in kit.gd.
 ##
 ## ⚠️ 26.0 → 21.0 → 17.0 ON 2026-08-06, both steps on the user's call that the fight reads sluggish. This is
 ## the RIGHT knob for "make them faster": every unit speed is derived from it, so the DEX ladder,

@@ -4104,9 +4104,9 @@ func _check_intent_transitions(fa: Dictionary) -> void:
 		var names: Array = grouped[key]
 		var txt2: String = str(key).split("|", true, 1)[1]
 		if names.size() >= 3:
-			log_view.append_text("[color=#9fb6d9]%d monsters — %s[/color]\n" % [names.size(), txt2])
+			_log_plain("[color=#9fb6d9]%d monsters — %s[/color]\n" % [names.size(), txt2])
 		else:
-			log_view.append_text("[color=#9fb6d9]%s: %s[/color]\n" % [
+			_log_plain("[color=#9fb6d9]%s: %s[/color]\n" % [
 				", ".join(PackedStringArray(names)), txt2])
 	if not grouped.is_empty():
 		call_deferred("_snap_log")
@@ -4474,6 +4474,62 @@ func _index_of_unit_named(nm: String) -> int:
 	return -1
 
 
+## THE HEAD THAT EXISTS, NOT THE ONE THE CONSTANT ASSUMES.
+##
+## `UNIT_HEIGHT` is the height the rig is ASKED for. What it DRAWS is `drawn_height`, and the two
+## are not the same number because `creature_rig._scale_to` caps the footprint - a stocky body is
+## honestly made SMALLER rather than squashed, so it comes out short. Measured this round with
+## `_probe_watch.gd`: bodies draw 0.68 to 2.86 world units against a nominal 4.4, and every plate,
+## float and leader line anchored at the nominal height. Razzhorn's plate sat 5.1 units up over a
+## 0.68-unit body - seven body-heights of empty air between the annotation and the thing it
+## annotates. The probe's own orphan metric read 16% and could not see it, because its reference
+## point WAS the nominal anchor: the instrument shared the bug's assumption. Asked against the
+## drawn head the same frames read 88%.
+##
+## ⚠️ THE FLOOR WANTED TO BE GENEROUS AND THAT PUT THE ORPHANS BACK. First cut floored the head
+## at 0.42 of nominal (1.85 world) on the theory that a plate must not sit "almost on the feet" of
+## a short body - and measured 28% still orphaned, because the floor IS the gap for exactly the
+## bodies that needed the fix: a 0.68-tall creature got its plate 1.85 up, two and a half of its
+## own body-heights clear. The theory was wrong on inspection too - the plate hangs ABOVE its
+## anchor, so a low anchor puts it beside the head, never over it. The floor now only stops a
+## degenerate zero. Renderer-side entirely; the sim is not consulted and nothing is derived.
+const HEAD_MIN_FRAC := 0.14
+
+func _head_h(idx: int) -> float:
+	if idx < 0 or idx >= nodes.size():
+		return UNIT_HEIGHT
+	var rig = nodes[idx].get("rig")
+	if rig != null and is_instance_valid(rig) and float(rig.get("drawn_height")) > 0.0:
+		return clampf(float(rig.get("drawn_height")), UNIT_HEIGHT * HEAD_MIN_FRAC, UNIT_HEIGHT)
+	# A sprite unit is drawn at exactly UNIT_HEIGHT, so the nominal figure is the true one there.
+	return UNIT_HEIGHT
+
+
+## A float that belongs to a PLACE rather than to a body - the AoE burst's target count is about a
+## patch of ground, and `_float_text` can only speak from a unit. Same visual grammar deliberately
+## (billboarded, outlined, rises and fades) so the viewer reads it as the same kind of statement.
+func _float_at(pos: Vector3, text: String, col: Color, scale: float = 1.0) -> void:
+	if _fx_muted:
+		return
+	var lbl := Label3D.new()
+	lbl.text = text
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.font_size = 96
+	lbl.outline_size = 34
+	lbl.outline_modulate = Color(0, 0, 0, 0.92)
+	lbl.modulate = col
+	lbl.pixel_size = 0.0075 * clampf(scale, 0.3, 2.5)
+	lbl.no_depth_test = true
+	add_child(lbl)
+	lbl.position = pos
+	var dur: float = 1.1 / maxf(0.25, speed)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position", pos + Vector3(0, 3.0, 0), dur)
+	tw.tween_property(lbl, "modulate:a", 0.0, dur)
+	tw.chain().tween_callback(lbl.queue_free)
+
+
 var _float_recent := {}   # unit idx -> {t, n} — staggers same-moment floats (UX audit #3)
 
 ## ⚠️ `scale` IS A LEGIBILITY HIERARCHY, NOT A COSMETIC KNOB. Every float used to be the same
@@ -4512,7 +4568,9 @@ func _float_text(idx: int, text: String, col: Color, scale: float = 1.0) -> void
 	# World-space fan: same-moment floats on one body step sideways then up a row (a Label3D
 	# lives in world units, not pixels — ~1.7 units x is one digit-width at this camera).
 	var fan_off := Vector3(float((fan % 3) - 1) * 1.7, float(fan / 3) * 1.3, 0)
-	var start: Vector3 = (nodes[idx]["holder"] as Node3D).position + Vector3(0, UNIT_HEIGHT * 0.8, 0) + fan_off
+	# Over the body's OWN head, not the nominal one - a damage number floating three body-heights
+	# above a capped body is as unattributable as the plate was.
+	var start: Vector3 = (nodes[idx]["holder"] as Node3D).position + Vector3(0, _head_h(idx) * 0.85, 0) + fan_off
 	lbl.position = start
 	var tw := create_tween()
 	tw.set_parallel(true)
@@ -4541,6 +4599,13 @@ func _hit_flash(idx: int) -> void:
 	if rig != null and rig.has_method("hit_flash"):
 		rig.hit_flash()
 
+
+## AUDIT COUNTERS - read by `_probe_watch.gd`'s AoE canary, which exits non-zero if a burst fired
+## and the viewer was shown nothing. `docs/WATCH_AUDIT.md` §4 found `aoe` silent for four rounds
+## while the sim's own comment declared the ring mandatory; a counter is what makes that failure
+## noisy instead of invisible.
+var _aoe_bursts_drawn := 0
+var _aoe_counts_drawn := 0
 
 var _aoe_rings := {}   # unit index -> MeshInstance3D (the AoE windup telegraph)
 var _innate_rings := {}   # unit index -> MeshInstance3D (persistent innate-zone tells)
@@ -4653,13 +4718,47 @@ func _show_aoe_ring(idx: int, radius: float, channel: String) -> void:
 ## while an allEnemies move winds up. This is the other half: the moment it lands, at the centre
 ## and radius the SIM reported, expanding once and fading. The sim's own comment at `sim.gd:1585`
 ## is the specification; every number here comes off the event.
-func _aoe_burst(centre_ground: Vector2, radius: float, targets: int) -> void:
+func _aoe_burst(centre_ground: Vector2, radius: float, targets: int, caster_idx: int = -1) -> void:
 	if _fx_muted or radius <= 0.0:
 		return
+	_aoe_bursts_drawn += 1
+	var centre: Vector3 = _to_world(centre_ground)
+	var r: float = radius * WORLD_SCALE
+	# ⚠️ THE RING'S THICKNESS MUST BE A FRACTION OF ITS RADIUS, NOT A CONSTANT. This drew a
+	# fixed 0.45-world band, and the radius it has to serve is not a fixed quantity: measured this
+	# round the same move burst at 32.9 world units (a 1,876px ring across a 1,920px frame) before
+	# the geometry consolidation landed and 14.7 world (779px) after - a 2.2x move in the middle of
+	# one afternoon, and the separation of blast from throw distance will move it again. At the top
+	# of that range a constant band is a hairline on a screen-wide circle; at the bottom it is a
+	# solid disc. Proportional-with-clamps reads as the SAME EFFECT at every size, which is the only
+	# property that survives a number still being decided.
+	var thick: float = clampf(r * 0.11, 0.45, 3.2)
+	var heat: float = clampf(float(targets - 1) / 3.0, 0.0, 1.0)
+	var col := Color(1.0, 0.62, 0.28).lerp(Color(1.0, 0.30, 0.22), heat)
+	var dur: float = (0.55 + 0.30 * heat) / maxf(0.25, speed)
+
+	# THE FILL. A ring alone states a boundary; at a large radius the eye has to trace a thin circle
+	# to find out what is inside it, and inside it is the mechanic. A faint disc says AREA at a
+	# glance and costs one unshaded, depth-tested-off quad-ish mesh for half a second.
+	var disc := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = r
+	cyl.bottom_radius = r
+	cyl.height = 0.04
+	cyl.radial_segments = 40
+	cyl.rings = 0
+	disc.mesh = cyl
+	var dmat := StandardMaterial3D.new()
+	dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dmat.albedo_color = Color(col.r, col.g, col.b, 0.10 + 0.16 * heat)
+	disc.material_override = dmat
+	disc.position = centre + Vector3(0, 0.08, 0)
+	add_child(disc)
+
 	var ring := MeshInstance3D.new()
 	var tor := TorusMesh.new()
-	var r: float = radius * WORLD_SCALE
-	tor.inner_radius = maxf(0.2, r - 0.45)
+	tor.inner_radius = maxf(0.15, r - thick)
 	tor.outer_radius = r
 	tor.rings = 48
 	ring.mesh = tor
@@ -4667,21 +4766,41 @@ func _aoe_burst(centre_ground: Vector2, radius: float, targets: int) -> void:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	# ⚠️ THE COUNT IS THE MECHANIC. "Weak into one body, strong into three" is the whole falloff
-	# design, so the burst reads heavier the more bodies it caught — that is the fact the viewer
-	# is meant to learn, and a fixed ring would hide it.
-	var heat: float = clampf(float(targets - 1) / 3.0, 0.0, 1.0)
-	mat.albedo_color = Color(1.0, 0.62, 0.28).lerp(Color(1.0, 0.30, 0.22), heat)
-	mat.albedo_color.a = 0.30 + 0.45 * heat
+	# design, so the burst reads heavier the more bodies it caught - that is the fact the viewer is
+	# meant to learn, and a fixed ring would hide it. Colour ALONE was never enough to carry it: a
+	# viewer cannot read a count off a hue they have no reference for, and this presentation shipped
+	# for four rounds claiming to show a number it only ever implied. The label below is the count.
+	mat.albedo_color = Color(col.r, col.g, col.b, 0.34 + 0.44 * heat)
 	ring.material_override = mat
-	ring.position = _to_world(centre_ground) + Vector3(0, 0.12, 0)
+	ring.position = centre + Vector3(0, 0.12, 0)
 	ring.scale = Vector3(0.55, 1.0, 0.55)
 	add_child(ring)
-	var dur: float = 0.5 / maxf(0.25, speed)
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(ring, "scale", Vector3.ONE, dur)
 	tw.tween_property(mat, "albedo_color:a", 0.0, dur)
+	tw.tween_property(dmat, "albedo_color:a", 0.0, dur)
 	tw.chain().tween_callback(ring.queue_free)
+	tw.chain().tween_callback(disc.queue_free)
+
+	# THE COUNT, IN WORDS, AT THE CENTRE. `targets` rides the event; nothing here is derived.
+	# One body is deliberately quieter than three - the presentation has to make the falloff's own
+	# shape visible, and shouting equally at 1 and at 4 would teach the opposite of the rule.
+	var caught: String = "☉ %d CAUGHT" % targets if targets >= 2 else "☉ 1"
+	_float_at(centre + Vector3(0, 1.6, 0), caught, col, 0.85 + 0.45 * heat)
+	_aoe_counts_drawn += 1
+
+	# ⚠️ AND WHO THREW IT. The sim's centre is the CASTER'S position today, but the geometry
+	# work this round separates blast radius from throw distance, after which a burst may land on a
+	# point nobody is standing on. An unattributed explosion in the middle of the board is the same
+	# failure the taunt tether was built to fix - the viewer sees an effect and cannot name a cause.
+	# Drawn only when the centre is genuinely away from the caster, so it costs nothing today and is
+	# correct the moment the centre moves.
+	if caster_idx >= 0 and caster_idx < nodes.size():
+		var cpos: Vector3 = (nodes[caster_idx]["holder"] as Node3D).position
+		if Vector2(cpos.x - centre.x, cpos.z - centre.z).length() > UNIT_FOOTPRINT_MAX:
+			_tracer(cpos, centre, 0.8, 0.45)
+
 	if targets >= 2:
 		_punch(0.2 + 0.08 * float(targets), 0.12 + 0.05 * float(targets))
 
@@ -5128,7 +5247,13 @@ func _update_plates() -> void:
 			plate.visible = false
 			_set_leader(k, false, Vector2.ZERO, Vector2.ZERO)
 			continue
-		var world: Vector3 = (nd["holder"] as Node3D).global_position + Vector3(0, UNIT_HEIGHT + 0.7, 0)
+		# ANCHORED TO THE HEAD THE RIG DREW - see `_head_h`. This line read `UNIT_HEIGHT + 0.7`, a
+		# constant no body in the roster actually reaches, and it put 90% of plates more than a
+		# body-height clear of their own creature at a mean gap of 2.80 body-heights (measured,
+		# `_probe_watch.gd` section D, with the scale-corrected rect).
+		# The clearance is a FRACTION of the head, not a constant: 0.30 world is a tenth of a body
+		# on a tall creature and half a body on a short one, and the short ones are the whole point.
+		var world: Vector3 = (nd["holder"] as Node3D).global_position + Vector3(0, _head_h(k) + maxf(0.16, _head_h(k) * 0.12), 0)
 		if camera.is_position_behind(world):
 			plate.visible = false
 			_set_leader(k, false, Vector2.ZERO, Vector2.ZERO)
@@ -5227,8 +5352,10 @@ func _update_plates() -> void:
 		# four full plates over one scrum is four 90px rectangles that must stack somewhere. A
 		# connector fixes attribution directly instead of trying to make lifting unnecessary — the
 		# standard call-out solution, and the one this file had not tried.
+		# The leader line must point at the same head the anchor uses, or the connector that exists
+		# to fix attribution introduces its own 3-unit error.
 		var head_px: Vector2 = camera.unproject_position(
-			(nd["holder"] as Node3D).global_position + Vector3(0, UNIT_HEIGHT, 0))
+			(nd["holder"] as Node3D).global_position + Vector3(0, _head_h(k), 0))
 		_set_leader(k, lifts > 0, Vector2(pos.x + psize.x * 0.5, pos.y + psize.y), head_px)
 		# ⚠️ Record the CLAMPED rect, not the pre-clamp one — a plate pushed back down by the
 		# viewport clamp occupies different pixels, and registering the wrong rect would let the
@@ -5399,6 +5526,8 @@ func _seek(seconds: float) -> void:
 	_last_intent.clear()
 	_recent_hits.clear()
 	_float_recent.clear()
+	# A rebuilt log must not merge into rows that no longer exist.
+	_log_rows_reset()
 	var upto := 0
 	var now_t: float = target * NewSim.DT
 	while upto < event_log.size() and float(event_log[upto].get("t", 0.0)) <= now_t:
@@ -5443,17 +5572,165 @@ func _undo_deaths() -> void:
 	_tethers.clear()
 
 
+# ═══ THE KILL BURST IS UNREADABLE, AND IT IS UNREADABLE FOR A COUNTABLE REASON ═══
+#
+# `docs/WATCH_AUDIT.md` §0: "everything that will ever happen happens inside a ten-second scrum at
+# a density of eighteen to twenty-four log lines per second". Round 23 gave the fight a middle and
+# left that number where it was. What it is MADE OF was never printed, so nobody could tell whether
+# the fix was fewer events, fewer lines, or a different surface entirely. Measured this round
+# (`_probe_watch.gd` section B, new):
+#
+#     whole fight   133 lines: hit=46 buff=35 thorns=23 miss=6 status=6 death=6 aoe=3 ...
+#     busiest sec    21 lines: hit=9 thorns=8 death=2 aoe=1 heal=1
+#
+# EIGHT of the twenty-one worst-second lines are THORNS - a reflect that this file's own comment
+# already calls "a CONSEQUENCE of a blow the viewer already saw", and which is drawn at half size
+# on the body for exactly that reason. Thirty-five of the fight's lines are self-buffs repeating
+# during the approach. Neither is news; both are printed at the same weight as a death.
+#
+# ⚠️ SO THE FIX IS COALESCING, NOT SUPPRESSION, AND THE DIFFERENCE IS THE WHOLE POINT. Deleting
+# a line loses information the player might need (how much did those barbs actually cost?).
+# Merging keeps every number - the count and the running total are both in the merged line - and
+# spends one row instead of eight. "34 ×3" is a read a viewer can take at fight speed; three
+# separate rows of the same sentence are not. That argument is not new here: it is the reasoning
+# `_flush_damage_floats` already applies to the floats over a body, and this is the same rule
+# applied to the log those floats are narrating.
+#
+# ⚠️ AND IT MERGES ONLY WITH THE LINE DIRECTLY ABOVE. A coalescer that reaches back further
+# would reorder the fight, and the log's one job is to be the fight in order. If anything else was
+# said in between, the new line is new.
+const LOG_MERGE_WINDOW := 2.5   # playback seconds
+## ⚠️ MERGING ONLY WITH THE LINE DIRECTLY ABOVE WAS TRIED FIRST AND MERGED EXACTLY NOTHING.
+## Measured, in the run that proved it: 0 merges across 135 statements. The reason is that the log
+## INTERLEAVES - a thorns tick is emitted between the hit that caused it and the next hit, the
+## intent ticker cuts in between exchanges, and nine attackers take turns - so two statements that
+## say the same thing are almost never adjacent. A strict-adjacency coalescer is a coalescer that
+## does not run, and it would have shipped looking correct. Hence the lookback, and hence the
+## canary in `_probe_watch.gd` that fails the run when the merge count is zero.
+##
+## ⚠️ AND THE FIRST LOOKBACK WAS A MAGIC NUMBER (8) THAT MERGED 7 STATEMENTS OF 172. In the
+## busiest second the fight writes 27 rows, so a fixed eight-row window cannot reach back even one
+## second and the coalescer was still, effectively, adjacency-only. The bound that means something
+## is the TIME window - two statements are the same news if they are close together in the fight,
+## and how many other monsters spoke in between is not the viewer's question. So the scan runs
+## until the window expires and the row cap is only a runaway guard.
+const LOG_MERGE_LOOKBACK := 256
+
+## Every rendered row, in order: {key, n, dmg, t}. Index == the row's paragraph index in
+## `log_view`, which is what makes an in-place merge possible at all.
+var _log_rows: Array = []
+## Playback timestamps. `_log_stmt_times` never shrinks - it is every statement the fight made;
+## `_log_row_times` is one entry per ROW that survives merging. The probe buckets both by second,
+## so the before/after density read comes out of ONE run and cannot be confounded by the sim
+## changing underneath the instrument (which it did, twice, on the afternoon this was written).
+var _log_stmt_times: Array = []
+var _log_row_times: Array = []
+var _log_merges := 0      # audit counter - read by `_probe_watch.gd`; 0 means the coalescer is dead
+
+
+func _log_rows_reset() -> void:
+	_log_rows.clear()
+	_log_row_times.clear()
+	_log_stmt_times.clear()
+	_log_merges = 0
+
+
+## ⚠️ THE FIRST KEY WAS "SAME ATTACKER, SAME TARGET, SAME MOVE" AND IT BARELY FIRED. With the
+## time window opened to the full 2.5s it folded 20 statements of 162 and moved the worst second
+## from 22 rows to 20. The reason is the one that matters: THE SCRUM'S DENSITY IS VARIETY, NOT
+## REPETITION. Five attackers hitting four targets once each produce nine rows with no two alike,
+## and no coalescer keyed on sameness can touch them. Measured, so it is on the record rather than
+## re-derived next round.
+##
+## So the key is the VICTIM, and the row accumulates who hit it. "Terrock takes 34 from Gruulk,
+## Grynt +1" is one row where four were, it keeps every number, it keeps attribution, and it is
+## the aggregation `docs/WATCH_AUDIT.md` §9.3 asked for in the first place ("damage numbers that
+## aggregate per victim per beat"). The precise per-blow read has not been lost: it is the float
+## over the body, which is where a blow is actually happening.
+##
+## `make(n, dmg, tags)` builds the line for a run of `n` statements totalling `dmg` from the
+## distinct `tags` gathered so far. It is called with (1, dmg, [tag]) for the first.
+##
+## ⚠️ A MERGED ROW MOVES TO THE BOTTOM, AND THAT IS THE HONEST PLACE FOR IT. Rewriting the row
+## where it sits means re-rendering the whole label on every merge, and the row is a RUNNING TOTAL
+## that has just been added to - "still happening, now at 42" belongs at the live end of the log.
+func _log_merge_line(key: String, dmg: int, tag: String, make: Callable) -> void:
+	var t: float = _play_t()
+	_log_stmt_times.append(t)
+	# Fail safe: if the row model and the label have drifted apart for any reason, do not touch
+	# paragraphs by index - just print the line. A wrong `remove_paragraph` deletes a death notice.
+	if log_view.get_paragraph_count() == _log_rows.size() + 1:
+		var lo: int = maxi(0, _log_rows.size() - LOG_MERGE_LOOKBACK)
+		for i in range(_log_rows.size() - 1, lo - 1, -1):
+			var row: Dictionary = _log_rows[i]
+			if t - float(row.get("t", -999.0)) > LOG_MERGE_WINDOW:
+				break
+			if str(row.get("key", "")) != key:
+				continue
+			var n: int = int(row["n"]) + 1
+			var d: int = int(row["dmg"]) + dmg
+			var tags: Array = (row["tags"] as Array).duplicate()
+			if tag != "" and not tags.has(tag):
+				tags.append(tag)
+			log_view.remove_paragraph(i)
+			_log_rows.remove_at(i)
+			_log_row_times.remove_at(i)
+			log_view.append_text(make.call(n, d, tags))
+			_log_rows.append({"key": key, "n": n, "dmg": d, "t": t, "tags": tags})
+			_log_row_times.append(t)
+			_log_merges += 1
+			return
+	var t0: Array = [] if tag == "" else [tag]
+	log_view.append_text(make.call(1, dmg, t0))
+	_log_rows.append({"key": key, "n": 1, "dmg": dmg, "t": t, "tags": t0})
+	_log_row_times.append(t)
+
+
+## "Gruulk, Grynt +2" - names up to three, then a count. A merged row must stay one line at the
+## log's 11px type or it costs back the row it saved.
+func _who(names: Array) -> String:
+	if names.size() <= 3:
+		return ", ".join(PackedStringArray(names))
+	return "%s +%d" % [", ".join(PackedStringArray(names.slice(0, 3))), names.size() - 3]
+
+
+## Anything that is not mergeable is still a ROW, and the row model has to know about it or the
+## paragraph indices above stop meaning anything.
+func _log_plain(text: String) -> void:
+	var t: float = _play_t()
+	log_view.append_text(text)
+	_log_rows.append({"key": "", "n": 1, "dmg": 0, "t": t, "tags": []})
+	_log_row_times.append(t)
+	_log_stmt_times.append(t)
+
+
 func _log_event(e: Dictionary) -> void:
 	match e.get("kind", ""):
 		"start":
-			log_view.append_text("[color=#d9b957]The fight begins.[/color]\n")
+			_log_plain("[color=#d9b957]The fight begins.[/color]\n")
 		"hit":
 			var col := "#ffcf5c" if e.get("crit", false) else "#e6e6ec"
-			log_view.append_text("[color=%s]%s → %s: %s (%d)%s[/color]\n" % [col, e["attacker"], e["target"], e["move"], e["dmg"], "  CRIT" if e.get("crit", false) else ""])
+			var t_n := str(e["target"])
+			var a_n := str(e["attacker"])
+			var m_n := str(e["move"])
+			var crit_s := "  CRIT" if e.get("crit", false) else ""
+			_log_merge_line("hiton|%s" % t_n, int(e["dmg"]), a_n,
+				func(n: int, d: int, who: Array) -> String:
+					if n <= 1:
+						return "[color=%s]%s → %s: %s (%d)%s[/color]\n" % [col, a_n, t_n, m_n, d, crit_s]
+					return "[color=%s]%s takes %d from %d blows — %s[/color]\n" % [col, t_n, d, n,
+						_who(who)])
 		"miss":
-			log_view.append_text("[color=#8a8a92]%s's %s missed %s[/color]\n" % [e["attacker"], e["move"], e["target"]])
+			var mt_n := str(e["target"])
+			var ma_n := str(e["attacker"])
+			var mm_n := str(e["move"])
+			_log_merge_line("misson|%s" % mt_n, 0, ma_n,
+				func(n: int, _d: int, who: Array) -> String:
+					if n <= 1:
+						return "[color=#8a8a92]%s's %s missed %s[/color]\n" % [ma_n, mm_n, mt_n]
+					return "[color=#8a8a92]%s dodges %d — %s[/color]\n" % [mt_n, n, _who(who)])
 		"status_apply":
-			log_view.append_text("[color=#c98a3a]%s is now %s[/color]\n" % [e["unit"], e["status"]])
+			_log_plain("[color=#c98a3a]%s is now %s[/color]\n" % [e["unit"], e["status"]])
 			# A launched body is a spatial event, and text in a side log does not read at fight
 			# speed. ⚠️ THE `"taunt"` ARM OF THIS BRANCH WAS DEAD CODE AND HAS BEEN REMOVED —
 			# taunt is not a `fieldStatus`, so `status_applied` never carries it and this could
@@ -5469,9 +5746,19 @@ func _log_event(e: Dictionary) -> void:
 						vfx.burst((nodes[stid]["holder"] as Node3D).position + Vector3(0, 0.5, 0),
 							"dust", Color(0.75, 0.68, 0.55), 1.5, 14)
 		"status_expire":
-			log_view.append_text("[color=#6f6f77]%s's %s wears off[/color]\n" % [e["unit"], e["status"]])
+			_log_plain("[color=#6f6f77]%s's %s wears off[/color]\n" % [e["unit"], e["status"]])
 		"buff":
-			log_view.append_text("[color=#7fd0a0]%s's %s aids %s[/color]\n" % [e["caster"], e["move"], e["unit"]])
+			var bc_n := str(e["caster"])
+			var bm_n := str(e["move"])
+			var bu_n := str(e["unit"])
+			# The sim emits one buff event PER AFFECTED UNIT, so a team anthem wrote five identical
+			# rows. One row naming the five is the same information at a fifth of the cost.
+			_log_merge_line("buff|%s|%s" % [bc_n, bm_n], 0, bu_n,
+				func(n: int, _d: int, who: Array) -> String:
+					if n <= 1:
+						return "[color=#7fd0a0]%s's %s aids %s[/color]\n" % [bc_n, bm_n, bu_n]
+					return "[color=#7fd0a0]%s's %s aids %d — %s[/color]\n" % [bc_n, bm_n, n,
+						_who(who)])
 			# THE BUFF GRAMMAR: ring under every affected monster, charge on the caster. The sim
 			# emits one buff event PER AFFECTED UNIT, so a team buff rings exactly who it touched.
 			if vfx != null:
@@ -5489,7 +5776,7 @@ func _log_event(e: Dictionary) -> void:
 		# effect with no line in the log did not happen as far as they are concerned.
 		"heal":
 			var blocked: bool = bool(e.get("healblocked", false))
-			log_view.append_text("[color=#7fd0a0]%s's %s heals %s for %d%s[/color]
+			_log_plain("[color=#7fd0a0]%s's %s heals %s for %d%s[/color]
 " % [
 				e["caster"], e["move"], e["unit"], int(e.get("amount", 0)),
 				" (healblocked)" if blocked else ""])
@@ -5506,7 +5793,7 @@ func _log_event(e: Dictionary) -> void:
 			# The most dramatic counter-play in the game: breaking hard control off a pinned ally.
 			# Gold, because it is a save, not routine upkeep.
 			var broke: Array = e.get("broke", [])
-			log_view.append_text("[color=#d8b859]%s's %s frees %s from %s[/color]
+			_log_plain("[color=#d8b859]%s's %s frees %s from %s[/color]
 " % [
 				e["by"], e["move"], e["unit"], ", ".join(PackedStringArray(broke))])
 			# Gold, and it says FREED rather than the status name — the player needs to read the
@@ -5518,7 +5805,7 @@ func _log_event(e: Dictionary) -> void:
 		# on screen, and "an effect with no line in the log did not happen as far as the player
 		# is concerned" (the heal/cleanse lesson, same file, one day earlier). ──
 		"interrupt":
-			log_view.append_text("[color=#ff8a5c]%s's %s is INTERRUPTED — %s[/color]\n" % [
+			_log_plain("[color=#ff8a5c]%s's %s is INTERRUPTED — %s[/color]\n" % [
 				e.get("unit", "?"), e.get("move", "?"), e.get("reason", "")])
 			var iid := _index_of_unit_named(str(e.get("unit", "")))
 			if iid >= 0:
@@ -5535,7 +5822,7 @@ func _log_event(e: Dictionary) -> void:
 				(ind["cast_fill"] as ColorRect).size = Vector2(174.0, 17)
 				(ind["cast_lbl"] as Label).text = "Interrupted"
 		"cast_steady":
-			log_view.append_text("[color=#d8b859]%s shrugs off the interrupt — %s continues[/color]\n" % [
+			_log_plain("[color=#d8b859]%s shrugs off the interrupt — %s continues[/color]\n" % [
 				e.get("unit", "?"), e.get("move", "?")])
 			var sid := _index_of_unit_named(str(e.get("unit", "")))
 			if sid >= 0:
@@ -5544,7 +5831,7 @@ func _log_event(e: Dictionary) -> void:
 					vfx.burst((nodes[sid]["holder"] as Node3D).position + Vector3(0, 0.4, 0),
 						"circle", Color(0.85, 0.72, 0.35), 1.4, 6)
 		"detonate":
-			log_view.append_text("[color=#ff9f45]%s[/color]\n" % e.get("reason", "a status detonates"))
+			_log_plain("[color=#ff9f45]%s[/color]\n" % e.get("reason", "a status detonates"))
 			var did := _index_of_unit_named(str(e.get("unit", "")))
 			if did >= 0:
 				_float_text(did, "DETONATED", Color(1.0, 0.62, 0.27))
@@ -5553,7 +5840,7 @@ func _log_event(e: Dictionary) -> void:
 					vfx.burst(dpos, "flare", Color(1.0, 0.62, 0.27), 1.8, 14)
 					vfx.burst(dpos, "scorch", Color(0.9, 0.45, 0.2), 1.2, 6)
 		"contagion":
-			log_view.append_text("[color=#8fbf6a]☣ %s[/color]\n" % e.get("reason", "a status spreads"))
+			_log_plain("[color=#8fbf6a]☣ %s[/color]\n" % e.get("reason", "a status spreads"))
 			var cgid := _index_of_unit_named(str(e.get("unit", "")))
 			if cgid >= 0:
 				_float_text(cgid, "INFECTED", Color(0.56, 0.75, 0.42))
@@ -5562,7 +5849,7 @@ func _log_event(e: Dictionary) -> void:
 						"smoke", Color(0.56, 0.75, 0.42), 1.2, 12)
 		# ── the four kinds `docs/WATCH_AUDIT.md` §4 found silent, in its priority order ──
 		"taunted":
-			log_view.append_text("[color=#f08c4a]%s's taunt drags %s onto it (%.1fs)[/color]\n" % [
+			_log_plain("[color=#f08c4a]%s's taunt drags %s onto it (%.1fs)[/color]\n" % [
 				e.get("by", "?"), e.get("unit", "?"), float(e.get("seconds", 0.0))])
 			var tvid := _index_of_unit_named(str(e.get("unit", "")))
 			var tbid := _index_of_unit_named(str(e.get("by", "")))
@@ -5579,12 +5866,13 @@ func _log_event(e: Dictionary) -> void:
 						"twirl", Color(0.96, 0.58, 0.26), 1.3, 10)
 		"aoe":
 			var n_t: int = int(e.get("targets", 0))
-			log_view.append_text("[color=#ff9f45]%s's %s bursts over %d %s[/color]\n" % [
+			_log_plain("[color=#ff9f45]%s's %s bursts over %d %s[/color]\n" % [
 				e.get("caster", "?"), e.get("move", "?"), n_t,
 				"body" if n_t == 1 else "bodies"])
-			_aoe_burst((e.get("centre", Vector2.ZERO) as Vector2), float(e.get("radius", 0.0)), n_t)
+			_aoe_burst((e.get("centre", Vector2.ZERO) as Vector2), float(e.get("radius", 0.0)), n_t,
+				_index_of_unit_named(str(e.get("caster", ""))))
 		"fizzle":
-			log_view.append_text("[color=#8a8a92]%s's %s fizzles — nothing in reach[/color]\n" % [
+			_log_plain("[color=#8a8a92]%s's %s fizzles — nothing in reach[/color]\n" % [
 				e.get("unit", "?"), e.get("move", "?")])
 			var fid := _index_of_unit_named(str(e.get("unit", "")))
 			if fid >= 0:
@@ -5597,7 +5885,7 @@ func _log_event(e: Dictionary) -> void:
 				(fnd["cast_lbl"] as Label).text = "No target"
 				_float_text(fid, "FIZZLED", Color(0.72, 0.72, 0.78))
 		"debuff":
-			log_view.append_text("[color=#b98ad8]%s's %s weakens %s (%.1fs)[/color]\n" % [
+			_log_plain("[color=#b98ad8]%s's %s weakens %s (%.1fs)[/color]\n" % [
 				e.get("by", "?"), e.get("move", "?"), e.get("unit", "?"),
 				float(e.get("seconds", 0.0))])
 			var dbid := _index_of_unit_named(str(e.get("unit", "")))
@@ -5608,8 +5896,17 @@ func _log_event(e: Dictionary) -> void:
 					# read as one vocabulary with a sign, not as two unrelated effects.
 					vfx.aura_pulse((nodes[dbid]["holder"] as Node3D).position, Color(0.66, 0.46, 0.86))
 		"thorns":
-			log_view.append_text("[color=#c9d16a]%s's barbs bite %s back for %d[/color]\n" % [
-				e.get("by", "?"), e.get("unit", "?"), int(e.get("dmg", 0))])
+			# The eight-lines-in-the-worst-second case. Barbs firing repeatedly against one attacker
+			# are ONE fact - "standing next to Terrock is costing Grynt 42 across five swings" - and
+			# the merged line says it in the units a viewer can act on next match.
+			var tb_n := str(e.get("by", "?"))
+			var tu_n := str(e.get("unit", "?"))
+			_log_merge_line("thorns|%s" % tb_n, int(e.get("dmg", 0)), tu_n,
+				func(n: int, d: int, who: Array) -> String:
+					if n <= 1:
+						return "[color=#c9d16a]%s's barbs bite %s back for %d[/color]\n" % [tb_n, tu_n, d]
+					return "[color=#c9d16a]%s's barbs cost %s %d over %d hits[/color]\n" % [tb_n,
+						_who(who), d, n])
 			var thid := _index_of_unit_named(str(e.get("unit", "")))
 			var thby := _index_of_unit_named(str(e.get("by", "")))
 			if thid >= 0:
@@ -5623,8 +5920,11 @@ func _log_event(e: Dictionary) -> void:
 				if thby >= 0:
 					_tether(thby, thid, Color(0.79, 0.82, 0.42), 0.35)
 		"ward_soak":
-			log_view.append_text("[color=#7fd4e8]%s's ward absorbs %d[/color]\n" % [
-				e.get("unit", "?"), int(e.get("amount", 0))])
+			var wu_n := str(e.get("unit", "?"))
+			_log_merge_line("ward|%s" % wu_n, int(e.get("amount", 0)), "",
+				func(n: int, d: int, _w: Array) -> String:
+					return "[color=#7fd4e8]%s's ward absorbs %d%s[/color]\n" % [wu_n, d,
+						"" if n <= 1 else "  over %d hits" % n])
 			var wsid := _index_of_unit_named(str(e.get("unit", "")))
 			if wsid >= 0:
 				# Damage that lands and does nothing is indistinguishable from a miss without
@@ -5633,7 +5933,7 @@ func _log_event(e: Dictionary) -> void:
 				if vfx != null:
 					vfx.aura_pulse((nodes[wsid]["holder"] as Node3D).position, Color(0.50, 0.83, 0.91))
 		"death":
-			log_view.append_text("[color=#ff5f5f]%s falls![/color]\n" % e["unit"])
+			_log_plain("[color=#ff5f5f]%s falls![/color]\n" % e["unit"])
 			_punch(0.55, 0.45)
 	call_deferred("_snap_log")
 

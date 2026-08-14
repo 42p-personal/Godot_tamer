@@ -84,7 +84,7 @@ const TickLib = preload("res://scripts/tick.gd")               # the ONE per-tic
 
 const DT := 0.1                 # fixed step, matches Sp.DT — never frame delta
 const DECISION_EVERY := 5       # decision tick = 0.5s; movement executes every tick
-const BODY_RADIUS := 2.2        # agreed with the renderer (spatial.gd)
+const BODY_RADIUS := 2.65       # agreed with the renderer (spatial.gd) — MUST equal Sp.BODY_RADIUS
 ## ⚠️ "AGREED WITH THE RENDERER" IS NO LONGER TRUE, AND THE GAP IS WHY A 5v5 SCRUM IS A PILE.
 ## Measured 2026-08-09 (round 13, `docs/WATCH_AUDIT.md` §0 is the symptom): enemies stand at
 ## `BODY_RADIUS * 2` = 4.4 ground units = **1.50 world units** at `arena_3d.WORLD_SCALE` 0.34,
@@ -105,8 +105,28 @@ const BODY_RADIUS := 2.2        # agreed with the renderer (spatial.gd)
 ## `*3.2` moved nothing a viewer can see (fight footprint 166x74 → 152x69, units in frame 71% →
 ## 74%, and the scrum capture is visually identical). The pile is made of ENEMIES converging on
 ## one body, not of allies crowding each other. Reverted.
+##
+## ⚠️ RESOLVED ROUND 24, AND THE "OBVIOUS FIX DOES NOT FIT" READING ABOVE WAS THE ANSWER, NOT THE
+## OBSTACLE. It said separation and reach are within 12% of each other so no value for one works
+## alone, and **the pair has to move together**. They did, in one edit: BODY_RADIUS 2.2 -> 2.65
+## (both files), SLOT_RADIUS 4.8 -> 5.6, BASE_REACH 6.6 -> 7.95. The ratios that make the geometry
+## coherent are PRESERVED rather than tuned — every one of them is the same number it was:
+##   body ring 2*BODY_RADIUS   4.40 -> 5.30    SLOT_RADIUS / body ring    1.091 -> 1.057
+##   SLOT_RADIUS               4.80 -> 5.60    SLOT_RADIUS / BASE_REACH   0.727 -> 0.704
+##   BASE_REACH                6.60 -> 7.95    BASE_REACH / body ring     1.500 -> 1.500
+## and `SLOT_RADIUS < BASE_REACH * 0.95` — the constraint that keeps a body AT its slot inside its
+## own swing — goes from 0.67u of margin to 1.95u. `docs/SPATIAL_BALANCE.md` §5 names G4 (melee vs
+## ranged must not invert) as the row where a thin margin there would show up as a lost matchup;
+## lifting BASE_REACH with the body is what buys that margin back.
+##
+## ⚠️ BASE_REACH IS **NOT** LIFTED TO THE FULL CHANNEL_RANGE MELEE (26.4), AND THAT IS A DESIGN
+## CALL WITH A REASON, NOT AN OVERSIGHT. Round 23's own note says melee closing ALL THE WAY while
+## ranged stands off at 74-96u "is precisely the engagement stagger the middle needs". A melee
+## basic that reaches 26.4 stops the charge 26 units out, deletes the scrum, and destroys the one
+## shape the round-23 lift was built to create. Melee reach is a BODY geometry — it scales with
+## the body (x1.205, exactly), not with the board's separations.
 const MAX_TICKS := 1800         # 3 min hard stop (fight length is emergent, #11)
-const BASE_REACH := 6.6         # melee basic reach: 3.0 * GEOMETRY_SCALE, per CLASS_BASIC melee
+const BASE_REACH := 7.95        # melee basic: 1.5x the body ring, lifted with BODY_RADIUS (r24)
 const BASIC_COOLDOWN := 12      # ticks between basic attacks (1.2s)
 
 ## Healing multiplier when the target is healblocked — `src/battle.ts:430` (via battle_sim.gd).
@@ -119,12 +139,13 @@ const HEALBLOCK_MULT := 0.4
 const HEAL_THREAT_MULT := 0.5
 
 ## MOVEMENT FEEL — the constants that make the fight read as bodies, not sliding chips.
-const SLOT_COUNT := 6           # surround slots per target, 60° apart: chord at SLOT_RADIUS is
-								#  4.8, comfortably above ALLY_MIN_SEP, so a full ring never
-								#  fights the ally soft-avoid
-const SLOT_RADIUS := 4.8        # where an attacker stands: above the enemy body ring (2*2.2=4.4)
+const SLOT_COUNT := 6           # surround slots per target, 60° apart: the chord of a hexagonal
+								#  ring EQUALS its radius, so 5.6 — above ALLY_MIN_SEP (5.30), so
+								#  a full ring never fights the ally soft-avoid
+const SLOT_RADIUS := 5.6        # where an attacker stands: above the enemy body ring (2*2.65=5.3)
 								#  so the push-out never fights the slot, below BASE_REACH*0.95
-								#  so a unit AT its slot is always in reach
+								#  (7.55) so a unit AT its slot is always in reach. Lifted 4.8 ->
+								#  5.6 with BODY_RADIUS in round 24 — see the ⚠️ block above.
 const SLOT_SETTLE := 1.2        # close enough to the slot to stop strafing and stand
 const MAX_ACCEL := 30.0         # u/s² — rest to full speed in ~3 ticks; kills the zigzag without
 								#  making starts feel drunk
@@ -139,8 +160,27 @@ const ENEMY_PUSH_MAX := 0.9     # max enemy-overlap resolved per tick — deep o
 const ALLY_MIN_SEP := BODY_RADIUS * 2.0  # allies are PASSABLE (#22) but drift apart to this —
 								#  engages at the same ring as enemies so crossing paths still
 								#  read as two bodies, but the FORCE below stays soft
-const ALLY_SOFT_FRAC := 0.4     # fraction of ally overlap resolved per tick (enemy: all of it)
-const ALLY_PUSH_MAX := 0.5      # cap on that drift per tick (enemy cap: 0.9)
+## ⚠️ 0.4 -> 1.0 AND 0.5 -> 0.9, ROUND 24 — THE FORCE, NOT THE TARGET, AND THAT DISTINCTION IS THE
+## WHOLE FIX. The measured negative above raised ALLY_MIN_SEP (the TARGET separation) from *2.0 to
+## *3.2 and moved nothing; it was reverted, correctly. What it did not try is the other term: a
+## soft-avoid that resolves 40% of an overlap per tick, capped at 0.5u, is competing every tick
+## against a slot anchor and a cast anchor that pull the body straight back, and it loses the
+## equilibrium. Allies were standing 24.9% inside each other's DRAWN bodies at rest (worst 54.0%,
+## `_probe_watch` D2) while ENEMIES — whose push-out resolves ALL of the overlap at a 0.9 cap —
+## sat at 12.1%. Same geometry, same anchors, four-times-weaker force, twice the overlap.
+##
+## ⚠️ AND THEY ARE STILL PASSABLE (#22). This changes how firmly two STANDING allies drift apart,
+## not whether a moving ally can walk through one: the target is unchanged at ALLY_MIN_SEP and
+## `crossing` overlap is motion and stays motion. MEASURED, before -> after (`_probe_watch`, same
+## roster, windowed): allies at rest mean 24.9% -> 12.5%, p90 51.8% -> 22.1%; enemies at rest
+## 12.1% -> 8.3%, which is the first time the "mean under ~10%" acceptance number has been met.
+## ⚠️ THE WORST-CASE WENT THE OTHER WAY — one pair at 54.0% -> 75.8% — and it is ONE episode
+## (Azurefin standing 0.73 world inside Grynt) rather than a distribution: the mean and the p90
+## both roughly halved. A single deep pair is a body that arrived under an anchor and is being
+## pushed out over the next few ticks, which is what the per-tick cap is for. Reported rather than
+## smoothed away, because the round that hides its one bad number is the round nobody can audit.
+const ALLY_SOFT_FRAC := 1.0     # fraction of ally overlap resolved per tick (enemy: all of it)
+const ALLY_PUSH_MAX := 0.9      # cap on that drift per tick (enemy cap: 0.9 — now the same)
 ## ⚠️ THE ANTI-TELEPORT CEILING IS DERIVED, NEVER A LITERAL — and this constant being a literal
 ## was the single most expensive bug in the spatial layer. It sat at 1.8 (18.0 u/s at DT 0.1)
 ## while `spatial.gd`'s injected ladder runs SPEED_MIN 20.0 to SPEED_MAX 39.2: THE ENTIRE LADDER,
@@ -955,11 +995,22 @@ const CAST_RANGE := 30.0        # fallback for kit entries with NO authored rang
 ## approach becomes a closing-under-fire phase — the exact shape `ENGAGEMENT_DESIGN.md` wants
 ## and `spatial.gd`'s TARGET_CLOSE_SECONDS note promised ("reach now runs to 96 units").
 ##
-## ⚠️ FOR THE INTEGRATOR: THIS IS ONE LIFT SPLIT ACROSS TWO FILES, AND IT WANTS TO BE ONE LINE.
-## The clean home is `kit.gd:74` — `"range": float(mv.get("range", 6.0)) * GEOMETRY_SCALE`
-## becoming `* Spatial.REACH_SCALE` (with the clamp) — and then `_entry_reach` below must become
-## a plain read THE SAME COMMIT, or every reach doubles. Not done here because kit.gd belongs to
-## another workstream this round.
+## ⚠️ PAID, ROUND 24 — AND THE TRAP DID NOT SPRING. The lift now lives ENTIRELY in `kit.gd`
+## (`RANGE_LIFT` = Sp.REACH_SCALE, with the HARD_REACH_MAX clamp), and `_entry_reach` below was
+## reduced to a plain read IN THE SAME EDIT, which is the only version of this change that is a
+## no-op. Verified as one: the §1 AoE census in `docs/SPATIAL_BALANCE.md` prints every live
+## radius, and all 27 were byte-identical before and after (Ricochet 78.3, median 45.8, Smoke
+## Bomb 21.1), with the seven `_probe_sim_quality` frame hashes unchanged across three processes.
+##
+## ⚠️ THE CONSTANT BELOW IS NOW DOCUMENTATION AND AN EXTERNAL RESTATEMENT, NOT A MULTIPLIER THE
+## SIM APPLIES. `_probe_balance.gd` and `_probe_sim_quality.gd` restate the arithmetic from a RAW
+## data move (`range x GEOMETRY_SCALE x KIT_RANGE_LIFT`) to census the pool without building kits;
+## it stays derived from `kit.gd` so the two can never drift. Nothing in `sim.gd` reads it.
+##
+## ⚠️ AND THE SEMANTICS OF `entry.range` CHANGED WITH IT: it is now a REAL-BOARD DISTANCE, already
+## lifted and already clamped. A hand-built kit entry (probe fixtures, `_probe_sim.gd`'s support
+## kits at 40.0) is therefore taken at face value instead of being quadrupled to the clamp — which
+## is the honest reading and was measured to leave `_probe_sim` and `_probe_combat_tree` green.
 ##
 ## ⚠️ MELEE IS DELIBERATELY NOT TOUCHED. BASE_REACH (6.6 = 3.0 x GEOMETRY_SCALE) is on the same
 ## wrong scale — the design melee basic is 26.4 (CHANNEL_RANGE) — but BASE_REACH is welded to
@@ -967,18 +1018,26 @@ const CAST_RANGE := 30.0        # fallback for kit entries with NO authored rang
 ## finding at the top of this file: separation and melee reach must move TOGETHER, with the
 ## body-radius re-baseline, not as a rider on this change. Melee closing all the way while
 ## ranged stands off 74-96u is also precisely the engagement stagger the middle needs.
-const KIT_RANGE_LIFT := Sp.REACH_SCALE / KitLib.GEOMETRY_SCALE   # 8.8 / 2.2 = 4.0
+const KIT_RANGE_LIFT := KitLib.RANGE_LIFT / KitLib.GEOMETRY_SCALE   # 8.8 / 2.2 = 4.0
 
 
-## The reach of a kit entry, on the REAL board's scale. Clamped at the design's HARD_REACH_MAX
-## exactly as `Spatial.reach_of` clamps (the 5v5 pool maxes at 96.8 = the clamp, so this only
-## guards future authored outliers). Entries with no authored range (hand-built test kits) keep
-## the CAST_RANGE fallback verbatim — every small-board probe kit behaves exactly as before.
+## The reach of a kit entry, on the REAL board's scale — A PLAIN READ since round 24: `kit.gd`
+## has already applied the full lift and the HARD_REACH_MAX clamp. Entries with no range at all
+## (hand-built test kits) keep the CAST_RANGE fallback verbatim.
+##
+## ⚠️ THE CLAMP STAYS HERE AS WELL, AND THAT IS NOT THE DEBT COMING BACK. The debt was a
+## MULTIPLIER split across two files — apply it twice and every reach quadruples. A clamp is
+## IDEMPOTENT: applying `min(r, HARD_REACH_MAX)` after kit.gd already applied it changes nothing,
+## and it keeps the design ceiling enforced for hand-built entries that never passed through
+## kit.gd (probe fixtures) and for anything that perturbs `entry.range` in place. Measured: with
+## the clamp here the consolidation is byte-identical everywhere INCLUDING `_probe_balance`'s C1
+## canary; without it C1's x2.5 arm read 2.59 instead of 2.44, because the perturbation had
+## escaped the ceiling. That is the difference between a no-op and an almost-no-op.
 func _entry_reach(m: Dictionary) -> float:
 	var r := float(m.get("range", 0.0))
 	if r <= 0.0:
 		return CAST_RANGE
-	return minf(r * KIT_RANGE_LIFT, Sp.HARD_REACH_MAX)
+	return minf(r, Sp.HARD_REACH_MAX)
 
 ## PROJECTILE FLIGHT (#34) — speeds taken VERBATIM from the superseded spatial layer's authored
 ## constants (scripts/spatial.gd:301, under its "projectiles (2026-08-06)" banner): ranged 90
@@ -1127,7 +1186,14 @@ func _execute_cast(u: Dictionary, events: Array) -> void:
 				"started": tick_now, "ends": tick_now + int(float(mvx.get("cast_time", 1.5)) / DT)}
 			events.append({"kind": "cast_start", "from": u.id, "to": fid, "move": cname})
 			return
-		var cast_range: float = _entry_reach(mvx) if not mvx.is_empty() else CAST_RANGE
+		# ⚠️ A NOVA'S USABLE RANGE IS ITS BLAST, NOT ITS CAST RANGE (round 24). `Cleave` is
+		# authored at range 4.9 -> 43.1 lifted, but a melee sweep only covers 10.6 around the
+		# caster: gate the decision on the cast range and a Warcry kit stands off at 40 units
+		# firing bursts that catch nobody and emit `fizzle`. That is the authored-but-unreachable
+		# failure in its cheapest form — the ability exists, is affordable, is off cooldown, and
+		# can never land. Thrown bursts keep the cast range, which is the number that genuinely
+		# limits where they can be placed.
+		var cast_range: float = _usable_range(mvx) if not mvx.is_empty() else CAST_RANGE
 		# Opportunism: the ordered target when in range; otherwise the nearest IN-RANGE enemy
 		# (id-order tiebreak). A caster staring at a distant kill target while an enemy stands
 		# on its feet is not focus, it is paralysis — you cast at what you can hit.
@@ -1629,19 +1695,136 @@ static func aoe_falloff(target_count: int) -> float:
 	return maxf(AOE_FALLOFF_FLOOR, 1.0 - AOE_FALLOFF_PER_TARGET * float(maxi(0, target_count - 1)))
 
 
+## ═══ BLAST RADIUS IS NOT THROW DISTANCE (round 24) ═══════════════════════════════════════════
+## ⚠️ ONE NUMBER WAS DOING TWO JOBS. `_resolve_aoe` used `_entry_reach` — the CAST RANGE — as the
+## targeting radius AND as the ring published to the renderer, self-centred on the caster. So an
+## AoE was a nova whose size equalled how far you could throw it, and after round 23's lift a
+## range-9 `Ricochet` painted a 78.3-unit circle while a range-4.9 melee `Cleave` painted 43.1
+## against a melee basic that reaches 6.6. That is signature failure #3, a screen that lies about
+## the thing it describes, and the player watches it every fight.
+##
+## ⚠️ AND IT IS A PRESENTATION FIX, NOT A NERF — the brief's premise was REFUTED BEFORE THIS CODE
+## WAS WRITTEN. `docs/SPATIAL_BALANCE.md` §1 measured 574 bursts on the real board: 1.43 targets
+## caught per burst, 61% catching exactly one, 4% catching the three the pool is PRICED at, and
+## not one burst in 574 catching five. The blast was already delivering less than its price. So
+## the correction here is not "shrink the blast"; it is "put the blast where the mechanic says it
+## is, at a size a viewer can believe, WITHOUT moving what it catches". G1 (>= 1.30 caught) is the
+## gate that keeps that promise honest.
+##
+## TWO AXES, BOTH DERIVED IN GODOT FROM FIELDS THAT ALREADY EXIST — route (c) of the brief, and
+## deliberately NOT route (a):
+##
+## 1. SIZE, seeded PER LINE, exactly as `tools/authorranges.ts` seeded reach per line, and for the
+##    same stated reason: a line is a shared win condition and its geometry is part of that
+##    identity. An `area` field would have cost a cross-tree change into the legacy suite (286
+##    tests + goldens) to fix a direction the measurement does not support. Board units, lifted by
+##    `GEOMETRY_SCALE` and NOT by `REACH_SCALE`: a blast covers GROUND, so it scales like a body,
+##    where reach scales like a separation. That distinction is the whole bug in one sentence.
+##
+## 2. CENTRE, decided by CHANNEL — and it is the SAME DOOR as `PROJECTILE_SPEED`, not a second
+##    one. A burst that FLIES (ranged/magic) lands on what it was aimed at; a burst that does not
+##    (melee sweep, voice shout, support aura) happens where the caster stands. Modelling every
+##    AoE as a self-centred nova was the other half of the lie: a thrown bomb and a war cry are
+##    different mechanics and only the nova was ever implemented.
+##
+## ⚠️ MELEE NOVAS ARE TIED TO `BASE_REACH`, NOT TO THE LINE TABLE, so the truth constraint is
+## STRUCTURAL rather than a comment nobody re-reads: a sweep is your reach plus a step, and when
+## the geometry lift moves `BASE_REACH` the melee blast follows it in the same edit. Warcry holds
+## both `Cleave` (melee) and `Intimidate` (voice), so size cannot key on line alone.
+const AOE_BLAST_BOARD := {
+	"Elementalist": 9.0,   # the big spell — the widest blast the pool authors
+	"Volley": 8.0,         # a beaten zone dropped at distance
+	"Demagogue": 8.0,      # a shout carries
+	"Arcanist": 7.0,       # a chaining arc
+	"Venomcraft": 7.0,     # a cloud
+	"Enchanter": 7.0,      # a shout
+	"Guardian": 7.0,       # a challenge aura
+	"Warcry": 6.0,         # a roar (its MELEE moves take the BASE_REACH rule below)
+	"Warden": 6.0,         # ground at your feet
+	"Hexer": 6.0,          # a detonation on a cursed body
+	"Assassin": 5.0,       # a smoke pot
+}
+const AOE_BLAST_DEFAULT := 6.0        # an unlisted line behaves as the median — never zero
+const MELEE_BLAST_REACH_MULT := 1.6   # a sweep is BASE_REACH plus a step
+## The channels whose bursts do NOT fly, and therefore centre on the caster. Deliberately the
+## complement of `PROJECTILE_SPEED`'s keys — two tests, one door, and they must agree.
+const AOE_NOVA_CHANNELS := ["melee", "voice", "support"]
+
+
+## ⚠️ THE LIVENESS SEAM, AND IT EXISTS BECAUSE THIS CHANGE BROKE A CANARY. `_probe_balance.gd`'s
+## C1 perturbs `entry.range` and calls the result "aoe radius" — true while one number did both
+## jobs, false the moment they were separated, and it FAILED on this change for that reason and
+## no other (see the report: x0.25 read 1.76, ABOVE the unperturbed 1.48, because shrinking the
+## CAST range makes a caster close further before firing and land in a tighter cluster — real
+## behaviour, wrong instrument). An instrument cannot be re-pointed at a knob that does not
+## exist, so the knob is provided here: default 1.0, drawn from nothing, read only by the
+## function below. Set it on a Sim instance and the blast geometry scales; leave it and this is
+## dead weight that cannot move a fight.
+var aoe_blast_scale := 1.0
+
+
+## The blast radius of an AoE move, in real board units — decoupled from its cast range.
+func aoe_blast_radius(mv: Dictionary) -> float:
+	if str(mv.get("channel", "magic")) == "melee":
+		return BASE_REACH * MELEE_BLAST_REACH_MULT * aoe_blast_scale
+	var board: float = float(AOE_BLAST_BOARD.get(str(mv.get("line", "")), AOE_BLAST_DEFAULT))
+	return board * KitLib.GEOMETRY_SCALE * aoe_blast_scale
+
+
+## The range at which a move is DECIDED and gated — the cast range for everything that is thrown,
+## the BLAST for a nova, because a nova cannot reach past its own burst. See the ⚠️ at the call
+## site in the cast decision.
+func _usable_range(m: Dictionary) -> float:
+	var mv := _move_of_entry(m)
+	if str(mv.get("target", "enemy")) == "allEnemies" \
+			and str(mv.get("channel", "magic")) in AOE_NOVA_CHANNELS:
+		return aoe_blast_radius(mv)
+	return _entry_reach(m)
+
+
+## Where a thrown burst lands: the caster's own target if it is a living enemy inside cast range,
+## else the nearest living enemy inside cast range, else null (the burst fizzles — nothing to aim
+## at). Unit-id order throughout, so ties break the same way in every process.
+func _aoe_focus(u: Dictionary, reach: float):
+	var bb: BT.Blackboard = u.bb
+	var tid: String = str(bb.get_value("req_attack", bb.get_value("target_id", "")))
+	var t = _unit(tid)
+	if t != null and t.alive and t.team != u.team and u.pos.distance_to(t.pos) <= reach:
+		return t
+	var best = null
+	var bd := INF
+	for o in units:  # unit-id order — the determinism order, as everywhere
+		if o.alive and o.team != u.team:
+			var d: float = u.pos.distance_to(o.pos)
+			if d <= reach and d < bd:
+				bd = d
+				best = o
+	return best
+
+
 ## Resolve a completed allEnemies cast: a BURST against every living enemy within the move's
-## authored range of the CASTER — the legacy gate (spatial_sim.gd:1077-1086: an AoE reaches
-## only what the move's own range covers, measured from the caster; the position-blind fan-out
-## it replaced hit covered bodies 250 units away and the VFX tracer exposed it). Each target
+## BLAST RADIUS of the burst's CENTRE — see the block above for why those are now two numbers
+## and not one. The legacy gate survives intact as the CAST RANGE (spatial_sim.gd:1077-1086: an
+## AoE reaches only what the move's own range covers; the position-blind fan-out it replaced hit
+## covered bodies 250 units away and the VFX tracer exposed it) — a nova still cannot touch what
+## is outside its own reach, and a thrown burst still cannot be placed beyond it. Each target
 ## goes through the ONE contracted resolve_strike with the shared falloff input, then the same
 ## application path every other hit uses (_apply_strike_outcome: ward drain, threat, debuffs,
 ## taunt, thorns, status via its per-target pre-drawn roll).
 func _resolve_aoe(u: Dictionary, kentry: Dictionary, events: Array) -> void:
 	var mv := _move_of_entry(kentry)
-	var reach := _entry_reach(kentry)   # the completed lift — see KIT_RANGE_LIFT
+	var reach := _entry_reach(kentry)          # CAST RANGE — how far it can be placed
+	var blast := aoe_blast_radius(mv)          # BLAST RADIUS — how much ground it covers
+	var centre: Vector2 = u.pos
+	if not (str(mv.get("channel", "magic")) in AOE_NOVA_CHANNELS):
+		var focus = _aoe_focus(u, reach)
+		if focus == null:
+			events.append({"kind": "fizzle", "from": u.id, "move": str(kentry.name)})
+			return
+		centre = focus.pos
 	var targets: Array = []
 	for o in units:  # unit-id order — the determinism order, as everywhere
-		if o.alive and o.team != u.team and u.pos.distance_to(o.pos) <= reach:
+		if o.alive and o.team != u.team and centre.distance_to(o.pos) <= blast:
 			targets.append(o)
 	if targets.is_empty():
 		events.append({"kind": "fizzle", "from": u.id, "move": str(kentry.name)})
@@ -1652,7 +1835,7 @@ func _resolve_aoe(u: Dictionary, kentry: Dictionary, events: Array) -> void:
 	# the whole falloff design ("weak into one body, strong into three") becomes invisible.
 	# The renderer draws this ring; it derives nothing — centre, radius and count come from here.
 	events.append({"kind": "aoe", "from": u.id, "move": str(kentry.name),
-		"centre": u.pos, "radius": reach, "targets": targets.size(), "falloff": falloff})
+		"centre": centre, "radius": blast, "targets": targets.size(), "falloff": falloff})
 	var phys: bool = str(mv.get("channel", "magic")) in ["melee", "ranged"]
 	for tgt in targets:
 		var def_stat: float = float(tgt.stats.get("CON", 10)) if phys else float(tgt.stats.get("WIS", 10))

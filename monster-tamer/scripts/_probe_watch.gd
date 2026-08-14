@@ -85,6 +85,14 @@ var _ov_rest_ally: Array = []   # depth fractions, ALLY pairs at rest — the si
 var _ov_move: Array = []        # depth fractions, pairs where at least one body is travelling
 var _ov_episodes: Array = []    # deep rest overlaps, identified: who stood inside whom, and when
 var _next_strip := 0.0
+## Any canary tripping sets this; `_finish_audit` exits non-zero on it. A probe that reports a
+## failure in prose and exits 0 is a probe nobody notices twice.
+var _canary_failed := false
+var _aoe_seen := 0
+var _aoe_shot_at := 0
+var _per_unit_gap: Array = []
+var _per_unit_orph: Array = []
+var _per_unit_n: Array = []
 var _shot := 0
 var _tag := "four_pillar"
 var _cam_mode := 0
@@ -300,6 +308,14 @@ func _report_rhythm() -> void:
 			busiest_s = s
 		if n == 0:
 			quiet += 1
+	# ⚠️ "21 LINES IN THE BUSIEST SECOND" IS A VERDICT WITHOUT A CULPRIT. A density number that
+	# does not say WHICH lines cost the second cannot tell you whether the fix is coalescing,
+	# suppression, or nothing at all — and a presentation change made without that breakdown is a
+	# change made on a feeling. So: what the whole log is made of, and what the worst second is made
+	# of. This is also how an AFTER run proves a coalescer MERGED lines rather than deleting them:
+	# the merged line count falls while the underlying raw event count (section A) does not.
+	_line("   log composition     %s" % _kind_hist(log, -1))
+	_line("   busiest second is   %s" % _kind_hist(log, busiest_s))
 	_line("   density        %.2f log lines/sec average" % (float(log.size()) / maxf(dur, 0.01)))
 	_line("   busiest second %d lines at t=%ds  ← can a viewer read %d lines in one second?"
 		% [busiest, busiest_s, busiest])
@@ -328,6 +344,109 @@ func _report_rhythm() -> void:
 			% [deaths[0], 100.0 * deaths[0] / maxf(dur, 0.01)])
 
 
+## THE DENSITY THE VIEWER ACTUALLY FACES, BEFORE AND AFTER, OUT OF ONE RUN.
+##
+## ⚠️ SECTION B COUNTS `event_log`, WHICH IS NOT WHAT IS ON THE SCREEN. It counts adapted sim
+## events and knows nothing about the intent ticker, which writes to the same log surface, or
+## about coalescing. So "21 lines in the busiest second" was never the number of ROWS the player
+## reads. The renderer now records both: every statement the fight made, and every row that
+## survived merging. Bucketing the two by second gives the before and the after from the SAME
+## fight - which matters more than usual this round, because the sim is being changed underneath
+## this probe (the same move burst measured r=96.8 in one run and r=43.1 in the next, an hour
+## apart), and a two-run comparison would be measuring two different fights.
+func _report_density() -> void:
+	var stmts: Array = _arena.get("_log_stmt_times")
+	var rows: Array = _arena.get("_log_row_times")
+	var merges: int = int(_arena.get("_log_merges"))
+	if stmts == null or rows == null:
+		_line("   log density     UNAVAILABLE - the renderer exposes no row model")
+		_canary_failed = true
+		return
+	_line("")
+	_line("-- D4. LOG DENSITY - the rows a viewer has to read, not the events behind them --")
+	_line("   statements the fight made      %d" % stmts.size())
+	_line("   rows the player actually reads %d   (%d folded away by coalescing)"
+		% [rows.size(), merges])
+	_line("   busiest second BEFORE merging  %d rows" % _busiest(stmts))
+	_line("   busiest second AFTER  merging  %d rows   <- the acceptance number" % _busiest(rows))
+	if merges <= 0:
+		_line("   CANARY FAILED - the coalescer merged nothing; it is dead or unreachable.")
+		_canary_failed = true
+
+
+func _busiest(times: Array) -> int:
+	var per: Dictionary = {}
+	var worst := 0
+	for t in times:
+		var sec := int(floor(float(t)))
+		per[sec] = int(per.get(sec, 0)) + 1
+		worst = maxi(worst, int(per[sec]))
+	return worst
+
+
+## One line of "kind=count", biggest first. `sec` < 0 counts the whole log; otherwise only the
+## lines that landed inside that whole second.
+func _kind_hist(log: Array, sec: int) -> String:
+	var c: Dictionary = {}
+	for e in log:
+		var k := str(e.get("kind", ""))
+		if k == "start" or k == "end":
+			continue
+		if sec >= 0 and int(floor(float(e.get("t", 0.0)))) != sec:
+			continue
+		c[k] = int(c.get(k, 0)) + 1
+	var ks: Array = c.keys()
+	ks.sort_custom(func(a, b): return int(c[a]) > int(c[b]))
+	var parts: Array = []
+	var tot := 0
+	for k in ks:
+		parts.append("%s=%d" % [k, int(c[k])])
+		tot += int(c[k])
+	return "%d lines: %s" % [tot, " ".join(PackedStringArray(parts))]
+
+
+## ⚠️ THE BURST IS THE ONE EFFECT WHOSE SIZE IS NOT A TASTE DECISION - it is the sim's own
+## `radius`, and round 23 left that number doing double duty as the THROW DISTANCE, so a burst drew
+## a ring spanning a third of the arena. The geometry agent is separating the two THIS ROUND, which
+## means the renderer must read correctly at a radius about to change by a large factor and at a
+## centre that may stop being the caster. This census is how "reads at both sizes" stops being an
+## assertion: every burst the fight produced, with its radius in ground units, in world units, and
+## as an on-screen DIAMETER in pixels beside the body height measured in the same run. A ring 40x a
+## body is a wash; a ring 0.3x a body is a spark. Both are failures and both are visible here.
+func _report_aoe(px_per_world: float, mean_body_px: float) -> void:
+	var log: Array = _arena.get("event_log")
+	var bursts: Array = []
+	for e in log:
+		if str(e.get("kind", "")) == "aoe":
+			bursts.append(e)
+	_line("")
+	_line("-- D3. THE AoE BURST - %d bursts, and whether a viewer could size or count one --" % bursts.size())
+	if bursts.is_empty():
+		_line("   NO BURST FIRED. This roster produced no allEnemies cast, so nothing here is evidence")
+		_line("   either way - a demo that cannot produce a mechanic hides it (the standing lesson).")
+		return
+	var ws: float = float(Arena.WORLD_SCALE)
+	for e in bursts:
+		var r: float = float(e.get("radius", 0.0))
+		var dia_px: float = 2.0 * r * ws * px_per_world
+		_line("   t=%5.1fs  %-14s r=%6.1f ground = %5.1f world -> %6.0f px across (%.1fx a body) - caught %d, falloff %.2f"
+			% [float(e.get("t", 0.0)), str(e.get("move", "?")), r, r * ws, dia_px,
+			   dia_px / maxf(1.0, mean_body_px), int(e.get("targets", 0)), float(e.get("falloff", 1.0))])
+	# THE CANARY. Counters live on the arena, so a presentation that silently stops firing reports
+	# zero rather than passing quietly - the same discipline section F uses for the mix.
+	var drawn: int = int(_arena.get("_aoe_bursts_drawn"))
+	var counted: int = int(_arena.get("_aoe_counts_drawn"))
+	_line("   CANARY  events %d -> rings drawn %d - count reads drawn %d" % [bursts.size(), drawn, counted])
+	if drawn < bursts.size() or counted < bursts.size():
+		_line("   CANARY FAILED - a burst fired that the viewer was never shown.")
+		_canary_failed = true
+	# THE COALESCER'S OWN CANARY. A log that merges nothing and a log with no coalescer at all are
+	# indistinguishable from the line count alone - both just print what the fight produced. The
+	# renderer counts its merges, so "the density fell" can be separated from "the fight was quieter
+	# this run", which matters here because the sim is being changed underneath this probe today.
+	_report_density()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
 # D. FRAMING — measured live, during real playback, with the real camera
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -346,6 +465,19 @@ func _process(_delta: float) -> void:
 	if t >= _next_strip:
 		_next_strip += STRIP_STEP
 		_capture(t)
+	# THE BURST IS SHORTER THAN THE STRIP INTERVAL, SO THE STRIP CANNOT SEE IT. A ring lives ~0.6s
+	# and the contact sheet samples every 2.0s, which means every capture in `docs/WATCH_AUDIT.md`
+	# was taken with no burst on screen - the effect this round is judged on was literally never
+	# photographed. Trigger off the renderer's own draw counter and shoot a few frames later, while
+	# the ring is still expanding.
+	var drawn: int = int(_arena.get("_aoe_bursts_drawn"))
+	if drawn > _aoe_seen:
+		_aoe_seen = drawn
+		_aoe_shot_at = 6
+	elif _aoe_shot_at > 0:
+		_aoe_shot_at -= 1
+		if _aoe_shot_at == 0:
+			_capture_named("burst%d_t%05.1f" % [_aoe_seen, t])
 	if not bool(_arena.get("playing")) and t > 0.2:
 		_finish_audit()
 
@@ -417,6 +549,9 @@ func _measure(cam: Camera3D, t: float) -> void:
 	# head it annotates (unattributable), and two plates overlapping (illegible).
 	var rects: Array = []
 	var orphan := 0
+	var orphan_drawn := 0
+	var plate_gap := 0.0
+	var gapped := 0
 	var plate_px := 0.0
 	for k in range(nodes.size()):
 		if k >= units.size() or not units[k]:
@@ -426,10 +561,48 @@ func _measure(cam: Camera3D, t: float) -> void:
 			continue
 		var head: Vector2 = cam.unproject_position((nodes[k]["holder"] as Node3D).position
 			+ Vector3(0, Arena.UNIT_HEIGHT, 0))
-		var r := Rect2(plate.position, plate.size)
+		# SIZE MUST INCLUDE SCALE - the same trap the renderer's own declutter pass records in its
+		# comments and this probe walked into anyway. A collapsed "mini" plate is `scale`d, and
+		# `Control.size` does not know that, so measuring the rect off the unscaled size put the
+		# plate's bottom edge up to 30px BELOW where it is drawn (a plate is anchored by its bottom,
+		# so the error is pure fiction added to the gap) and inflated the plate-area figure by the
+		# same factor. Both are numbers this round is judged on.
+		var r := Rect2(plate.position, plate.size * plate.scale)
 		# "Far" = more than one body-height away from the head it belongs to.
 		if (r.get_center() - head).length() > _mean_unit_height(cam, nodes, units):
 			orphan += 1
+		# THE SAME QUESTION ASKED OF THE HEAD THAT EXISTS.
+		# The line above measures the plate against the NOMINAL head - holder + UNIT_HEIGHT - and the
+		# plate is ANCHORED at nominal head + 0.7, so the two share their error and the metric can only
+		# ever see lifting. It is blind by construction to the defect it is named for: a body drawn
+		# 0.68 world units tall (the footprint cap, section D2) carries a plate 5.1 units up, four body
+		# heights clear of the creature, and this measure calls that 0% orphaned. An instrument whose
+		# reference point is the bug cannot see the bug. So measure it again against the head the RIG
+		# says it drew, and report both - the nominal figure stays so the two runs remain comparable.
+		var dh: float = float(_body_h[k]) if k < _body_h.size() else Arena.UNIT_HEIGHT
+		var dhead: Vector2 = cam.unproject_position((nodes[k]["holder"] as Node3D).position
+			+ Vector3(0, dh, 0))
+		var foot_px: Vector2 = cam.unproject_position((nodes[k]["holder"] as Node3D).position)
+		var body_px_h: float = maxf(1.0, absf(foot_px.y - dhead.y))
+		# MEASURED FROM THE PLATE'S NEAREST EDGE, NOT ITS CENTRE. A plate is 4.4x the body's pixels
+		# (see the ratio below), so a centre-to-head distance charges the plate for its own size and
+		# would read as "orphaned" for a plate sitting squarely on the head. Attribution is carried by
+		# the edge that faces the creature - that is the gap the eye has to jump.
+		var bottom_mid := Vector2(r.position.x + r.size.x * 0.5, r.position.y + r.size.y)
+		var gap: float = (bottom_mid - dhead).length() / body_px_h
+		plate_gap += gap
+		if gap > 1.0:
+			orphan_drawn += 1
+		gapped += 1
+		# PER UNIT, because "18% orphaned" does not say whether the residue is one tiny body that can
+		# never satisfy the test or every plate failing a little. Those want opposite fixes.
+		while _per_unit_gap.size() <= k:
+			_per_unit_gap.append(0.0)
+			_per_unit_orph.append(0.0)
+			_per_unit_n.append(0.0)
+		_per_unit_gap[k] = float(_per_unit_gap[k]) + gap
+		_per_unit_orph[k] = float(_per_unit_orph[k]) + (1.0 if gap > 1.0 else 0.0)
+		_per_unit_n[k] = float(_per_unit_n[k]) + 1.0
 		plate_px += r.size.x * r.size.y
 		rects.append(r)
 	var collide := 0
@@ -548,6 +721,7 @@ func _measure(cam: Camera3D, t: float) -> void:
 		"plate_frac": plate_px / (vp.x * vp.y),
 		"on_screen": float(on_screen) / maxf(1.0, float(n)),
 		"orphan": orphan, "collide": collide, "plates": rects.size(),
+		"orphan_drawn": orphan_drawn, "plate_gap": plate_gap, "gapped": gapped,
 		"hud_lies": 1 if (hud_a != real_a or hud_b != real_b) else 0,
 		# ⚠️ THE FRAME BUDGET IS PART OF LEGIBILITY, NOT SEPARATE FROM IT. A round that adds a
 		# director, off-screen pips, team rings, leader lines, tethers, impact rings and a mixer
@@ -610,6 +784,11 @@ func _mean_unit_height(cam: Camera3D, nodes: Array, units: Array) -> float:
 		tot += absf(cam.unproject_position(p).y - cam.unproject_position(p + Vector3(0, Arena.UNIT_HEIGHT, 0)).y)
 		n += 1
 	return tot / maxf(1.0, float(n))
+
+
+func _capture_named(tag: String) -> void:
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("user://watch_%s_%s.png" % [_tag, tag])
 
 
 func _capture(t: float) -> void:
@@ -700,9 +879,14 @@ func _finish_audit() -> void:
 	var plates := 0.0
 	var lies := 0
 	var plate_frac := 0.0
+	var orphan_drawn := 0.0
+	var plate_gap := 0.0
+	var gapped := 0.0
 	for s in _samples:
 		orphan += float(s["orphan"]); collide += float(s["collide"]); plates += float(s["plates"])
 		plate_frac += float(s["plate_frac"]); lies += int(s["hud_lies"])
+		orphan_drawn += float(s.get("orphan_drawn", 0))
+		plate_gap += float(s.get("plate_gap", 0.0)); gapped += float(s.get("gapped", 0))
 	var used := 0.0
 	var sx := 0.0
 	var sy := 0.0
@@ -764,6 +948,24 @@ func _finish_audit() -> void:
 	_line("   ORPHANED            %.1f per frame (%.0f%%) — lifted more than one body-height from"
 		% [orphan / c, 100.0 * orphan / maxf(1.0, plates)])
 	_line("                       the head they annotate, so they cannot be attributed")
+	_line("   ORPHANED vs DRAWN   %.1f per frame (%.0f%%) - the same question asked of the head the RIG"
+		% [orphan_drawn / c, 100.0 * orphan_drawn / maxf(1.0, plates)])
+	_line("                       actually drew, not the nominal UNIT_HEIGHT the anchor uses. THIS is")
+	_line("                       the number the anchor moves; the one above shares the anchor's error.")
+	_line("   mean plate gap      %.2f drawn body-heights from the head it annotates (0 = on the head)"
+		% (plate_gap / maxf(1.0, gapped)))
+	var unames: Array = []
+	for m3 in (_arena.get("all_units") as Array):
+		unames.append(str(m3.species_name))
+	_line("   per unit (drawn body height -> mean gap -> orphaned):")
+	for k3 in range(_per_unit_n.size()):
+		if float(_per_unit_n[k3]) <= 0.0:
+			continue
+		_line("     %-12s h=%.2f world   gap %.2f bodies   orphaned %.0f%%"
+			% [unames[k3] if k3 < unames.size() else str(k3),
+			   float(_body_h[k3]) if k3 < _body_h.size() else 0.0,
+			   float(_per_unit_gap[k3]) / float(_per_unit_n[k3]),
+			   100.0 * float(_per_unit_orph[k3]) / float(_per_unit_n[k3])])
 	_line("   OVERLAPPING pairs   %.1f per frame — two plates sharing pixels are both unreadable"
 		% (collide / c))
 	_line("   plates occupy       %.2f%% of the frame vs %.2f%% for the bodies (ratio %.1fx)"
@@ -808,6 +1010,10 @@ func _finish_audit() -> void:
 		for k in keys:
 			parts.append("%s=%d" % [k, int(pl[k])])
 		_line("   " + " ".join(parts))
+	_report_aoe(mean_h / c / Arena.UNIT_HEIGHT, drawn_h / c)
+	if _canary_failed:
+		_line("")
+		_line("*** A CANARY FAILED - this run exits non-zero. See the section that named it. ***")
 	_capture_endings()
 
 
@@ -830,7 +1036,7 @@ func _capture_endings() -> void:
 	get_viewport().get_texture().get_image().save_png("user://watch_%s_REPORT.png" % _tag)
 	_line("   endings             watch_%s_END.png · watch_%s_REPORT.png" % [_tag, _tag])
 	_dump()
-	get_tree().quit(0)
+	get_tree().quit(1 if _canary_failed else 0)
 
 
 func _line(s: String) -> void:

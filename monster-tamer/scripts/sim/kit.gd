@@ -20,8 +20,23 @@
 extends RefCounted
 
 const Derive = preload("res://scripts/derive.gd")
+const Sp = preload("res://scripts/spatial.gd")   # constants only — the reach scale and its clamp
 
 const GEOMETRY_SCALE := 2.2   # authored move.range is board units; the world is scaled (spatial.gd)
+
+## ── THE RANGE LIFT, NOW PAID IN FULL AND IN ONE PLACE (round 24) ──────────────────────────────
+## ⚠️ THIS LINE USED TO LIFT BY `GEOMETRY_SCALE` ALONE (x2.2) AND THE OTHER x4.0 WAS APPLIED AT
+## CONSUMPTION in `sim.gd:_entry_reach` — one lift split across two files, which round 23 measured,
+## completed at the far end, and left as a named debt with a booby trap: moving the lift here
+## WITHOUT reducing `_entry_reach` to a plain read doubles every reach in the game. Both halves
+## land in the same commit; `docs/SPATIAL_BALANCE.md` §1's census is the regression detector (a
+## botched consolidation shows up as every live radius clamped at 96.8).
+##
+## The design lift onto the real ground is `Spatial.REACH_SCALE` = 4.0 x GEOMETRY_SCALE = 8.8:
+## authored ranges live on the pool's original 40x22 board, the real 5v5 ground is 440x246.
+## The clamp moves with it — `Spatial.reach_of` clamps at the same ceiling, and a kit entry's
+## `range` is now, unambiguously, A REAL-BOARD DISTANCE. Anything reading it reads it plainly.
+const RANGE_LIFT := Sp.REACH_SCALE   # 8.8 — see sim.gd:KIT_RANGE_LIFT for the history
 
 ## ── PER-MOVE PROJECTILES (#34) ───────────────────────────────────────────────────────────────
 ## A shot's flight is the most visible thing about it in a game whose battle loop is WATCHING,
@@ -71,7 +86,7 @@ static func build(move_names: Array, moves: Array) -> Array:
 			"cast_time": Derive.cast_time_of(mv),
 			"cooldown": Derive.cooldown_seconds(mv),
 			"mana": Derive.field_mp_cost(mv),
-			"range": float(mv.get("range", 6.0)) * GEOMETRY_SCALE,
+			"range": minf(float(mv.get("range", 6.0)) * RANGE_LIFT, Sp.HARD_REACH_MAX),
 			"min_range": 0.0,
 		}
 		_attach_projectile(entry, mv)

@@ -45,6 +45,9 @@ const MIN_ACTION_EVENTS := 20    # strike + cast_done per fight
 const DURATION_LO := 80          # ticks (8s)
 const DURATION_HI := 1700        # ticks (170s)
 const BLOB_RADIUS := 10.0        # anti-blob absolute floor at tick 100 (see _blob_verdicts)
+const BLOB_ENGAGED_SLACK := 1.25 # a body within SLOT_RADIUS x this of an enemy is ENGAGED, not
+								 #  huddled — the surround-ring exemption (see _blob_verdicts)
+const BLOB_ENGAGED_MAX := 0.8    # a tight team is only a blob if fewer than this share are engaged
 const BLOB_SHRINK_FRAC := 0.7    # a team is a blob only if it also COLLAPSED below this
 								 #  fraction of its own deploy spread — convergence, not size
 const LOG_CAP := 80              # decision log stays compact (changes only)
@@ -370,7 +373,25 @@ func _blob_verdicts(res: Dictionary, tick: int) -> Dictionary:
 				deploy_ps.append(Vector2(f0.units[j].pos))
 		if now_ps.size() < 3:
 			continue  # too few bodies for a blob verdict
-		out[team] = {"at": _centroid_radius(now_ps), "deploy": _centroid_radius(deploy_ps)}
+		# ⚠️ A SURROUND RING IS NOT A BLOB, AND THE ABSOLUTE FLOOR CANNOT TELL THEM APART.
+		# `BLOB_RADIUS` is 10.0 — a bare world distance authored before the surround-slot layer
+		# existed. Five units focus-firing ONE enemy stand in that enemy's slot ring, so their
+		# centroid radius is bounded by `SLOT_RADIUS` (5.6) BY CONSTRUCTION and can never clear a
+		# 10-unit floor. Round 24 hit this the moment the geometry lift kept enough bodies alive
+		# at tick 100 for `dive/seed44444` to be judged at all: team A read 6.3u and was called a
+		# blob for doing the one thing the sim is supposed to do. Measured at the old geometry the
+		# same fight produced NO verdict (the enemy side was already down to <= 2 bodies), so the
+		# guard had never been asked the question — it was not passing, it was absent.
+		# `engaged` is the discriminator: bodies piled ON something versus piled on nothing.
+		var engaged := 0
+		for p in now_ps:
+			for o in f.units:
+				if bool(o.alive) and str(o.team) != team \
+						and (p as Vector2).distance_to(Vector2(o.pos)) <= Sim.SLOT_RADIUS * BLOB_ENGAGED_SLACK:
+					engaged += 1
+					break
+		out[team] = {"at": _centroid_radius(now_ps), "deploy": _centroid_radius(deploy_ps),
+			"engaged": float(engaged) / float(now_ps.size())}
 	return out
 
 
@@ -700,10 +721,17 @@ func _go() -> void:
 		var verdicts: Dictionary = _blob_verdicts(r, 100)
 		for team in verdicts:
 			var v: Dictionary = verdicts[team]
-			if float(v.at) <= BLOB_RADIUS and float(v.at) < float(v.deploy) * BLOB_SHRINK_FRAC:
+			# REPORTED ALWAYS, not only on failure: the tick-100 centroid radius is the number the
+			# floor below is judged against, and a guard whose input is invisible until it trips
+			# cannot be re-derived when the geometry moves under it. (Round 24 needed exactly this
+			# number at two different body radii and had to add the line to get it.)
+			print("    blob radius: %s team %s = %.1fu at tick 100 (deployed %.1fu, floor %.1fu, engaged %.0f%%)"
+				% [r.label, team, float(v.at), float(v.deploy), BLOB_RADIUS, 100.0 * float(v.engaged)])
+			if float(v.at) <= BLOB_RADIUS and float(v.at) < float(v.deploy) * BLOB_SHRINK_FRAC \
+					and float(v.engaged) < BLOB_ENGAGED_MAX:
 				blob_bad = true
 				print("    blob: %s team %s collapsed to %.1fu at tick 100 (deployed at %.1fu — shrank past %.0f%%)" % [r.label, team, float(v.at), float(v.deploy), BLOB_SHRINK_FRAC * 100.0])
-	_check("spread: no team converges below %.0f%% of its deploy spread into a <= %.0fu blob at tick 100" % [BLOB_SHRINK_FRAC * 100.0, BLOB_RADIUS], not blob_bad)
+	_check("spread: no team converges below %.0f%% of its deploy spread into a <= %.0fu UNENGAGED blob at tick 100" % [BLOB_SHRINK_FRAC * 100.0, BLOB_RADIUS], not blob_bad)
 
 	# 7. PERF — harness wall-time per fight under budget on this machine.
 	var slow := false
@@ -799,6 +827,154 @@ func _board_usage(moves: Array) -> void:
 	await _approach_ab(moves)
 	_usage_checks(rows)
 	_pacing_checks(rows, moves)
+	await _aoe_geometry(moves)
+
+
+## ---- 20. AoE GEOMETRY: the blast is not the throw (round 24) ---------------------------------
+## ⚠️ THIS SECTION EXISTS BECAUSE THE CHANGE IT GUARDS BROKE SOMEONE ELSE'S CANARY, AND A CHANGE
+## THAT DISARMS AN INSTRUMENT MUST ARM ANOTHER ONE. `_probe_balance.gd`'s C1 perturbs a kit
+## entry's `range` and calls the result "aoe radius" — correct while `_resolve_aoe` used the cast
+## range as the blast radius, wrong the moment those became two numbers. It is re-pointed at
+## `Sim.aoe_blast_scale` (see the report); until it is, THIS is the live one.
+##
+## Three things are asserted, and each is a failure this project has already shipped once:
+##  • TRUTH — the ring the renderer draws is the ring the sim resolved (signature failure #3, a
+##    screen that lies). `arena_3d.gd` derives nothing: it reads `centre`/`radius` off the event,
+##    so an event whose radius disagrees with `aoe_blast_radius` IS the lie, at the source.
+##  • REACHABILITY — a melee AoE must actually LAND. `Cleave` is authored at range 4.9 (43.1 once
+##    lifted) but sweeps 10.6 around the caster; gating its decision on the cast range parks a
+##    Warcry kit at 40 units emitting fizzles forever, which is the authored-but-unreachable
+##    failure (13+ instances) in its cheapest form.
+##  • LIVENESS — scaling the blast must move what it catches, monotonically, or this section is
+##    reading something other than the geometry it names.
+const AOE_BLAST_MAX_REACH_MULT := 4.0   # no blast may exceed 4x the melee basic — the truth cap
+const AOE_FIZZLE_MAX := 0.25            # a nova kit that fizzles more than this cannot reach
+const NOVA_SEEDS := [4242, 777, 90210]  # three fights per arm — one fight is an anecdote
+func _aoe_geometry(moves: Array) -> void:
+	print("  -- AoE geometry: blast radius vs cast range (round 24 decoupling) --")
+	var sim_ref = Sim.new()
+	# The pool census, from the data moves themselves — every allEnemies move, its cast range
+	# (already lifted+clamped by kit.gd) against its blast.
+	var worst_name := ""
+	var worst_ratio := 0.0
+	var n_aoe := 0
+	var blast_sum := 0.0
+	var reach_sum := 0.0
+	for m in moves:
+		if str((m as Dictionary).get("target", "enemy")) != "allEnemies":
+			continue
+		n_aoe += 1
+		var blast: float = sim_ref.aoe_blast_radius(m)
+		var cast_r: float = minf(float(m.get("range", 0.0)) * Kit.RANGE_LIFT, Sp.HARD_REACH_MAX)
+		blast_sum += blast
+		reach_sum += cast_r
+		var ratio: float = blast / Sim.BASE_REACH
+		if ratio > worst_ratio:
+			worst_ratio = ratio
+			worst_name = str(m.get("name", "?"))
+	print("    %d allEnemies moves | mean blast %.1fu vs mean cast range %.1fu | widest blast %s at %.1fx the melee basic (%.1fu)"
+		% [n_aoe, blast_sum / maxf(1.0, float(n_aoe)), reach_sum / maxf(1.0, float(n_aoe)),
+			worst_name, worst_ratio, Sim.BASE_REACH])
+	_check("aoe truth: no blast exceeds %.0fx the melee basic (the ring the player watches is believable)"
+		% AOE_BLAST_MAX_REACH_MULT, worst_ratio <= AOE_BLAST_MAX_REACH_MULT)
+
+	# A MELEE-AoE fixture: Warcry sweepers against bruisers. The pool comps above are all magic,
+	# so nothing there exercises the nova path at all.
+	var nova_rows: Array = []
+	for scale in [0.6, 1.0, 2.5]:
+		var acc := {"scale": float(scale), "bursts": 0, "fizzles": 0, "caught": 0,
+			"radius": 0.0, "radius_agrees": true}
+		for sd in NOVA_SEEDS:
+			var r: Dictionary = await _run_nova_fight(int(sd), moves, float(scale))
+			if r.is_empty():
+				print("    FAIL nav never became ready for the nova fixture")
+				_fails += 1
+				return
+			acc.bursts += int(r.bursts)
+			acc.fizzles += int(r.fizzles)
+			acc.caught += int(r.caught)
+			acc.radius = float(r.radius)
+			acc.radius_agrees = bool(acc.radius_agrees) and bool(r.radius_agrees)
+		acc["fizzle_frac"] = float(acc.fizzles) / maxf(1.0, float(int(acc.bursts) + int(acc.fizzles)))
+		acc["per_burst"] = float(acc.caught) / maxf(1.0, float(acc.bursts))
+		nova_rows.append(acc)
+	for r in nova_rows:
+		print("    blast x%.2f  bursts %3d  fizzles %3d (%.0f%%)  targets/burst %.2f  emitted radius %.1fu"
+			% [float(r.scale), int(r.bursts), int(r.fizzles), 100.0 * float(r.fizzle_frac),
+				float(r.per_burst), float(r.radius)])
+	var mid: Dictionary = nova_rows[1]
+	_check("aoe reachability: a melee-AoE kit lands its bursts (fizzle share <= %.0f%% at the shipped blast)"
+		% (AOE_FIZZLE_MAX * 100.0), float(mid.fizzle_frac) <= AOE_FIZZLE_MAX and int(mid.bursts) > 0)
+	_check("aoe truth: every emitted burst radius equals aoe_blast_radius (renderer draws what the sim resolved)",
+		bool(mid.radius_agrees))
+	# ⚠️ THE CANARY IS ASSERTED ON THE WIDENING ARM ONLY, AND THAT IS NOT A SOFTENING — IT IS THE
+	# ONLY ARM THAT CAN CARRY AN ASSERTION. Shrinking CENSORS the distribution twice over: a burst
+	# that catches nobody emits `fizzle`, not `aoe`, so the per-burst mean cannot fall below 1.0;
+	# and a nova whose usable range has shrunk simply stops being CHOSEN, so the sample shrinks
+	# with it. Measured here, honestly: x0.6 reads 1.33 ABOVE the shipped 1.24, because the few
+	# bursts that still land, land inside a tight scrum. `_probe_balance.gd` §5 makes the same
+	# argument about C1 and then asserts monotonicity across all three arms anyway — on this
+	# fixture that assertion would be false while the instrument is working perfectly.
+	# The shrink arm is REPORTED (it is evidence) and never gated on.
+	var lively: bool = float(mid.per_burst) < float(nova_rows[2].per_burst)
+	_check("CANARY aoe blast liveness: Sim.aoe_blast_scale x2.5 raises targets-caught above the shipped geometry",
+		lively)
+
+
+## One nova-fixture fight at a given `Sim.aoe_blast_scale`, reported as burst statistics.
+func _run_nova_fight(seed_val: int, moves: Array, scale: float) -> Dictionary:
+	var g: Vector2 = Sp.ground_size(BIG_TEAM_SIZE)
+	var off: Vector2 = g * 0.5
+	var sweeper := {"STR": 70, "CON": 50, "INT": 10, "WIS": 30}
+	var bruiser := {"STR": 60, "CON": 45, "INT": 10, "WIS": 15}
+	var kit: Array = Kit.build(["Cleave", "Whirlwind", "Earthshaker"], moves)
+	var spd: float = Sp.slow_unit_speed(BIG_TEAM_SIZE) / SMALL_REF_SPEED
+	var us: Array = []
+	var slots := {"A": Sp.deploy_positions(BIG_TEAM_SIZE, "A"),
+		"B": Sp.deploy_positions(BIG_TEAM_SIZE, "B")}
+	for i in BIG_TEAM_SIZE:
+		var a: Dictionary = _unit("a%d" % i, "A", Vector2.ZERO, sweeper, 9.0,
+			{"target_priority": "nearest", "positional": "push"}, kit.duplicate(true))
+		a["pos"] = Vector2((slots["A"] as Array)[i]) - off
+		a["speed"] = 9.0 * spd
+		us.append(a)
+		var b: Dictionary = _unit("b%d" % i, "B", Vector2.ZERO, bruiser, 8.5,
+			{"target_priority": "nearest", "positional": "push"})
+		b["pos"] = Vector2((slots["B"] as Array)[i]) - off
+		b["speed"] = 8.5 * spd
+		us.append(b)
+	var sim = Sim.new()
+	sim.setup(seed_val, us, g, BIG_OBSTACLES)
+	sim.aoe_blast_scale = scale            # the seam — 1.0 is the shipped geometry
+	var half: float = g.x * 0.5 - 8.0
+	var ok: bool = await sim.nav.until_ready(get_tree(), Vector2(-half, 0), Vector2(half, 0))
+	if not ok:
+		sim.nav.free_rids()
+		return {}
+	var res: Dictionary = sim.run()
+	sim.nav.free_rids()
+	var bursts := 0
+	var fizzles := 0
+	var caught := 0
+	var radius := 0.0
+	var agrees := true
+	var expect: float = Sim.BASE_REACH * Sim.MELEE_BLAST_REACH_MULT * scale
+	for f in res.frames:
+		for e in f.events:
+			var k := str(e.get("kind", ""))
+			if k == "aoe":
+				bursts += 1
+				caught += int(e.get("targets", 0))
+				radius = float(e.get("radius", 0.0))
+				if absf(radius - expect) > 0.01:
+					agrees = false
+			elif k == "fizzle":
+				fizzles += 1
+	var total: int = bursts + fizzles
+	return {"scale": scale, "bursts": bursts, "fizzles": fizzles, "radius": radius,
+		"caught": caught, "radius_agrees": agrees and bursts > 0,
+		"fizzle_frac": float(fizzles) / maxf(1.0, float(total)),
+		"per_burst": float(caught) / maxf(1.0, float(bursts))}
 
 
 ## 16. THE OPENING. Reported per comp in SECONDS as well as fractions, because the complaint was
@@ -866,9 +1042,12 @@ func _reach_vs_separation(comps: Array, moves: Array) -> void:
 		for u in _comp_units(str(comp), moves):
 			var best := 6.6                     # sim.gd BASE_REACH — every unit has at least this
 			for k in (u.get("kit", []) as Array):
+				# ROUND 24: a kit entry's `range` is already lifted and clamped by kit.gd, so this
+				# is a plain read. Applying KIT_RANGE_LIFT here now would quadruple it — the exact
+				# double-apply the consolidation exists to make impossible.
 				var r := float(k.get("range", 0.0))
 				if r > 0.0:
-					best = maxf(best, minf(r * Sim.KIT_RANGE_LIFT, Sp.HARD_REACH_MAX))
+					best = maxf(best, r)
 			if best > widest:
 				widest = best
 				who = "%s/%s" % [str(comp), str(u.id)]
@@ -1290,6 +1469,8 @@ func _pacing(res: Dictionary) -> Dictionary:
 			run = 0
 	return {"len_s": float(total) * 0.1,
 		"dmg_frac": float(o.damage) / float(total),
+		"dmg_s": float(maxi(int(o.damage), 0)) * 0.1,
+		"meet_s": float(maxi(int(o.meet_tick), 0)) * 0.1,
 		"attempt_s": float(o.attempt) * 0.1,
 		"busy": float(o.busy),
 		"peak_eps": peak, "peak_at_s": peak_at,
@@ -1353,7 +1534,7 @@ func _standoff_count(comp: String, moves: Array) -> int:
 			var tgt := str((k.get("move", {}) as Dictionary).get("target", "enemy"))
 			if tgt in ["self", "ally", "team"]:
 				continue
-			if r > 0.0 and minf(r * Sim.KIT_RANGE_LIFT, Sp.HARD_REACH_MAX) >= PACE_STANDOFF_REACH:
+			if r > 0.0 and r >= PACE_STANDOFF_REACH:   # already lifted+clamped by kit.gd (round 24)
 				n += 1
 				break
 	return n
@@ -1367,8 +1548,18 @@ func _pacing_checks(rows: Array, moves: Array) -> void:
 	for r in rows:
 		var p: Dictionary = _pacing(r)
 		var comp := str(r.label).split("/")[0]
-		if float(p.dmg_frac) > PACE_DMG_FRAC_MAX:
-			late.append("%s: 1st dmg at %.0f%%" % [str(r.label), 100.0 * float(p.dmg_frac)])
+		# ⚠️ A FRACTION GATE MOVES WHEN THE DENOMINATOR MOVES, AND ROUND 24 CAUGHT IT DOING EXACTLY
+		# THAT. The geometry lift (BODY_RADIUS 2.2->2.65, BASE_REACH 6.6->7.95) made brawl/seed11
+		# 2.9s shorter, 25.4s -> 22.5s. First damage landed at 8.2s in BOTH runs — the quantity
+		# this check is ABOUT did not move by a single tick — but 8.2/22.5 is 36% where 8.2/25.4
+		# was 32%, so a fraction-only gate reported a pacing regression that did not happen.
+		# The second clause is the fix and it is not a relaxation: this check exists to catch a
+		# SILENT APPROACH (`WATCH_AUDIT.md` §0), and damage that lands BEFORE the fronts meet
+		# (8.2s vs 8.7s here) is the closing-under-fire shape `ENGAGEMENT_DESIGN.md` asks for. A
+		# fight is only late if it is late by BOTH readings.
+		if float(p.dmg_frac) > PACE_DMG_FRAC_MAX and float(p.dmg_s) > float(p.meet_s):
+			late.append("%s: 1st dmg at %.0f%% (%.1fs, fronts met %.1fs)"
+				% [str(r.label), 100.0 * float(p.dmg_frac), float(p.dmg_s), float(p.meet_s)])
 		if _standoff_count(comp, moves) >= PACE_STANDOFF_MIN:
 			standoff_busy.append(float(p.busy))
 		if float(p.dead_frac) > PACE_DEAD_FRAC_MAX:

@@ -612,7 +612,7 @@ func _surround_angles(res: Dictionary, attackers: Array, target: String) -> int:
 		var all_in_reach := true
 		for a in attackers:
 			var d: float = Vector2(pos[a]).distance_to(tpos)
-			if d > 6.6:  # BASE_REACH
+			if d > Sim.BASE_REACH:   # was the literal 6.6 — see the ⚠️ on _strafe_faces_target
 				all_in_reach = false
 				break
 			buckets[int(roundf(Vector2(pos[a] - tpos).angle() / (TAU / 8.0)))] = true
@@ -635,11 +635,19 @@ func _strafe_faces_target(res: Dictionary, attackers: Array, target: String) -> 
 		for u in f.units:
 			if not (str(u.id) in attackers) or not u.alive:
 				continue
-			# d <= 5.0 post-move guarantees the unit was ALREADY in reach before it moved
-			# (max tick move ~1.1 < 6.27-5.0), i.e. the strafe branch ran — boundary frames
+			# The post-move window guarantees the unit was ALREADY in reach before it moved
+			# (one tick's travel < the margin), i.e. the strafe branch ran — boundary frames
 			# where a unit crosses into reach mid-turn are the approach branch, not strafe.
+			#
+			# ⚠️ THIS WAS THE BARE LITERAL 5.0 AND IT WENT VACUOUS, NOT RED, WHEN THE GEOMETRY
+			# MOVED. Round 24 lifted BASE_REACH 6.6 -> 7.95 and SLOT_RADIUS 4.8 -> 5.6, so a
+			# strafing body now stands ABOVE the old 5.0 sample window and the check stopped
+			# sampling the behaviour it is named for. The expression below yields 5.07 at the OLD
+			# geometry — it reproduces the authored value rather than inventing a new one — and
+			# 6.35 at the new. This is a bare world distance in a probe for the ninth time.
+			var window: float = Sim.BASE_REACH * 0.95 - 1.2
 			var d: float = Vector2(u.pos).distance_to(tpos)
-			if d > 5.0 or d < 0.5 or Vector2(u.move_dir) == Vector2.ZERO:
+			if d > window or d < 0.5 or Vector2(u.move_dir) == Vector2.ZERO:
 				continue
 			samples += 1
 			if Vector2(u.facing).dot((Vector2(tpos) - u.pos).normalized()) < 0.5:

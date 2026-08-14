@@ -269,7 +269,17 @@ const SPEED_MAX := SLOW_REF_SPEED * 1.70    # at DEX 1000 — fast, without read
 ## Derived, not guessed: half of `arena_3d.gd`'s `UNIT_HEIGHT` (4.4) is the same figure the camera
 ## uses for `CAM_BODY_RADIUS`, so the sim and the renderer now agree about how big a monster is.
 ## ⚠️ Keep them in step. Two independent opinions about body size is exactly this bug.
-const BODY_RADIUS := 2.2
+##
+## ⚠️ 2.2 -> 2.65, ROUND 24 — AND IT ONLY WORKS AS A THREE-CONSTANT MOVE. At 2.2 the sim held
+## enemy centres 4.4 ground units apart (1.50 world at `arena_3d.WORLD_SCALE`) while creatures
+## were DRAWN ~2.3-2.6 world units wide, so bodies interpenetrated ~40% of their drawn width BY
+## CONSTRUCTION and no camera, plate or colour work could separate them — round 13 tried all
+## three and `sim.gd:BODY_RADIUS` carries the measured negative. 2.65 puts the ring at 5.3 ground
+## = 1.80 world, which `arena_3d.UNIT_FOOTPRINT_MAX` (DERIVED from this constant, never a
+## literal) turns into a 2.00-world drawn cap: a 10% overlap budget instead of 40%.
+## `sim.gd:SLOT_RADIUS` and `sim.gd:BASE_REACH` moved in the same edit — see the block there for
+## why moving any one of them alone either keeps the pile or pushes melee out of its own swing.
+const BODY_RADIUS := 2.65
 
 ## ⚠️ THE ASYMMETRY THAT MAKES CHASES RESOLVE, AND IT IS ALREADY MEASURED.
 ## `ENGAGEMENT_DESIGN.md` records that without it "a chase NEVER resolves — a pursuit equilibrium

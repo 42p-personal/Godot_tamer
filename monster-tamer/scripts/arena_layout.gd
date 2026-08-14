@@ -492,15 +492,28 @@ const LEAGUE_BOARDS := {
 	# scatter. It keeps its identity and simply gains the tight spacing every other board needed.
 	# `ARENA_DESIGN.md` §4: "use the mirror instead of fighting it — a stepped diagonal continues
 	# under 180-degree rotation".
+	# ⚠️ GOLD'S RUN GAP IS 0.33 BODIES, NOT THE 0.4 IT WAS AUTHORED AT, AND THAT IS NOT A DESIGN
+	# CHANGE — IT IS THE SAME BOARD IN WORLD UNITS. `_emit_run`'s step is `gap_bodies x
+	# BODY_RADIUS x 2`, so when round 24 lifted BODY_RADIUS 2.2 -> 2.65 every run in the game got
+	# 20% longer against a ground that did NOT change. Gold was the board with no slack: two of its
+	# 34 pieces walked off the edge and `_emit_pair` dropped them SILENTLY (`_probe_layout` went
+	# from PASS to "emitted 32 from 34" on nothing but the body-radius edit). 0.4 x 2.2 = 0.88 and
+	# 0.33 x 2.65 = 0.87, so the drawn spacing is preserved to within a hundredth of a unit.
+	#
+	# ⚠️ AND THE STRUCTURE IS THE REAL FINDING, NOT THIS NUMBER. Arena furniture spacing is
+	# denominated in BODIES, so creature size silently re-composes every authored board. The
+	# clearance intent is sound (a gap under 1.0 bodies is impassable, which is what the run
+	# wants) but it means a body-radius edit is also a level-design edit, and only the board with
+	# the least margin fails loudly enough to notice. See the ranked list in the round-24 report.
 	"Gold": {
 		"place": "the Chequer — a stepped echelon of low runs that the mirror continues",
 		"mass": Vector2(1.20, 1.34),
 		"furniture": [
-			{"t": "run", "at": Vector2(0.20, 0.30), "dir": Vector2(1, 0.28), "n": 5, "gap": 0.4,
+			{"t": "run", "at": Vector2(0.20, 0.30), "dir": Vector2(1, 0.28), "n": 5, "gap": 0.33,
 				"grade": "soft", "kind": "fence"},
-			{"t": "run", "at": Vector2(0.34, 0.56), "dir": Vector2(1, 0.28), "n": 5, "gap": 0.4,
+			{"t": "run", "at": Vector2(0.34, 0.56), "dir": Vector2(1, 0.28), "n": 5, "gap": 0.33,
 				"grade": "soft", "kind": "fence"},
-			{"t": "run", "at": Vector2(0.12, 0.80), "dir": Vector2(1, 0), "n": 2, "gap": 0.4,
+			{"t": "run", "at": Vector2(0.12, 0.80), "dir": Vector2(1, 0), "n": 2, "gap": 0.33,
 				"grade": "soft", "kind": "planter"},
 		],
 	},

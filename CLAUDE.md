@@ -704,3 +704,20 @@ See `docs/COLLABORATIVE-DESIGN-PRINCIPLE.md` for full protocol and examples.
 
 @.claude/docs/context-management.md
 
+
+## Project skills — the five that encode what this session learned
+
+⚠️ **The 74 skills in `.claude/skills/` are a generic studio template and none of them know
+anything about this project.** These five do, and each exists because the same work was done
+10+ times or the same mistake was made twice:
+
+| skill | what it is for |
+|---|---|
+| `/verify` | the build battery in the right order — and the nine window-only probes that silently "pass" on black rectangles under `--headless` |
+| `/dead-wire` | hunt the signature failure (authored, priced, documented, does nothing) — 13+ instances, with the roll of honour and the procedure that found them |
+| `/fan-out` | the multi-agent round structure fifteen workflows converged on, including the seven briefs of mine that were WRONG and how each was caught |
+| `/capture` | look at the screens properly — both fixtures, timestamps checked, and the class of bug only a capture finds |
+| `/measure` | paired sign test, error bands, liveness canaries, and which engine your instrument is actually running on |
+
+⚠️ **They carry the ⚠️ notes, not just the happy path.** Read the skill before repeating work it
+covers; that is cheaper than rediscovering why the note is there.

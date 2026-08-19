@@ -1,6 +1,6 @@
 ---
 name: measure
-description: "Measure a Monster Tamer balance or design claim properly before acting on it — paired seeds, sign test, error bands, a liveness canary, and enough power to separate the thing you are claiming. Use before tuning any constant, before quoting any figure from a doc, when a mechanic 'should' matter but reads as noise, and when deciding whether a difference is real. This project has twice changed constants on differences a later paired A/B showed did nothing."
+description: "Measure a balance or design claim properly before acting on it — paired seeds, sign test, error bands, liveness canary, and enough power to separate what you are claiming. USE AUTOMATICALLY: before tuning ANY constant; before quoting a figure from a doc or an earlier round; when deciding whether a difference is real; when a mechanic should matter but reads as noise; and whenever someone proposes a balance change. This project has twice changed constants on differences a later paired A/B showed did nothing."
 argument-hint: "[the claim to test]"
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, Write

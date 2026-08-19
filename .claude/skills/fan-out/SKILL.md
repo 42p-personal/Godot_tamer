@@ -1,6 +1,6 @@
 ---
 name: fan-out
-description: "Author and run a multi-agent Workflow round on Monster Tamer, using the structure that fifteen rounds converged on — a diagnosis phase that gates the builders, one owner per file, an integrator whose first check is the thing most likely to be broken, and an explicit instruction that refuting the brief is the highest-value move. Use when the user says fan out, get the team on it, run a round, or asks for work that spans several subsystems at once. Do NOT use for a single focused change — one agent that has to re-derive this project's context is slower and worse than doing it inline."
+description: "Author and run a multi-agent Workflow round using the structure fifteen rounds converged on. USE WHEN the user says 'fan out', 'get the team on it', 'get the teams to', 'run a round', 'have the team look at', or otherwise explicitly asks for multi-agent work. Requires explicit opt-in — never infer it from a task merely being large. Covers grounding the brief first, a diagnosis phase that can stop the round, one owner per file, and an integrator whose first check is the thing most likely to be broken."
 argument-hint: "[what the round is about]"
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, Write, Workflow, AskUserQuestion

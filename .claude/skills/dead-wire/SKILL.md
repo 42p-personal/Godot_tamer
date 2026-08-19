@@ -1,6 +1,6 @@
 ---
 name: dead-wire
-description: "Hunt this project's signature failure — a system that is authored, priced, typed and documented but does nothing, because nothing calls it, the caller passes the wrong thing, or the instrument measuring it cannot see it. 13+ instances found so far. Use before concluding a feature is missing, before concluding a feature works, when a mechanic 'should' matter but measures as noise, when a screen shows a fact nobody can act on, and as a standing audit pass on any subsystem nobody has opened in a while."
+description: "Hunt this project's signature failure — a system authored, priced, typed and documented that does nothing because nothing calls it, the caller passes the wrong thing, or the instrument cannot see it. 13+ instances found. USE AUTOMATICALLY: before concluding a feature is missing OR that it works; when a mechanic that should matter measures as noise; when a screen shows a fact nobody can act on; when a doc claims something exists; when asked why a system 'isn't doing anything'; and as a standing audit on any subsystem nobody has opened recently."
 argument-hint: "[system-or-file | --sweep]"
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep, Write

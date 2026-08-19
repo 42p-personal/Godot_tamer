@@ -93,6 +93,37 @@ if [ -n "$SRC_FILES" ]; then
     done <<< "$SRC_FILES"
 fi
 
+# ── Godot work: has it been verified? ────────────────────────────────────────
+# ⚠️ THIS PROJECT SHIPS ITS VERIFICATION IN A SKILL BECAUSE REMEMBERING FAILED.
+# Nine probes silently "pass" on black rectangles under --headless, the port
+# contracts are exact-equality and catch translation bugs nothing else can, and
+# a whole round was once written against a MISSING engine binary (exit 127 on
+# everything, identically). A reminder at commit time is the cheapest place to
+# catch all three, because by then the work is done and the cost of checking is
+# two minutes.
+GD_FILES=$(echo "$STAGED" | grep -E '^monster-tamer/(scripts|scenes)/' | head -1)
+if [ -n "$GD_FILES" ]; then
+    WARNINGS="$WARNINGS
+VERIFY: Godot files staged. Run the /verify skill before committing —"
+    WARNINGS="$WARNINGS
+        contracts + compile + career loop at minimum, /verify sim if"
+    WARNINGS="$WARNINGS
+        scripts/sim or scripts/ai changed (determinism x3 processes)."
+fi
+
+# ── UI work: has anyone LOOKED at it? ────────────────────────────────────────
+# A probe can tell you a label is 12px; it cannot tell you the screen reads as a
+# debug tool. Every visual finding worth having here came from reading a PNG.
+UI_FILES=$(echo "$STAGED" | grep -E '^monster-tamer/scripts/ui/' | head -1)
+if [ -n "$UI_FILES" ]; then
+    WARNINGS="$WARNINGS
+CAPTURE: UI files staged. Run the /capture skill — windowed, both"
+    WARNINGS="$WARNINGS
+         fixtures, and CHECK THE PNG TIMESTAMPS. A stale capture once"
+    WARNINGS="$WARNINGS
+         cost three consecutive wrong conclusions on a fixed bug."
+fi
+
 # Print warnings (non-blocking) and allow commit
 if [ -n "$WARNINGS" ]; then
     echo -e "=== Commit Validation Warnings ===$WARNINGS\n================================" >&2

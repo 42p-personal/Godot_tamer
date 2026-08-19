@@ -721,3 +721,26 @@ anything about this project.** These five do, and each exists because the same w
 
 ⚠️ **They carry the ⚠️ notes, not just the happy path.** Read the skill before repeating work it
 covers; that is cheaper than rediscovering why the note is there.
+
+### ⚠️ WHEN TO USE THEM — these are standing instructions, not suggestions
+
+The skills exist because remembering did not work. Follow these without being asked:
+
+- **Before any `git commit` that stages `monster-tamer/scripts/` or `scenes/` → run `/verify`.**
+  A `PreToolUse` hook reminds you, but the hook is a backstop, not the rule.
+- **After changing anything under `scripts/ui/` → run `/capture`** and actually read the PNGs
+  back. A UI change reported without a capture has not been verified, only described.
+- **After changing anything under `scripts/sim/` or `scripts/ai/` → `/verify sim`**, which
+  includes determinism across THREE SEPARATE PROCESSES. In-process checks cannot catch
+  hash-order dependencies.
+- **Before tuning any constant, or quoting any figure from a doc → `/measure`.** Numbers in
+  this repo's docs have gone stale twice and cost a round each time.
+- **Before concluding a system is missing — or that it works → `/dead-wire`.** 13+ instances,
+  four found in a single round.
+- **When the user says "fan out" / "get the team on it" / "run a round" → `/fan-out`.** Never
+  infer a fan-out from a task merely being large; it needs explicit opt-in.
+
+⚠️ **AND THE ONE THAT IS EASIEST TO SKIP AND MOST EXPENSIVE TO SKIP:** after a fan-out round
+reports, **re-run the battery yourself and re-measure the number the round turned on.** Integrator
+reports have been wrong about their own probe results — twice by running window-only probes
+headless, once by reading a stale capture.

@@ -1,6 +1,6 @@
 ---
 name: capture
-description: "Capture and actually LOOK AT the game's screens — windowed, across both fixtures, with timestamps checked — and report what you saw rather than what the code says. Use after any UI change, before claiming a visual fix worked, when judging whether something reads as a prototype, and whenever a round's acceptance is settled by eyes rather than by a probe. A round that reports 'improved the layout' without a capture has reported nothing."
+description: "Capture and actually LOOK AT the game's screens, then report what you saw. USE AUTOMATICALLY: after editing anything under monster-tamer/scripts/ui; before claiming any visual fix worked; when asked how a screen looks, to show the screens, whether something reads as a prototype, or to check the UI; and whenever a round's acceptance is settled by eyes rather than a probe. Runs windowed across both fixtures, checks PNG timestamps, and carries the class of bug only a capture finds."
 argument-hint: "[screen-name | all | --fixture A_comfortable|B_thin]"
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep

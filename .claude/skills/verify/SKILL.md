@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Run the Monster Tamer build verification battery — port contracts, compile walk, the career loop, the sim battery and the window-only probes — in the right order, and report PASS/FAIL honestly. Use before every commit, after every fan-out round lands, and any time someone asks whether the build is green. Also use when a probe reports red and you need to know whether it is a real failure or an invocation mistake."
+description: "Run the Monster Tamer build verification battery and report PASS/FAIL honestly. USE AUTOMATICALLY: before any git commit that touches monster-tamer/scripts or scenes; after a fan-out round lands; after editing any .gd file; when asked 'is it green', 'does it still build', 'run the tests/probes/battery', or 'check nothing broke'; and whenever a probe reports red and you need to know whether it is a real failure or an invocation mistake. Covers port contracts, the compile walk, the career loop, the sim battery, determinism across three processes, and the nine window-only probes that silently pass on blank frames under --headless."
 argument-hint: "[quick | full | sim | ui]"
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep
